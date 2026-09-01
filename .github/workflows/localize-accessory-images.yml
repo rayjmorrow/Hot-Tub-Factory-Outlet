@@ -1,0 +1,58 @@
+name: Localize accessory images
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/localize-accessory-images.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pillow requests
+      - name: Download, optimize, and localize manufacturer images
+        run: |
+          python - <<'PY'
+          import re, io, os, hashlib
+          from pathlib import Path
+          from urllib.parse import urlparse, unquote
+          import requests
+          from PIL import Image
+
+          page = Path('accessories.html')
+          html = page.read_text()
+          urls = sorted(set(re.findall(r'https://www\.hottubproducts\.com/wp-content/uploads/[^\"\'<> ]+\.(?:jpg|jpeg|png|webp)', html, flags=re.I)))
+          out = Path('assets/accessories/hot-tub-products')
+          out.mkdir(parents=True, exist_ok=True)
+          s = requests.Session(); s.headers['User-Agent']='Mozilla/5.0 HTFO Dealer Catalog'
+          replaced=0
+          for url in urls:
+              try:
+                  r=s.get(url, timeout=30); r.raise_for_status()
+                  im=Image.open(io.BytesIO(r.content)).convert('RGB')
+                  im.thumbnail((1200,1200), Image.Resampling.LANCZOS)
+                  stem=unquote(Path(urlparse(url).path).stem)
+                  stem=re.sub(r'[^a-zA-Z0-9_-]+','-',stem).strip('-').lower()
+                  if not stem: stem=hashlib.sha1(url.encode()).hexdigest()[:10]
+                  dest=out/(stem+'.webp')
+                  im.save(dest,'WEBP',quality=84,method=6)
+                  html=html.replace(url, dest.as_posix())
+                  print('localized',url,'->',dest)
+                  replaced+=1
+              except Exception as e:
+                  print('SKIP',url,e)
+          page.write_text(html)
+          print('Localized',replaced,'images')
+          PY
+      - name: Commit local assets
+        run: |
+          git config user.name 'HTFO Site Builder'
+          git config user.email 'actions@users.noreply.github.com'
+          git add accessories.html assets/accessories/hot-tub-products
+          if git diff --cached --quiet; then echo 'No changes'; else git commit -m 'Store accessory manufacturer images locally'; git push; fi
