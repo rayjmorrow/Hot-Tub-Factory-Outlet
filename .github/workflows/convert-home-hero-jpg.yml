@@ -1,0 +1,38 @@
+name: Convert homepage hero to JPEG
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/convert-home-hero-jpg.yml'
+permissions:
+  contents: write
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Convert WebP hero to Safari-safe JPEG
+        run: |
+          python - <<'PY'
+          from PIL import Image
+          p='assets/htfo-home-backyard-hero.webp'
+          im=Image.open(p).convert('RGB')
+          im.save('assets/htfo-home-backyard-hero.jpg', 'JPEG', quality=90, optimize=True)
+          print(im.size)
+          PY
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('home.css')
+          s=p.read_text()
+          s=s.replace("assets/htfo-home-backyard-hero.webp", "assets/htfo-home-backyard-hero.jpg")
+          p.write_text(s)
+          PY
+      - name: Commit JPEG hero
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/htfo-home-backyard-hero.jpg home.css
+          git commit -m "Use Safari-safe JPEG homepage hero"
+          git push
