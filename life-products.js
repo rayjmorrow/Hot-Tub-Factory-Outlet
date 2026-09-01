@@ -39,5 +39,10 @@ function build(){
   document.head.appendChild(style);
   const dept=document.querySelector('.dept[href="#chemicals"]');if(dept&&!document.querySelector('.dept[href="#life-chemicals"]'))dept.insertAdjacentHTML('beforebegin','<a class="dept" href="#life-chemicals"><small>Spa water care</small>LIFE Chemicals</a>');
 }
-if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',build);else build();
+function forceFrogPhotos(){
+  const style=document.createElement('style');
+  style.textContent=`#frog-ease .frog-pic{height:220px!important;min-height:220px!important;padding:0!important;background:#fff!important}#frog-ease .frog-product-photo{display:block!important;flex:1 1 100%!important;width:100%!important;height:220px!important;min-height:220px!important;background-image:url('assets/accessories/frog-ease/frog-products-sprite.webp?v=20260901-2')!important;background-repeat:no-repeat!important;background-size:200% 200%!important;background-color:#fff!important}#frog-ease .frog-ht-system{background-position:0 0!important}#frog-ease .frog-ht-3pack{background-position:100% 0!important}#frog-ease .frog-ss-system{background-position:0 100%!important}#frog-ease .frog-ss-refill{background-position:100% 100%!important}`;
+  document.head.appendChild(style);
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{build();forceFrogPhotos()});else{build();forceFrogPhotos()}
 })();
