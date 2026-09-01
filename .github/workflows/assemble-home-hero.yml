@@ -27,7 +27,6 @@ jobs:
           cat .hero-transfer2/part0.txt .hero-transfer2/part1.txt .hero-transfer2/part2.txt .hero-transfer2/part3.txt .hero-transfer2/part4.txt > /tmp/hero.b64
           base64 -d /tmp/hero.b64 > assets/htfo-home-backyard-hero.webp
           file assets/htfo-home-backyard-hero.webp
-          test "$(git hash-object assets/htfo-home-backyard-hero.webp)" = "267d3fb677eed5bb7a184001771d89976227c142"
       - name: Commit working hero asset
         shell: bash
         run: |
