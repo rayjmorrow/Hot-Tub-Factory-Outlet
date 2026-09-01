@@ -27,11 +27,21 @@ jobs:
 
           page = Path('accessories.html')
           html = page.read_text()
-          urls = sorted(set(re.findall(r'https://www\.hottubproducts\.com/wp-content/uploads/[^\"\'<> ]+\.(?:jpg|jpeg|png|webp)', html, flags=re.I)))
+          # Make hero text explicitly high-contrast even if shared site CSS changes.
+          html = html.replace('.hero h1{font-size:', '.hero h1{color:#fff;font-size:')
+          html = html.replace('.hero p{font-size:', '.hero p{color:#fff;font-size:')
+          html = html.replace('.hero p{color:#fff;color:#fff;', '.hero p{color:#fff;')
+          html = html.replace('.hero h1{color:#fff;color:#fff;', '.hero h1{color:#fff;')
+
+          urls = sorted(set(re.findall(r'https://www\\.hottubproducts\\.com/wp-content/uploads/[^\\"\\'<> ]+\\.(?:jpg|jpeg|png|webp)', html, flags=re.I)))
+          # AquaSizer gallery/logo image from the manufacturer's AquaSizer page.
+          aqua_url='https://www.hottubproducts.com/wp-content/uploads/2021/08/AquaSizer-LogoUSA.jpg'
+          if aqua_url not in urls: urls.append(aqua_url)
           out = Path('assets/accessories/hot-tub-products')
           out.mkdir(parents=True, exist_ok=True)
           s = requests.Session(); s.headers['User-Agent']='Mozilla/5.0 HTFO Dealer Catalog'
           replaced=0
+          aqua_dest=None
           for url in urls:
               try:
                   r=s.get(url, timeout=30); r.raise_for_status()
@@ -43,10 +53,16 @@ jobs:
                   dest=out/(stem+'.webp')
                   im.save(dest,'WEBP',quality=84,method=6)
                   html=html.replace(url, dest.as_posix())
+                  if url == aqua_url: aqua_dest=dest.as_posix()
                   print('localized',url,'->',dest)
                   replaced+=1
               except Exception as e:
                   print('SKIP',url,e)
+
+          if aqua_dest:
+              old='<div class="item" style="max-width:420px"><b>AquaSizer Underwater Treadmill</b><span>EXTM100</span><em>This Week’s Sale Price</em><strong>$1,899</strong></div>'
+              new=f'<article class="card" style="max-width:520px"><div class="pic"><img src="{aqua_dest}" alt="AquaSizer Underwater Treadmill"></div><div class="body"><h3>AquaSizer Underwater Treadmill</h3><p>No electricity or motor required. Walk or run at your own pace in a swim spa or swimming pool.</p><div class="sku">EXTM100</div><div class="sale">This Week’s Sale Price</div><div class="price">$1,899</div></div></article>'
+              html=html.replace(old,new)
           page.write_text(html)
           print('Localized',replaced,'images')
           PY
@@ -55,4 +71,4 @@ jobs:
           git config user.name 'HTFO Site Builder'
           git config user.email 'actions@users.noreply.github.com'
           git add accessories.html assets/accessories/hot-tub-products
-          if git diff --cached --quiet; then echo 'No changes'; else git commit -m 'Store accessory manufacturer images locally'; git push; fi
+          if git diff --cached --quiet; then echo 'No changes'; else git commit -m 'Improve accessory hero and add AquaSizer image'; git push; fi
