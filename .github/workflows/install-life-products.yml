@@ -1,0 +1,116 @@
+name: Install LIFE chemical products
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/install-life-products.yml'
+      - 'life-products.js'
+permissions:
+  contents: write
+jobs:
+  install-life-products:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install image tools
+        run: python -m pip install --quiet requests beautifulsoup4 pillow
+      - name: Download LIFE product images and wire storefront
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from urllib.parse import urljoin
+          from io import BytesIO
+          import requests
+          from bs4 import BeautifulSoup
+          from PIL import Image
+
+          products={
+            'ph-up-liquid.webp':'lch-50-4035',
+            'brominating-tabs-5lb.webp':'lch-50-1005',
+            'waterline-surface-cleaner.webp':'lch-50-5090',
+            'scale-defense.webp':'lch-50-5011',
+            'cover-cleaner-conditioner.webp':'lch-50-5070',
+            'scum-free.webp':'lch-50-5030',
+            'fresh-start-kit.webp':'lch-50-0030',
+            'spasoft-2lb.webp':'lch-50-5005',
+            'chlorinating-granules-5lb.webp':'lch-50-2005',
+            'foam-free.webp':'lch-50-5040',
+            'metal-out.webp':'lch-50-5010',
+            'filter-cleaner-sprayer.webp':'lch-50-5080',
+            'oxidizing-shock-5lb.webp':'lch-50-3005',
+            'alkalinity-ph-up.webp':'lch-50-4030',
+            'calcium-booster.webp':'lch-50-4010',
+            'brominating-tabs-1-5lb.webp':'lch-50-1015',
+            'natural-clarifier.webp':'lch-50-5020',
+            'oxidizing-shock-1-5lb.webp':'lch-50-3015',
+            'chlorinating-granules-2lb.webp':'lch-50-2002',
+            'alkalinity-ph-down.webp':'lch-50-4020',
+            'purge-jet-line-cleaner.webp':'lch-50-5060'
+          }
+          out=Path('assets/accessories/life');out.mkdir(parents=True,exist_ok=True)
+          sess=requests.Session();sess.headers.update({'User-Agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Safari/537.36'})
+
+          def candidates(page,code):
+            r=sess.get(page,timeout=40);r.raise_for_status();soup=BeautifulSoup(r.text,'html.parser');found=[]
+            for img in soup.find_all('img'):
+              vals=[]
+              for attr in ('src','data-src','data-lazy-src','data-original'):
+                if img.get(attr): vals.append(img.get(attr))
+              if img.get('srcset'):
+                vals += [x.strip().split(' ')[0] for x in img.get('srcset').split(',') if x.strip()]
+              alt=(img.get('alt') or '')
+              for src in vals:
+                if not src or src.startswith('data:'): continue
+                u=urljoin(page,src)
+                txt=(u+' '+alt).lower()
+                score=0
+                if code in txt: score+=50
+                if 'product' in txt: score+=5
+                if any(x in txt for x in ['logo','icon','badge','banner','placeholder','spinner']): score-=30
+                found.append((score,u))
+            found.sort(reverse=True)
+            return [u for _,u in found]
+
+          failures=[]
+          for filename,code in products.items():
+            page=f'https://www.pool360.com/Product/pool-{code}'
+            ok=False
+            for u in candidates(page,code):
+              try:
+                rr=sess.get(u,timeout=40);rr.raise_for_status()
+                im=Image.open(BytesIO(rr.content)).convert('RGBA')
+                if im.width<120 or im.height<120: continue
+                # Keep the same clean product artwork shown on POOL360; trim only excess canvas.
+                bg=Image.new('RGBA',im.size,(255,255,255,255));
+                if im.mode=='RGBA': bg.alpha_composite(im)
+                else: bg=im
+                rgb=bg.convert('RGB');rgb.thumbnail((900,900))
+                rgb.save(out/filename,'WEBP',quality=88,method=6)
+                print(filename,u,rgb.size);ok=True;break
+              except Exception as e:
+                print('skip',filename,u,e)
+            if not ok: failures.append((filename,page))
+          if failures:
+            raise SystemExit('Could not download: '+repr(failures))
+
+          p=Path('accessories.html');s=p.read_text()
+          if 'life-products.js' not in s:
+            if '<script src="store.js"></script>' in s:
+              s=s.replace('<script src="store.js"></script>','<script src="store.js"></script><script src="life-products.js"></script>',1)
+            else:
+              s=s.replace('</body>','<script src="life-products.js"></script></body>',1)
+            p.write_text(s)
+          PY
+      - name: Commit LIFE products
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add accessories.html assets/accessories/life
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Add LIFE spa chemicals with product photos"
+            git push
+          fi
