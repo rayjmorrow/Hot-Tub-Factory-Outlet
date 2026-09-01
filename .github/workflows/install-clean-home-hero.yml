@@ -13,13 +13,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Decode clean JPEG
+      - name: Decode clean JPEG robustly
         run: |
-          base64 -d .hero-clean/part00.txt > assets/htfo-home-backyard-hero-clean.jpg
-          file assets/htfo-home-backyard-hero-clean.jpg | grep -q 'JPEG image data'
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, re
+          src=Path('.hero-clean/part00.txt').read_text()
+          src=re.sub(r'[^A-Za-z0-9+/=]', '', src)
+          src += '=' * (-len(src) % 4)
+          data=base64.b64decode(src, validate=False)
+          if not data.startswith(b'\xff\xd8\xff'):
+              raise SystemExit('Decoded data is not JPEG')
+          Path('assets/htfo-home-backyard-hero-clean.jpg').write_bytes(data)
+          print('decoded', len(data), 'bytes')
+          PY
       - name: Point homepage to clean hero
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           p=Path('home.css')
           s=p.read_text()
@@ -32,5 +42,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add assets/htfo-home-backyard-hero-clean.jpg home.css
-          git commit -m "Install clean homepage hero JPEG"
+          git commit -m "Install clean homepage hero JPEG" || exit 0
           git push
