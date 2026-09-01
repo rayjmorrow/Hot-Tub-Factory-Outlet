@@ -12,13 +12,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install image tools
+        run: python -m pip install --quiet requests beautifulsoup4 pillow
       - name: Build LIFE product sprite
         run: |
           python - <<'PY'
-          from PIL import Image, ImageOps
+          from PIL import Image
           from pathlib import Path
           import requests
           from io import BytesIO
+          from bs4 import BeautifulSoup
           urls = [
             'https://www.pool360.com/Product/pool-lch-50-4020',
             'https://www.pool360.com/Product/pool-lch-50-4030',
@@ -42,12 +45,9 @@ jobs:
             'https://www.pool360.com/Product/pool-lch-50-5005',
             'https://www.pool360.com/Product/pool-lch-50-5090'
           ]
-          import re
-          from bs4 import BeautifulSoup
           sess=requests.Session(); sess.headers['User-Agent']='Mozilla/5.0'
           imgs=[]
           for page in urls:
-            code=page.rsplit('-',4)[-4:] # unused
             r=sess.get(page,timeout=30); r.raise_for_status()
             soup=BeautifulSoup(r.text,'html.parser')
             candidates=[]
@@ -63,7 +63,8 @@ jobs:
                 rr=sess.get(u,timeout=30); rr.raise_for_status(); x=Image.open(BytesIO(rr.content)).convert('RGB')
                 if x.width>=150 and x.height>=150:
                   got=x; break
-              except: pass
+              except Exception:
+                pass
             if got is None: raise SystemExit('image not found '+page)
             got.thumbnail((260,150))
             tile=Image.new('RGB',(300,180),'white'); tile.paste(got,((300-got.width)//2,(180-got.height)//2))
