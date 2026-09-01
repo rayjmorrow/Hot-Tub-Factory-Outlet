@@ -1,0 +1,42 @@
+name: Install clean homepage hero
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/install-clean-home-hero.yml'
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decode and verify clean JPEG
+        run: |
+          base64 -d .hero-clean/part00.txt > assets/htfo-home-backyard-hero-clean.jpg
+          file assets/htfo-home-backyard-hero-clean.jpg
+          python - <<'PY'
+          from PIL import Image
+          im=Image.open('assets/htfo-home-backyard-hero-clean.jpg')
+          im.verify()
+          print('JPEG verified')
+          PY
+      - name: Point homepage to clean hero
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('home.css')
+          s=p.read_text()
+          s=s.replace("assets/htfo-home-backyard-hero.webp", "assets/htfo-home-backyard-hero-clean.jpg")
+          s=s.replace("assets/htfo-home-backyard-hero.jpg", "assets/htfo-home-backyard-hero-clean.jpg")
+          p.write_text(s)
+          PY
+      - name: Commit clean hero
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/htfo-home-backyard-hero-clean.jpg home.css
+          git commit -m "Install clean homepage hero JPEG"
+          git push
