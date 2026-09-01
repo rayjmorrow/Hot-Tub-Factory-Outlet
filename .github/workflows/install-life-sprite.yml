@@ -1,0 +1,81 @@
+name: Install LIFE product image sprite
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/install-life-sprite.yml'
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build LIFE product sprite
+        run: |
+          python - <<'PY'
+          from PIL import Image, ImageOps
+          from pathlib import Path
+          import requests
+          from io import BytesIO
+          urls = [
+            'https://www.pool360.com/Product/pool-lch-50-4020',
+            'https://www.pool360.com/Product/pool-lch-50-4030',
+            'https://www.pool360.com/Product/pool-lch-50-1015',
+            'https://www.pool360.com/Product/pool-lch-50-1005',
+            'https://www.pool360.com/Product/pool-lch-50-4010',
+            'https://www.pool360.com/Product/pool-lch-50-2002',
+            'https://www.pool360.com/Product/pool-lch-50-2005',
+            'https://www.pool360.com/Product/pool-lch-50-5070',
+            'https://www.pool360.com/Product/pool-lch-50-5080',
+            'https://www.pool360.com/Product/pool-lch-50-5040',
+            'https://www.pool360.com/Product/pool-lch-50-0030',
+            'https://www.pool360.com/Product/pool-lch-50-5010',
+            'https://www.pool360.com/Product/pool-lch-50-5020',
+            'https://www.pool360.com/Product/pool-lch-50-3015',
+            'https://www.pool360.com/Product/pool-lch-50-3005',
+            'https://www.pool360.com/Product/pool-lch-50-4035',
+            'https://www.pool360.com/Product/pool-lch-50-5060',
+            'https://www.pool360.com/Product/pool-lch-50-5011',
+            'https://www.pool360.com/Product/pool-lch-50-5030',
+            'https://www.pool360.com/Product/pool-lch-50-5005',
+            'https://www.pool360.com/Product/pool-lch-50-5090'
+          ]
+          import re
+          from bs4 import BeautifulSoup
+          sess=requests.Session(); sess.headers['User-Agent']='Mozilla/5.0'
+          imgs=[]
+          for page in urls:
+            code=page.rsplit('-',4)[-4:] # unused
+            r=sess.get(page,timeout=30); r.raise_for_status()
+            soup=BeautifulSoup(r.text,'html.parser')
+            candidates=[]
+            for im in soup.find_all('img'):
+              for attr in ('src','data-src','data-lazy-src'):
+                u=im.get(attr)
+                if u and not u.startswith('data:'):
+                  if u.startswith('/'): u='https://www.pool360.com'+u
+                  candidates.append(u)
+            got=None
+            for u in candidates:
+              try:
+                rr=sess.get(u,timeout=30); rr.raise_for_status(); x=Image.open(BytesIO(rr.content)).convert('RGB')
+                if x.width>=150 and x.height>=150:
+                  got=x; break
+              except: pass
+            if got is None: raise SystemExit('image not found '+page)
+            got.thumbnail((260,150))
+            tile=Image.new('RGB',(300,180),'white'); tile.paste(got,((300-got.width)//2,(180-got.height)//2))
+            imgs.append(tile)
+          sheet=Image.new('RGB',(1200,1080),'white')
+          for i,x in enumerate(imgs): sheet.paste(x,((i%4)*300,(i//4)*180))
+          out=Path('assets/accessories/life');out.mkdir(parents=True,exist_ok=True)
+          sheet.save(out/'life-products-sprite.jpg',quality=90,optimize=True)
+          PY
+      - name: Commit sprite
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/accessories/life/life-products-sprite.jpg
+          git diff --cached --quiet || (git commit -m "Add LIFE product image sprite" && git push)
