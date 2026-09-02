@@ -24,6 +24,32 @@ function ghlHeaders(){return{Authorization:`Bearer ${process.env.GHL_API_TOKEN}`
 
 async function taxForOrder(body){requireEnv(['TAXJAR_API_KEY','SHIP_FROM_STATE','SHIP_FROM_ZIP','SHIP_FROM_CITY','SHIP_FROM_STREET']);const items=cleanItems(body.items);const c=customer(body);validateShip(c);const shipping=money(body.shipping||0);const payload={from_country:process.env.SHIP_FROM_COUNTRY||'US',from_zip:process.env.SHIP_FROM_ZIP,from_state:process.env.SHIP_FROM_STATE,from_city:process.env.SHIP_FROM_CITY,from_street:process.env.SHIP_FROM_STREET,to_country:c.country,to_zip:c.zip,to_state:c.state,to_city:c.city,to_street:[c.street,c.street2].filter(Boolean).join(' '),shipping,line_items:items};const r=await fetch(`${taxjarBase}/taxes`,{method:'POST',headers:{Authorization:`Bearer ${process.env.TAXJAR_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(payload)});const json=await r.json().catch(()=>({}));if(!r.ok)throw new Error(json?.detail||json?.error||`TaxJar returned ${r.status}`);return{items,customer:c,shipping,tax:money(json.tax?.amount_to_collect||0),rate:Number(json.tax?.rate||0),hasNexus:json.tax?.has_nexus!==false,taxableAmount:money(json.tax?.taxable_amount||0),raw:json.tax};}
 
+async function noteAuthorId(){
+  if(process.env.GHL_NOTE_USER_ID)return process.env.GHL_NOTE_USER_ID;
+  const locationId=process.env.GHL_LOCATION_ID;
+  const lr=await fetch(`${ghlBase}/locations/${encodeURIComponent(locationId)}`,{headers:ghlHeaders()});
+  const lj=await lr.json().catch(()=>({}));
+  if(!lr.ok||!lj?.location?.companyId)return null;
+  const qs=new URLSearchParams({companyId:lj.location.companyId,locationId,limit:'25'});
+  const ur=await fetch(`${ghlBase}/users/search?${qs}`,{headers:ghlHeaders()});
+  const uj=await ur.json().catch(()=>({}));
+  if(!ur.ok||!Array.isArray(uj?.users))return null;
+  const user=uj.users.find(x=>!x.deleted)||uj.users[0];
+  return user?.id||null;
+}
+
+async function addContactNote(contactId,note){
+  const body=text(note,5000);
+  if(!body)return false;
+  try{
+    const userId=await noteAuthorId();
+    if(!userId){console.warn('Lead note skipped: no HighLevel note author found');return false;}
+    const nr=await fetch(`${ghlBase}/contacts/${encodeURIComponent(contactId)}/notes`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify({userId,body,title:'Website Lead Details',pinned:false})});
+    if(!nr.ok){const nj=await nr.json().catch(()=>({}));console.warn('Lead note failed:',nj?.message||nj?.error||nr.status);return false;}
+    return true;
+  }catch(e){console.warn('Lead note failed:',e.message);return false;}
+}
+
 app.get('/health',(req,res)=>res.json({ok:true,taxjar:process.env.TAXJAR_SANDBOX==='true'?'sandbox':'production',authorize:process.env.AUTHORIZE_SANDBOX==='true'?'sandbox':'production',ghl:Boolean(process.env.GHL_API_TOKEN&&process.env.GHL_LOCATION_ID)}));
 
 app.post('/lead',async(req,res)=>{
@@ -55,7 +81,8 @@ app.post('/lead',async(req,res)=>{
     const tagJson=await tr.json().catch(()=>({}));
     if(!tr.ok)throw new Error(tagJson?.message||tagJson?.error||`HighLevel tag update returned ${tr.status}`);
 
-    res.status(json?.new?201:200).json({ok:true,new:Boolean(json?.new),contactId,source,tags:tagJson?.tags||uniqueTags});
+    const noteSaved=await addContactNote(contactId,req.body.note);
+    res.status(json?.new?201:200).json({ok:true,new:Boolean(json?.new),contactId,source,tags:tagJson?.tags||uniqueTags,noteSaved});
   }catch(e){
     console.error('Lead capture error:',e);
     res.status(400).json({ok:false,error:e.message});
