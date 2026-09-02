@@ -12,15 +12,55 @@ const money=n=>Math.round((Number(n)||0)*100)/100;
 const taxjarBase=process.env.TAXJAR_SANDBOX==='true'?'https://api.sandbox.taxjar.com/v2':'https://api.taxjar.com/v2';
 const authApi=process.env.AUTHORIZE_SANDBOX==='true'?'https://apitest.authorize.net/xml/v1/request.api':'https://api.authorize.net/xml/v1/request.api';
 const authForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/payment/payment':'https://accept.authorize.net/payment/payment';
+const ghlBase='https://services.leadconnectorhq.com';
 
 function requireEnv(names){const missing=names.filter(n=>!process.env[n]||process.env[n]==='replace_me');if(missing.length)throw new Error(`Missing server configuration: ${missing.join(', ')}`)}
 function cleanItems(items){if(!Array.isArray(items)||!items.length)throw new Error('Cart is empty');return items.map((x,i)=>({id:String(x.id||x.sku||`item-${i+1}`).slice(0,31),name:String(x.name||'Item').slice(0,31),description:String(x.name||'Item').slice(0,255),quantity:Math.max(1,Math.min(999,Number(x.qty)||1)),unit_price:money(x.price),product_tax_code:x.product_tax_code||undefined}));}
 function customer(body){const a=body.shippingAddress||{};return{first:String(body.first||'').trim(),last:String(body.last||'').trim(),email:String(body.email||'').trim(),phone:String(body.phone||'').trim(),street:String(a.street||'').trim(),street2:String(a.street2||'').trim(),city:String(a.city||'').trim(),state:String(a.state||'').trim().toUpperCase(),zip:String(a.zip||'').trim(),country:String(a.country||'US').trim().toUpperCase()};}
 function validateShip(c){for(const k of ['first','last','email','street','city','state','zip'])if(!c[k])throw new Error(`Missing ${k}`);if(c.country==='US'&&!/^[A-Z]{2}$/.test(c.state))throw new Error('State must be a 2-letter code');}
+function text(v,max=500){return String(v??'').trim().slice(0,max);}
+function validEmail(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);}
+function ghlHeaders(){return{Authorization:`Bearer ${process.env.GHL_API_TOKEN}`,Version:'v3','Content-Type':'application/json',Accept:'application/json'};}
 
 async function taxForOrder(body){requireEnv(['TAXJAR_API_KEY','SHIP_FROM_STATE','SHIP_FROM_ZIP','SHIP_FROM_CITY','SHIP_FROM_STREET']);const items=cleanItems(body.items);const c=customer(body);validateShip(c);const shipping=money(body.shipping||0);const payload={from_country:process.env.SHIP_FROM_COUNTRY||'US',from_zip:process.env.SHIP_FROM_ZIP,from_state:process.env.SHIP_FROM_STATE,from_city:process.env.SHIP_FROM_CITY,from_street:process.env.SHIP_FROM_STREET,to_country:c.country,to_zip:c.zip,to_state:c.state,to_city:c.city,to_street:[c.street,c.street2].filter(Boolean).join(' '),shipping,line_items:items};const r=await fetch(`${taxjarBase}/taxes`,{method:'POST',headers:{Authorization:`Bearer ${process.env.TAXJAR_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(payload)});const json=await r.json().catch(()=>({}));if(!r.ok)throw new Error(json?.detail||json?.error||`TaxJar returned ${r.status}`);return{items,customer:c,shipping,tax:money(json.tax?.amount_to_collect||0),rate:Number(json.tax?.rate||0),hasNexus:json.tax?.has_nexus!==false,taxableAmount:money(json.tax?.taxable_amount||0),raw:json.tax};}
 
-app.get('/health',(req,res)=>res.json({ok:true,taxjar:process.env.TAXJAR_SANDBOX==='true'?'sandbox':'production',authorize:process.env.AUTHORIZE_SANDBOX==='true'?'sandbox':'production'}));
+app.get('/health',(req,res)=>res.json({ok:true,taxjar:process.env.TAXJAR_SANDBOX==='true'?'sandbox':'production',authorize:process.env.AUTHORIZE_SANDBOX==='true'?'sandbox':'production',ghl:Boolean(process.env.GHL_API_TOKEN&&process.env.GHL_LOCATION_ID)}));
+
+app.post('/lead',async(req,res)=>{
+  try{
+    requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
+    const firstName=text(req.body.firstName||req.body.first,100);
+    const lastName=text(req.body.lastName||req.body.last,100);
+    const email=text(req.body.email,254).toLowerCase();
+    const phone=text(req.body.phone,50);
+    if(!firstName)throw new Error('First name is required');
+    if(!email&&!phone)throw new Error('Email or phone is required');
+    if(email&&!validEmail(email))throw new Error('Please enter a valid email address');
+
+    const source=text(req.body.source||'HTFO Website',100);
+    const customFields=Array.isArray(req.body.customFields)?req.body.customFields.slice(0,25):undefined;
+    const payload={firstName,lastName,email:email||undefined,phone:phone||undefined,locationId:process.env.GHL_LOCATION_ID,source,country:'US',createNewIfDuplicateAllowed:false,customFields};
+    Object.keys(payload).forEach(k=>payload[k]===undefined&&delete payload[k]);
+
+    const r=await fetch(`${ghlBase}/contacts/upsert`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify(payload)});
+    const json=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(json?.message||json?.error||`HighLevel contact upsert returned ${r.status}`);
+
+    const contactId=json?.contact?.id;
+    if(!contactId)throw new Error('HighLevel did not return a contact ID');
+
+    const tags=['website-lead',...((Array.isArray(req.body.tags)?req.body.tags:[]).map(x=>text(x,100)).filter(Boolean))];
+    const uniqueTags=[...new Set(tags)].slice(0,20);
+    const tr=await fetch(`${ghlBase}/contacts/${encodeURIComponent(contactId)}/tags`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify({tags:uniqueTags})});
+    const tagJson=await tr.json().catch(()=>({}));
+    if(!tr.ok)throw new Error(tagJson?.message||tagJson?.error||`HighLevel tag update returned ${tr.status}`);
+
+    res.status(json?.new?201:200).json({ok:true,new:Boolean(json?.new),contactId,source,tags:tagJson?.tags||uniqueTags});
+  }catch(e){
+    console.error('Lead capture error:',e);
+    res.status(400).json({ok:false,error:e.message});
+  }
+});
 
 app.post('/tax',async(req,res)=>{try{const t=await taxForOrder(req.body);res.json({tax:t.tax,rate:t.rate,hasNexus:t.hasNexus,taxableAmount:t.taxableAmount});}catch(e){res.status(400).json({error:e.message});}});
 
