@@ -1,5 +1,6 @@
 (()=>{
 const map={'American Whirlpool':'american-whirlpool','Vita Spa':'vita-spas','Cal Spas':'cal-spas','AquaSolus':'aquasolus','Eco Spas':'eco-spas','Innova Spas':'innova-spas'};
 function linkify(){document.querySelectorAll('.brand-head h2').forEach(h=>{if(h.querySelector('a'))return;const name=h.textContent.trim();const slug=map[name];if(!slug)return;h.innerHTML=`<a class="brand-about-link" href="brand.html?brand=${slug}" title="Explore ${name}">${name}<span>About & features →</span></a>`})}
+const style=document.createElement('style');style.textContent=`.brand-about-link{display:flex;align-items:baseline;justify-content:space-between;gap:18px;color:var(--n);text-decoration:none}.brand-about-link:hover{color:var(--b)}.brand-about-link span{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;font-weight:850;color:var(--b);white-space:nowrap}@media(max-width:650px){.brand-about-link{align-items:flex-start;flex-direction:column;gap:4px}.brand-about-link span{font-size:12px}}`;document.head.appendChild(style);
 const catalog=document.getElementById('catalog');if(catalog){linkify();new MutationObserver(linkify).observe(catalog,{childList:true,subtree:true})}
 })();
