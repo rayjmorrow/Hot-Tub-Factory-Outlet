@@ -4,7 +4,7 @@ import cors from 'cors';
 
 const app=express();
 const port=Number(process.env.PORT||8787);
-const allowed=(process.env.ALLOWED_ORIGIN||'https://rayjmorrow.github.io,https://hottubfactoryoutlet.com,https://www.hottubfactoryoutlet.com').split(',').map(x=>x.trim());
+const allowed=(process.env.ALLOWED_ORIGIN||'https://rayjmorrow.github.io,https://hottubfactoryoutlet.com,https://www.hottubfactoryoutlet.com,http://hottubfactoryoutlet.com,http://www.hottubfactoryoutlet.com').split(',').map(x=>x.trim());
 app.use(cors({origin:(origin,cb)=>{if(!origin||allowed.includes(origin))return cb(null,true);cb(new Error('Origin not allowed'));}}));
 app.use(express.json({limit:'256kb'}));
 
