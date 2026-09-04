@@ -15,4 +15,5 @@ function fixEcoThumbs(){document.querySelectorAll('.brand-block').forEach(block=
 const style=document.createElement('style');style.textContent=`.brand-about-link{display:flex;align-items:baseline;justify-content:space-between;gap:18px;color:var(--n);text-decoration:none}.brand-about-link:hover{color:var(--b)}.brand-about-link span{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;font-weight:850;color:var(--b);white-space:nowrap}@media(max-width:650px){.brand-about-link{align-items:flex-start;flex-direction:column;gap:4px}.brand-about-link span{font-size:12px}}`;document.head.appendChild(style);
 function refresh(){linkify();fixEcoThumbs()}
 const catalog=document.getElementById('catalog');if(catalog){refresh();new MutationObserver(refresh).observe(catalog,{childList:true,subtree:true})}
+if(window.SpaExplorer){const originalOpen=window.SpaExplorer.open;window.SpaExplorer.open=(brand,model)=>{if(brand==='Eco Spas'){const url=window.SpaExplorer.manufacturerUrl(brand,model);window.open(url,'_blank','noopener');return}return originalOpen(brand,model)}}
 })();
