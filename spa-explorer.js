@@ -22,7 +22,10 @@ function manufacturerUrl(brand,model){
  if(brand==='Cal Spas'){const x=cal[model];return x?`https://www.calspas.com/hot-tubs-spas-for-sale/${x[0]}/${x[1]}`:`https://www.calspas.com/view-all-spas`}
  if(brand==='AquaSolus') return `https://aquasolus.com/us/hot-tubs/${slug(model)}-hot-tub/`;
  if(brand==='Innova Spas'){let m=model.replace(/\s+(110V|220V)$/i,'');return `https://innovaspa.com/en_us/product/${slug(m)}`}
- if(brand==='Eco Spas') return 'https://ecospas.com/';
+ if(brand==='Eco Spas'){
+   const m=String(model||'').toUpperCase().match(/^E([1-6])/);
+   return m?`https://ecospas.com/products/our-spas/e${m[1]}`:'https://ecospas.com/products/our-spas/';
+ }
  return '#';
 }
 function buttonHtml(brand,model){return `<div class="model-actions"><button type="button" class="explore-spa" onclick="SpaExplorer.open('${esc(brand)}','${esc(model)}')">Explore This Spa →</button></div>`}
