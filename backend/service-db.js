@@ -46,12 +46,13 @@ export async function initServiceDb(){
       customer_id BIGINT NOT NULL REFERENCES service_customers(id),
       equipment_id BIGINT REFERENCES service_equipment(id),
       assigned_to TEXT,
-      status TEXT NOT NULL DEFAULT 'scheduled',
+      status TEXT NOT NULL DEFAULT 'requested',
       priority TEXT NOT NULL DEFAULT 'normal',
       scheduled_start TIMESTAMPTZ,
       scheduled_end TIMESTAMPTZ,
       complaint TEXT,
       diagnosis TEXT,
+      likely_issue TEXT,
       work_performed TEXT,
       parts_used TEXT,
       labor_hours NUMERIC(8,2) DEFAULT 0,
@@ -67,8 +68,28 @@ export async function initServiceDb(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS likely_issue TEXT;
     CREATE INDEX IF NOT EXISTS idx_service_work_orders_schedule ON service_work_orders (scheduled_start);
     CREATE INDEX IF NOT EXISTS idx_service_work_orders_customer ON service_work_orders (customer_id);
+
+    CREATE TABLE IF NOT EXISTS service_requests (
+      id BIGSERIAL PRIMARY KEY,
+      customer_id BIGINT NOT NULL REFERENCES service_customers(id),
+      equipment_id BIGINT REFERENCES service_equipment(id),
+      complaint TEXT NOT NULL,
+      likely_issue TEXT,
+      preferred_date_1 DATE,
+      preferred_window_1 TEXT,
+      preferred_date_2 DATE,
+      preferred_window_2 TEXT,
+      customer_must_be_home BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL DEFAULT 'requested',
+      manager_note TEXT,
+      work_order_id BIGINT REFERENCES service_work_orders(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_service_requests_status ON service_requests(status);
 
     CREATE TABLE IF NOT EXISTS service_invoices (
       id BIGSERIAL PRIMARY KEY,
@@ -98,6 +119,10 @@ export async function initServiceDb(){
       cost NUMERIC(12,2) NOT NULL DEFAULT 0,
       list_price NUMERIC(12,2),
       sell_price NUMERIC(12,2),
+      quantity_on_hand NUMERIC(10,2) NOT NULL DEFAULT 0,
+      quantity_committed NUMERIC(10,2) NOT NULL DEFAULT 0,
+      reorder_point NUMERIC(10,2) NOT NULL DEFAULT 0,
+      bin_location TEXT,
       taxable BOOLEAN NOT NULL DEFAULT TRUE,
       active BOOLEAN NOT NULL DEFAULT TRUE,
       supplier_url TEXT,
@@ -105,9 +130,23 @@ export async function initServiceDb(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE service_parts ADD COLUMN IF NOT EXISTS quantity_on_hand NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE service_parts ADD COLUMN IF NOT EXISTS quantity_committed NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE service_parts ADD COLUMN IF NOT EXISTS reorder_point NUMERIC(10,2) NOT NULL DEFAULT 0;
+    ALTER TABLE service_parts ADD COLUMN IF NOT EXISTS bin_location TEXT;
     CREATE INDEX IF NOT EXISTS idx_service_parts_supplier_no ON service_parts (supplier_part_number);
     CREATE INDEX IF NOT EXISTS idx_service_parts_mfg_no ON service_parts (manufacturer_part_number);
     CREATE INDEX IF NOT EXISTS idx_service_parts_desc ON service_parts USING gin (to_tsvector('english', description));
+
+    CREATE TABLE IF NOT EXISTS service_issue_parts (
+      id BIGSERIAL PRIMARY KEY,
+      issue_key TEXT NOT NULL,
+      part_id BIGINT NOT NULL REFERENCES service_parts(id),
+      quantity_required NUMERIC(10,2) NOT NULL DEFAULT 1,
+      priority INT NOT NULL DEFAULT 100,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      UNIQUE(issue_key,part_id)
+    );
 
     CREATE TABLE IF NOT EXISTS service_pricing_rules (
       id BIGSERIAL PRIMARY KEY,
