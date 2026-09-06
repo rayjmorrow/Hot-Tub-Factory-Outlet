@@ -53,6 +53,12 @@ export async function initServiceDb(){
       complaint TEXT,
       diagnosis TEXT,
       likely_issue TEXT,
+      part_source_status TEXT NOT NULL DEFAULT 'unknown',
+      part_source_name TEXT,
+      expected_part_date DATE,
+      pickup_required BOOLEAN NOT NULL DEFAULT FALSE,
+      schedule_override BOOLEAN NOT NULL DEFAULT FALSE,
+      scheduling_note TEXT,
       work_performed TEXT,
       parts_used TEXT,
       labor_hours NUMERIC(8,2) DEFAULT 0,
@@ -69,6 +75,12 @@ export async function initServiceDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS likely_issue TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS part_source_status TEXT NOT NULL DEFAULT 'unknown';
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS part_source_name TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS expected_part_date DATE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS pickup_required BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS schedule_override BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS scheduling_note TEXT;
     CREATE INDEX IF NOT EXISTS idx_service_work_orders_schedule ON service_work_orders (scheduled_start);
     CREATE INDEX IF NOT EXISTS idx_service_work_orders_customer ON service_work_orders (customer_id);
 
@@ -201,6 +213,10 @@ export async function initServiceDb(){
       requested_by TEXT,
       requested_quantity NUMERIC(10,2) NOT NULL DEFAULT 1,
       status TEXT NOT NULL DEFAULT 'requested',
+      source_status TEXT NOT NULL DEFAULT 'unsourced',
+      source_name TEXT,
+      expected_available_date DATE,
+      pickup_required BOOLEAN NOT NULL DEFAULT FALSE,
       manager_approved_by TEXT,
       manager_approved_at TIMESTAMPTZ,
       supplier_order_number TEXT,
@@ -210,6 +226,10 @@ export async function initServiceDb(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE service_part_requests ADD COLUMN IF NOT EXISTS source_status TEXT NOT NULL DEFAULT 'unsourced';
+    ALTER TABLE service_part_requests ADD COLUMN IF NOT EXISTS source_name TEXT;
+    ALTER TABLE service_part_requests ADD COLUMN IF NOT EXISTS expected_available_date DATE;
+    ALTER TABLE service_part_requests ADD COLUMN IF NOT EXISTS pickup_required BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 }
 
