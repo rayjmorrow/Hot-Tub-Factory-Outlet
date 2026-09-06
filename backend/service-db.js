@@ -86,6 +86,91 @@ export async function initServiceDb(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS service_parts (
+      id BIGSERIAL PRIMARY KEY,
+      supplier TEXT,
+      supplier_part_number TEXT,
+      manufacturer_part_number TEXT,
+      description TEXT NOT NULL,
+      brand TEXT,
+      category TEXT,
+      cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+      list_price NUMERIC(12,2),
+      sell_price NUMERIC(12,2),
+      taxable BOOLEAN NOT NULL DEFAULT TRUE,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      supplier_url TEXT,
+      source_updated_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_service_parts_supplier_no ON service_parts (supplier_part_number);
+    CREATE INDEX IF NOT EXISTS idx_service_parts_mfg_no ON service_parts (manufacturer_part_number);
+    CREATE INDEX IF NOT EXISTS idx_service_parts_desc ON service_parts USING gin (to_tsvector('english', description));
+
+    CREATE TABLE IF NOT EXISTS service_pricing_rules (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT,
+      rule_type TEXT NOT NULL DEFAULT 'markup_percent',
+      value NUMERIC(12,4) NOT NULL,
+      minimum_sell NUMERIC(12,2),
+      minimum_profit NUMERIC(12,2),
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      priority INT NOT NULL DEFAULT 100,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS service_estimates (
+      id BIGSERIAL PRIMARY KEY,
+      estimate_number TEXT UNIQUE NOT NULL,
+      work_order_id BIGINT NOT NULL REFERENCES service_work_orders(id) ON DELETE CASCADE,
+      customer_id BIGINT NOT NULL REFERENCES service_customers(id),
+      status TEXT NOT NULL DEFAULT 'draft',
+      labor_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      trip_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      tax_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      customer_note TEXT,
+      manager_note TEXT,
+      approved_at TIMESTAMPTZ,
+      rejected_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS service_estimate_items (
+      id BIGSERIAL PRIMARY KEY,
+      estimate_id BIGINT NOT NULL REFERENCES service_estimates(id) ON DELETE CASCADE,
+      part_id BIGINT REFERENCES service_parts(id),
+      description TEXT NOT NULL,
+      quantity NUMERIC(10,2) NOT NULL DEFAULT 1,
+      unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+      unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      line_total NUMERIC(12,2) NOT NULL DEFAULT 0,
+      taxable BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS service_part_requests (
+      id BIGSERIAL PRIMARY KEY,
+      work_order_id BIGINT NOT NULL REFERENCES service_work_orders(id) ON DELETE CASCADE,
+      estimate_id BIGINT REFERENCES service_estimates(id),
+      part_id BIGINT REFERENCES service_parts(id),
+      requested_by TEXT,
+      requested_quantity NUMERIC(10,2) NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'requested',
+      manager_approved_by TEXT,
+      manager_approved_at TIMESTAMPTZ,
+      supplier_order_number TEXT,
+      ordered_at TIMESTAMPTZ,
+      received_at TIMESTAMPTZ,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
 }
 
