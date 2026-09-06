@@ -40,6 +40,27 @@ export async function initServiceFinancials(){
     CREATE INDEX IF NOT EXISTS idx_service_warranty_claims_supplier ON service_warranty_claims(supplier);
     CREATE INDEX IF NOT EXISTS idx_service_warranty_claims_work_order ON service_warranty_claims(work_order_id);
 
+    CREATE TABLE IF NOT EXISTS service_payments (
+      id BIGSERIAL PRIMARY KEY,
+      invoice_id BIGINT NOT NULL REFERENCES service_invoices(id) ON DELETE CASCADE,
+      work_order_id BIGINT REFERENCES service_work_orders(id),
+      customer_id BIGINT NOT NULL REFERENCES service_customers(id),
+      amount NUMERIC(12,2) NOT NULL,
+      payment_method TEXT NOT NULL,
+      reference_number TEXT,
+      authorize_transaction_id TEXT,
+      collected_by_user_id BIGINT REFERENCES service_users(id),
+      collected_by_name TEXT,
+      collected_in_field BOOLEAN NOT NULL DEFAULT TRUE,
+      notes TEXT,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_service_payments_invoice ON service_payments(invoice_id);
+    CREATE INDEX IF NOT EXISTS idx_service_payments_work_order ON service_payments(work_order_id);
+    CREATE INDEX IF NOT EXISTS idx_service_payments_method ON service_payments(payment_method);
+    CREATE INDEX IF NOT EXISTS idx_service_payments_received ON service_payments(received_at);
+
     CREATE OR REPLACE FUNCTION htfo_set_trip_charge() RETURNS trigger AS $$
     DECLARE m NUMERIC;
     DECLARE calc NUMERIC;
