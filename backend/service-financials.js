@@ -56,7 +56,7 @@ export async function initServiceFinancials(){
 
     DROP TRIGGER IF EXISTS trg_htfo_set_trip_charge ON service_work_orders;
     CREATE TRIGGER trg_htfo_set_trip_charge
-      BEFORE INSERT OR UPDATE OF travel_minutes, trip_charge_override
+      BEFORE INSERT OR UPDATE
       ON service_work_orders
       FOR EACH ROW EXECUTE FUNCTION htfo_set_trip_charge();
   `);
