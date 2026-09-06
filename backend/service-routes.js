@@ -11,6 +11,7 @@ const secret = () => {
 const clean = v => v == null ? null : String(v).trim();
 const num = v => Number(v || 0);
 const tokenFor = user => jwt.sign({sub:user.id,username:user.username,name:user.display_name,role:user.role}, secret(), {expiresIn:'12h'});
+const canDispatch = req => ['admin','manager','service_manager'].includes(req.user?.role);
 
 export async function ensureBootstrapAdmin(){
   const username=clean(process.env.SERVICE_ADMIN_USER), password=process.env.SERVICE_ADMIN_PASSWORD, display=clean(process.env.SERVICE_ADMIN_NAME)||'HTFO Administrator';
@@ -102,16 +103,18 @@ router.get('/work-orders',auth,async(req,res)=>{
   res.json(r.rows);
 });
 router.post('/work-orders',auth,async(req,res)=>{
+  if(!canDispatch(req)) return res.status(403).json({error:'Dispatch permission required'});
   const b=req.body||{}, number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
-  const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,assigned_to,status,priority,scheduled_start,scheduled_end,complaint,warranty,internal_notes)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,[number,b.customer_id,b.equipment_id||null,clean(b.assigned_to),clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,b.scheduled_end||null,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes)]);
+  const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,assigned_to,assigned_team,job_type,status,priority,scheduled_start,scheduled_end,complaint,warranty,internal_notes)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[number,b.customer_id,b.equipment_id||null,clean(b.assigned_to),clean(b.assigned_team),clean(b.job_type)||'service',clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,b.scheduled_end||null,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes)]);
   res.status(201).json(r.rows[0]);
 });
 router.patch('/work-orders/:id',auth,async(req,res)=>{
-  const b=req.body||{};
+  const b=req.body||{},dispatch=canDispatch(req);
   const labor=num(b.labor_amount), parts=num(b.parts_amount), trip=num(b.trip_amount), tax=num(b.tax_amount), total=labor+parts+trip+tax;
-  const r=await q(`UPDATE service_work_orders SET assigned_to=coalesce($2,assigned_to),status=coalesce($3,status),priority=coalesce($4,priority),scheduled_start=coalesce($5,scheduled_start),scheduled_end=coalesce($6,scheduled_end),complaint=coalesce($7,complaint),diagnosis=coalesce($8,diagnosis),work_performed=coalesce($9,work_performed),parts_used=coalesce($10,parts_used),labor_hours=coalesce($11,labor_hours),labor_amount=$12,parts_amount=$13,trip_amount=$14,tax_amount=$15,total_amount=$16,warranty=coalesce($17,warranty),internal_notes=coalesce($18,internal_notes),customer_signature=coalesce($19,customer_signature),completed_at=CASE WHEN $3='completed' THEN coalesce(completed_at,NOW()) ELSE completed_at END,updated_at=NOW() WHERE id=$1 RETURNING *`,
-    [req.params.id,clean(b.assigned_to),clean(b.status),clean(b.priority),b.scheduled_start||null,b.scheduled_end||null,clean(b.complaint),clean(b.diagnosis),clean(b.work_performed),clean(b.parts_used),b.labor_hours==null?null:num(b.labor_hours),labor,parts,trip,tax,total,b.warranty==null?null:Boolean(b.warranty),clean(b.internal_notes),clean(b.customer_signature)]);
+  const assigned=dispatch?clean(b.assigned_to):null,assignedTeam=dispatch?clean(b.assigned_team):null,jobType=dispatch?clean(b.job_type):null,priority=dispatch?clean(b.priority):null,scheduledStart=dispatch?(b.scheduled_start||null):null,scheduledEnd=dispatch?(b.scheduled_end||null):null;
+  const r=await q(`UPDATE service_work_orders SET assigned_to=coalesce($2,assigned_to),assigned_team=coalesce($3,assigned_team),job_type=coalesce($4,job_type),status=coalesce($5,status),priority=coalesce($6,priority),scheduled_start=coalesce($7,scheduled_start),scheduled_end=coalesce($8,scheduled_end),complaint=coalesce($9,complaint),diagnosis=coalesce($10,diagnosis),work_performed=coalesce($11,work_performed),parts_used=coalesce($12,parts_used),labor_hours=coalesce($13,labor_hours),labor_amount=$14,parts_amount=$15,trip_amount=$16,tax_amount=$17,total_amount=$18,warranty=coalesce($19,warranty),internal_notes=coalesce($20,internal_notes),customer_signature=coalesce($21,customer_signature),completed_at=CASE WHEN $5='completed' THEN coalesce(completed_at,NOW()) ELSE completed_at END,updated_at=NOW() WHERE id=$1 RETURNING *`,
+    [req.params.id,assigned,assignedTeam,jobType,clean(b.status),priority,scheduledStart,scheduledEnd,clean(b.complaint),clean(b.diagnosis),clean(b.work_performed),clean(b.parts_used),b.labor_hours==null?null:num(b.labor_hours),labor,parts,trip,tax,total,b.warranty==null?null:Boolean(b.warranty),clean(b.internal_notes),clean(b.customer_signature)]);
   if(!r.rowCount) return res.status(404).json({error:'Work order not found'});
   res.json(r.rows[0]);
 });
