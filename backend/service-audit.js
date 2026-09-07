@@ -24,7 +24,7 @@ export async function initServiceAudit(){
     BEGIN
       old_json := CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN to_jsonb(OLD) ELSE NULL END;
       new_json := CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN to_jsonb(NEW) ELSE NULL END;
-      rec_id := COALESCE(new_json->>'id',old_json->>'id');
+      rec_id := COALESCE(new_json->>'id',new_json->>'customer_id',old_json->>'id',old_json->>'customer_id');
       who := NULLIF(current_setting('app.service_actor',true),'');
       INSERT INTO service_audit_log(table_name,record_id,action,actor,old_data,new_data)
       VALUES(TG_TABLE_NAME,rec_id,TG_OP,COALESCE(who,current_user),old_json,new_json);
@@ -35,7 +35,8 @@ export async function initServiceAudit(){
 
   const tables=[
     'service_customers','service_equipment','service_requests','service_work_orders',
-    'service_invoices','service_payments','service_part_requests','service_estimates','service_warranty_claims'
+    'service_invoices','service_payments','service_part_requests','service_estimates','service_warranty_claims',
+    'service_customer_payment_settings'
   ];
   for(const table of tables){
     const exists=await q('SELECT to_regclass($1) name',[table]);
