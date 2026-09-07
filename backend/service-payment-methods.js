@@ -8,13 +8,14 @@ const clean=v=>v==null?null:String(v).trim();
 const num=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
 function secret(){if(!process.env.SERVICE_JWT_SECRET)throw new Error('SERVICE_JWT_SECRET is required');return process.env.SERVICE_JWT_SECRET}
 function auth(req,res,next){try{const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!raw)return res.status(401).json({error:'Login required'});req.user=jwt.verify(raw,secret());next()}catch{res.status(401).json({error:'Session expired or invalid'})}}
-function manager(req,res,next){if(!['admin','manager','service_manager'].includes(req.user?.role))return res.status(403).json({error:'Service manager permission required'});next()}
+function manager(req,res,next){if(!['admin','owner','manager','service_manager'].includes(req.user?.role))return res.status(403).json({error:'Service manager permission required'});next()}
 const authLoginId=()=>process.env.AUTHORIZE_API_LOGIN_ID||process.env.AUTHORIZENET_API_LOGIN_ID;
 const authTransactionKey=()=>process.env.AUTHORIZE_TRANSACTION_KEY||process.env.AUTHORIZENET_TRANSACTION_KEY;
 const authApi=()=>process.env.AUTHORIZE_SANDBOX==='true'?'https://apitest.authorize.net/xml/v1/request.api':'https://api.authorize.net/xml/v1/request.api';
 const customerForm=()=>process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/customer/manage':'https://accept.authorize.net/customer/manage';
 function merchantAuth(){if(!authLoginId()||!authTransactionKey())throw new Error('Authorize.Net is not configured');return{name:authLoginId(),transactionKey:authTransactionKey()}}
 async function anet(body){const r=await fetch(authApi(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),j=await r.json().catch(()=>({}));if(!r.ok||j?.messages?.resultCode!=='Ok')throw new Error(j?.messages?.message?.[0]?.text||`Authorize.Net returned ${r.status}`);return j}
+async function anetRaw(body){const r=await fetch(authApi(),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j?.messages?.message?.[0]?.text||`Authorize.Net returned ${r.status}`);return j}
 const authorizationText='I authorize Hot Tub Factory Outlet to securely keep my payment method on file with its payment processor and to charge that payment method for authorized service work and resulting service invoices. I understand I will receive a receipt for charges made.';
 
 export async function initServicePaymentMethods(){
@@ -49,14 +50,34 @@ export async function initServicePaymentMethods(){
       used_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS service_card_charge_attempts (
+      id BIGSERIAL PRIMARY KEY,
+      invoice_id BIGINT NOT NULL REFERENCES service_invoices(id) ON DELETE CASCADE,
+      work_order_id BIGINT REFERENCES service_work_orders(id),
+      customer_id BIGINT NOT NULL REFERENCES service_customers(id),
+      amount NUMERIC(12,2) NOT NULL,
+      status TEXT NOT NULL,
+      processor_response_code TEXT,
+      processor_message TEXT,
+      authorize_transaction_id TEXT,
+      attempted_by_user_id BIGINT REFERENCES service_users(id),
+      attempted_by_name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE INDEX IF NOT EXISTS idx_service_payment_auth_links_customer ON service_payment_authorization_links(customer_id);
     CREATE INDEX IF NOT EXISTS idx_service_payment_auth_links_expiry ON service_payment_authorization_links(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_service_card_attempts_invoice ON service_card_charge_attempts(invoice_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_service_card_attempts_customer ON service_card_charge_attempts(customer_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_service_card_attempts_status ON service_card_charge_attempts(status,created_at DESC);
   `);
 }
 
 async function ensureSetting(customerId){await q(`INSERT INTO service_customer_payment_settings(customer_id) VALUES($1) ON CONFLICT(customer_id) DO NOTHING`,[customerId]);return (await q('SELECT * FROM service_customer_payment_settings WHERE customer_id=$1',[customerId])).rows[0]}
 function hashToken(t){return crypto.createHash('sha256').update(t).digest('hex')}
 async function tokenRecord(token){const h=hashToken(token);return (await q(`SELECT l.*,c.first_name,c.last_name,c.email,c.phone FROM service_payment_authorization_links l JOIN service_customers c ON c.id=l.customer_id WHERE l.token_hash=$1 AND l.expires_at>NOW()`,[h])).rows[0]}
+async function logChargeAttempt({inv,amount,status,code,message,transactionId,user}){
+  await q(`INSERT INTO service_card_charge_attempts(invoice_id,work_order_id,customer_id,amount,status,processor_response_code,processor_message,authorize_transaction_id,attempted_by_user_id,attempted_by_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[inv.id,inv.work_order_id,inv.customer_id,amount,status,clean(code),clean(message)?.slice(0,500)||null,clean(transactionId),user?.sub||null,user?.name||user?.username||'HTFO manager']);
+}
 
 router.get('/customers/:id/payment-method',auth,async(req,res)=>{
   const c=(await q('SELECT id,first_name,last_name,email,phone FROM service_customers WHERE id=$1',[req.params.id])).rows[0];
@@ -134,24 +155,39 @@ router.post('/payment-authorization/:token/complete',async(req,res)=>{
   }catch(e){res.status(400).json({error:e.message})}
 });
 
+router.get('/invoices/:id/card-charge-attempts',auth,manager,async(req,res)=>{
+  const rows=(await q(`SELECT id,amount,status,processor_response_code,processor_message,authorize_transaction_id,attempted_by_name,created_at FROM service_card_charge_attempts WHERE invoice_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100`,[req.params.id])).rows;
+  res.json(rows);
+});
+
 router.post('/invoices/:id/charge-card-on-file',auth,manager,async(req,res)=>{
+  const inv=(await q(`SELECT i.*,c.email,concat_ws(' ',c.first_name,c.last_name) customer_name,s.authorize_customer_profile_id,s.authorize_payment_profile_id,s.card_brand,s.card_last_four,s.authorization_name,s.authorized_at FROM service_invoices i JOIN service_customers c ON c.id=i.customer_id LEFT JOIN service_customer_payment_settings s ON s.customer_id=i.customer_id WHERE i.id=$1`,[req.params.id])).rows[0];
+  if(!inv)return res.status(404).json({error:'Invoice not found'});
+  if(!inv.authorize_customer_profile_id||!inv.authorize_payment_profile_id)return res.status(400).json({error:'Customer does not have a card on file'});
+  if(!inv.authorized_at)return res.status(400).json({error:'Customer card authorization is not recorded'});
+  const balance=num(Number(inv.total_amount)-Number(inv.amount_paid)),amount=req.body?.amount==null?balance:num(req.body.amount);
+  if(amount<=0||amount>balance+0.001)return res.status(400).json({error:'Charge must be greater than zero and no more than the invoice balance'});
   try{
-    const inv=(await q(`SELECT i.*,c.email,concat_ws(' ',c.first_name,c.last_name) customer_name,s.authorize_customer_profile_id,s.authorize_payment_profile_id,s.card_brand,s.card_last_four,s.authorization_name,s.authorized_at FROM service_invoices i JOIN service_customers c ON c.id=i.customer_id LEFT JOIN service_customer_payment_settings s ON s.customer_id=i.customer_id WHERE i.id=$1`,[req.params.id])).rows[0];
-    if(!inv)return res.status(404).json({error:'Invoice not found'});
-    if(!inv.authorize_customer_profile_id||!inv.authorize_payment_profile_id)return res.status(400).json({error:'Customer does not have a card on file'});
-    if(!inv.authorized_at)return res.status(400).json({error:'Customer card authorization is not recorded'});
-    const balance=num(Number(inv.total_amount)-Number(inv.amount_paid)),amount=req.body?.amount==null?balance:num(req.body.amount);
-    if(amount<=0||amount>balance+0.001)return res.status(400).json({error:'Charge must be greater than zero and no more than the invoice balance'});
-    const j=await anet({createTransactionRequest:{merchantAuthentication:merchantAuth(),refId:String(inv.invoice_number).slice(0,20),transactionRequest:{transactionType:'authCaptureTransaction',amount,profile:{customerProfileId:String(inv.authorize_customer_profile_id),paymentProfile:{paymentProfileId:String(inv.authorize_payment_profile_id)}},order:{invoiceNumber:String(inv.invoice_number).slice(0,20),description:`HTFO Service ${inv.invoice_number}`},customer:{email:inv.email||undefined}}}});
-    const tr=j?.transactionResponse;
-    if(!tr?.transId||tr?.responseCode!=='1')throw new Error(tr?.errors?.[0]?.errorText||tr?.messages?.[0]?.description||'Card charge was not approved');
+    const j=await anetRaw({createTransactionRequest:{merchantAuthentication:merchantAuth(),refId:String(inv.invoice_number).slice(0,20),transactionRequest:{transactionType:'authCaptureTransaction',amount,profile:{customerProfileId:String(inv.authorize_customer_profile_id),paymentProfile:{paymentProfileId:String(inv.authorize_payment_profile_id)}},order:{invoiceNumber:String(inv.invoice_number).slice(0,20),description:`HTFO Service ${inv.invoice_number}`},customer:{email:inv.email||undefined}}}});
+    const tr=j?.transactionResponse||{};
+    const approved=String(tr.responseCode||'')==='1'&&Boolean(tr.transId)&&String(tr.transId)!=='0';
+    const processorCode=clean(tr.errors?.[0]?.errorCode)||clean(tr.responseCode)||clean(j?.messages?.message?.[0]?.code);
+    const processorMessage=clean(tr.errors?.[0]?.errorText)||clean(tr.messages?.[0]?.description)||clean(j?.messages?.message?.[0]?.text)||(approved?'Approved':'Card charge was not approved');
+    if(!approved){
+      await logChargeAttempt({inv,amount,status:'declined',code:processorCode,message:processorMessage,transactionId:tr.transId,user:req.user});
+      return res.status(402).json({ok:false,declined:true,error:'Card declined — payment not collected',reason:processorMessage,processor_code:processorCode,invoice_id:inv.id,invoice_number:inv.invoice_number,amount,card_brand:inv.card_brand,card_last_four:inv.card_last_four});
+    }
     const duplicate=await q('SELECT id FROM service_payments WHERE authorize_transaction_id=$1',[String(tr.transId)]);
     if(duplicate.rowCount)return res.status(409).json({error:'This transaction is already recorded'});
     const p=await q(`INSERT INTO service_payments(invoice_id,work_order_id,customer_id,amount,payment_method,authorize_transaction_id,collected_by_user_id,collected_by_name,collected_in_field,notes) VALUES($1,$2,$3,$4,'card_on_file',$5,$6,$7,false,$8) RETURNING *`,[inv.id,inv.work_order_id,inv.customer_id,amount,String(tr.transId),req.user?.sub||null,req.user?.name||req.user?.username||'HTFO manager',`Card on file ${inv.card_brand||'Card'} •••• ${inv.card_last_four||''}`]);
     const updated=await q(`UPDATE service_invoices SET amount_paid=amount_paid+$2,payment_method='card_on_file',status=CASE WHEN amount_paid+$2>=total_amount THEN 'paid' ELSE 'partial' END,paid_at=CASE WHEN amount_paid+$2>=total_amount THEN NOW() ELSE paid_at END,updated_at=NOW() WHERE id=$1 RETURNING *,total_amount-amount_paid balance`,[inv.id,amount]);
     await q(`UPDATE service_customer_payment_settings SET last_charged_at=NOW(),last_charge_amount=$2,updated_at=NOW() WHERE customer_id=$1`,[inv.customer_id,amount]);
-    res.status(201).json({ok:true,transaction_id:String(tr.transId),payment:p.rows[0],invoice:updated.rows[0],card_brand:inv.card_brand,card_last_four:inv.card_last_four});
-  }catch(e){res.status(400).json({error:e.message})}
+    await logChargeAttempt({inv,amount,status:'approved',code:tr.responseCode,message:processorMessage,transactionId:String(tr.transId),user:req.user});
+    return res.status(201).json({ok:true,approved:true,transaction_id:String(tr.transId),processor_message:processorMessage,payment:p.rows[0],invoice:updated.rows[0],card_brand:inv.card_brand,card_last_four:inv.card_last_four});
+  }catch(e){
+    try{await logChargeAttempt({inv,amount,status:'error',code:null,message:e.message,transactionId:null,user:req.user})}catch{}
+    return res.status(502).json({ok:false,declined:false,error:'Payment processor error — no payment was recorded',reason:e.message});
+  }
 });
 
 router.get('/payment-readiness/:customerId',auth,async(req,res)=>{
