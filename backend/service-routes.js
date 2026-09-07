@@ -31,6 +31,12 @@ function auth(req,res,next){
     next();
   }catch{ res.status(401).json({error:'Session expired or invalid'}); }
 }
+async function paymentReady(customerId){
+  try{
+    const r=await q('SELECT payment_status FROM service_customer_payment_settings WHERE customer_id=$1',[customerId]);
+    return ['card_on_file','cash_check_approved'].includes(r.rows[0]?.payment_status);
+  }catch{return false}
+}
 
 router.post('/auth/login', async(req,res)=>{
   const username=clean(req.body?.username), password=String(req.body?.password||'');
@@ -113,7 +119,9 @@ router.get('/work-orders',auth,async(req,res)=>{
 });
 router.post('/work-orders',auth,async(req,res)=>{
   if(!canDispatch(req)) return res.status(403).json({error:'Dispatch permission required'});
-  const b=req.body||{}, number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
+  const b=req.body||{};
+  if(b.scheduled_start && !(await paymentReady(b.customer_id))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
+  const number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
   const scheduledEnd=b.scheduled_end||defaultScheduledEnd(b.scheduled_start,b.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes);
   const appointmentMinutes=Math.max(15,Number(b.appointment_minutes)||SERVICE_RULES.defaultAppointmentMinutes);
   const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,assigned_to,assigned_team,job_type,status,priority,scheduled_start,scheduled_end,appointment_minutes,complaint,warranty,internal_notes,diagnostic_amount,labor_rate,parts_tax_rate)
@@ -124,6 +132,7 @@ router.patch('/work-orders/:id',auth,async(req,res)=>{
   const current=(await q('SELECT * FROM service_work_orders WHERE id=$1',[req.params.id])).rows[0];
   if(!current) return res.status(404).json({error:'Work order not found'});
   const b=req.body||{},dispatch=canDispatch(req),override=canOverrideCharges(req);
+  if(dispatch && b.scheduled_start && !(await paymentReady(current.customer_id))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled.'});
   const laborHours=b.labor_hours==null?num(current.labor_hours):Math.max(0,num(b.labor_hours));
   const labor=override&&b.labor_amount!=null?Math.max(0,num(b.labor_amount)):calculateLaborAmount(laborHours);
   const parts=override&&b.parts_amount!=null?Math.max(0,num(b.parts_amount)):num(current.parts_amount);
