@@ -1,9 +1,11 @@
 import { q } from './service-db.js';
+import { SERVICE_RULES } from './service-business-rules.js';
 
 export async function initServiceScheduling(){
   await q(`
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS job_type TEXT NOT NULL DEFAULT 'service';
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS assigned_team TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS appointment_minutes INT NOT NULL DEFAULT ${Number(SERVICE_RULES.defaultAppointmentMinutes)};
 
     CREATE TABLE IF NOT EXISTS service_dispatch_resources (
       id BIGSERIAL PRIMARY KEY,
