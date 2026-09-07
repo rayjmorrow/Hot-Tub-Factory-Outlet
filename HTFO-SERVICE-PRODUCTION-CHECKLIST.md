@@ -18,12 +18,17 @@ This checklist separates work that can be completed in code from decisions, cred
 - [x] Invoice foundation
 - [x] Cash/check field payment ledger foundation
 - [x] Hosted-card checkout foundation
+- [x] Card-on-file authorization/token foundation
+- [x] Manager Charge Card on File action
+- [x] Payment-method-required-before-service-scheduling guard
 - [x] Warranty receivables foundation
 - [x] Database audit-trail foundation
-- [ ] Bring the production desktop portal calendar up to the approved monthly/day/hourly demo workflow
-- [ ] Add full work-order detail/edit view to desktop portal
-- [ ] Add global invoices screen to desktop portal
-- [ ] Add product-specific service-history API joins to all work-order list views
+- [x] Production desktop portal monthly/day/hourly calendar workflow
+- [x] Full work-order detail view on desktop portal
+- [x] Global invoices screen on desktop portal
+- [x] Product-specific service-history joins in work-order/calendar views
+- [x] Manager staff-account/admin console foundation
+- [x] Manager audit-history viewer foundation
 - [ ] Add photo/attachment storage
 - [ ] Add customer signature capture/storage strategy
 - [ ] Add printable invoice/work-order documents
@@ -34,7 +39,7 @@ This checklist separates work that can be completed in code from decisions, cred
 - [x] Customer → Equipment → Work Order → Invoice relationships
 - [x] Parts / estimates / warranty / payment schema foundations
 - [x] Audit log table and automatic insert/update/delete history triggers
-- [ ] Add Dealer/Tenant and Location structure before broad real-data import
+- [x] Add Dealer/Tenant and Location foundation before broad real-data import
 - [ ] Normalize dispatch assignment to resource IDs instead of names
 - [ ] Map staff users to dispatch resources
 - [ ] Finalize indexes and production migration scripts
@@ -68,21 +73,23 @@ The goal is to be able to recover from accidental deletion, a bad deployment, da
 - [ ] Create Bill technician account
 - [ ] Create Dave technician account
 - [ ] Decide additional staff roles
-- [ ] Require individual accounts; no shared production password
-- [ ] Add password reset/change workflow
+- [x] Individual-account management foundation; no shared production password required
+- [x] Manager password reset foundation
+- [ ] Add self-service password change/reset if desired
 - [ ] Review role permissions before launch
-- [ ] Confirm technicians cannot change dispatch/pricing without permission
-- [ ] Confirm card numbers are never stored in service database
+- [x] Backend blocks regular technicians from dispatch changes
+- [x] Backend charge overrides restricted to owner/admin/service-manager roles
+- [x] Card-on-file architecture stores processor profile tokens/last four, not raw card numbers or CVV
 
 ## 6. HTFO business rules needed from Ray/Rick
-- [ ] Standard labor rate
-- [ ] Minimum labor/diagnostic charge
-- [ ] Standard service-call duration(s)
-- [ ] Taxability rules for labor, trip and parts
+- [x] Standard labor rate — $150/hour
+- [x] Minimum/diagnostic charge — $100 diagnostic
+- [x] Standard service-call duration — 60 minutes; leaks may be scheduled longer
+- [x] Taxability — 7% on parts; labor non-taxable
 - [ ] Parts markup/margin rules
-- [ ] Final trip-charge rule and whether travel time is one-way
-- [ ] Who may override trip charges
-- [ ] Who may discount invoices/parts/labor
+- [ ] Final trip-charge rule confirmation and whether travel time is one-way
+- [x] Charge overrides — Ray and Rick only
+- [x] Discount/charge override authority — Ray and Rick only
 - [ ] Warranty labor reimbursement rules by manufacturer
 - [ ] Warranty trip reimbursement rules by manufacturer
 - [ ] Warranty parts/return requirements
@@ -90,7 +97,7 @@ The goal is to be able to recover from accidental deletion, a bad deployment, da
 
 ## 7. Customer data migration
 - [ ] Gather customer CSV/source data
-- [ ] Add tenant/location structure first
+- [x] Add tenant/location foundation first
 - [ ] Import into staging database
 - [ ] Deduplicate by normalized email/phone/address
 - [ ] Review duplicates manually
@@ -102,20 +109,29 @@ The goal is to be able to recover from accidental deletion, a bad deployment, da
 - [x] Public service request page
 - [x] Temporary email forwarding to Rick
 - [ ] Verify one-time FormSubmit activation
-- [ ] Replace temporary email-only flow with production API submission
-- [ ] Create or match customer automatically from request
-- [ ] Insert request into service queue
-- [ ] Notify Rick of new request
-- [ ] Keep customer confirmation page/message
-- [ ] Add spam/rate-limit protection to production endpoint
+- [x] Production API intake endpoint built
+- [x] Create or match customer automatically from request
+- [x] Insert request into service queue
+- [ ] Switch live public form from temporary email-only submission to production API after backend deployment
+- [ ] Notify Rick automatically from production request workflow
+- [x] Keep customer confirmation page/message
+- [x] Honeypot spam field foundation
+- [ ] Add production rate limiting/abuse protection
 
 ## 9. Payments
 - [x] Invoice-to-payment data model foundation
 - [x] Cash/check payment ledger foundation
 - [x] Hosted Authorize.Net card checkout foundation
+- [x] Customer card-on-file authorization page foundation
+- [x] Authorize.Net customer/payment profile token storage foundation
+- [x] Card on File / Cash-Check Approved / Payment Needed states
+- [x] Manager-only remote Charge Card on File action
+- [x] Scheduling guard requires card on file or cash/check approval for service calls
+- [ ] Review final customer authorization language against HTFO/Authorize.Net requirements
 - [ ] Confirm production Authorize.Net credentials in server environment
-- [ ] Complete automatic server-side webhook verification/linking
-- [ ] Test full card payment and invoice auto-update
+- [ ] Complete automatic server-side webhook verification/linking for hosted card payments
+- [ ] Test full card-on-file authorization and remote charge
+- [ ] Test hosted card payment and invoice auto-update
 - [ ] Test partial payment
 - [ ] Test cash payment
 - [ ] Test check payment with check number
@@ -126,7 +142,7 @@ The goal is to be able to recover from accidental deletion, a bad deployment, da
 - [ ] Upload manufacturer warranty claim forms
 - [ ] Map each form's fields once
 - [ ] Auto-fill customer/product/model/serial/work-order information
-- [ ] Add claim number/status/claimed/approved/paid views
+- [x] Claim number/status/claimed/approved/paid data foundation
 - [ ] Correct outstanding receivable logic to use approved amount after approval
 - [ ] Add aging/reporting by manufacturer
 
@@ -143,6 +159,7 @@ The goal is to be able to recover from accidental deletion, a bad deployment, da
 Before real launch, complete one full test using test data:
 - [ ] Create customer
 - [ ] Add multiple products to customer
+- [ ] Secure payment method or approve cash/check
 - [ ] Create service call from specific product
 - [ ] Schedule/assign technician
 - [ ] Open job on technician phone
@@ -152,6 +169,7 @@ Before real launch, complete one full test using test data:
 - [ ] Create invoice
 - [ ] Record cash/check payment
 - [ ] Run hosted card test
+- [ ] Run card-on-file remote charge test
 - [ ] Verify paid/partial balance
 - [ ] Verify customer/product history
 - [ ] Generate warranty paperwork
