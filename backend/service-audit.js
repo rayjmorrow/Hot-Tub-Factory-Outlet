@@ -36,7 +36,7 @@ export async function initServiceAudit(){
   const tables=[
     'service_customers','service_equipment','service_requests','service_work_orders',
     'service_invoices','service_payments','service_part_requests','service_estimates','service_warranty_claims',
-    'service_customer_payment_settings','service_card_charge_attempts'
+    'service_customer_payment_settings','service_card_charge_attempts','service_retail_transactions'
   ];
   for(const table of tables){
     const exists=await q('SELECT to_regclass($1) name',[table]);
