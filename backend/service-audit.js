@@ -37,7 +37,8 @@ export async function initServiceAudit(){
     'service_customers','service_equipment','service_requests','service_work_orders',
     'service_invoices','service_payments','service_part_requests','service_estimates','service_warranty_claims',
     'service_customer_payment_settings','service_card_charge_attempts','service_retail_transactions',
-    'service_invoice_line_items','service_invoice_discounts'
+    'service_invoice_line_items','service_invoice_discounts','service_recurring_orders',
+    'service_recurring_order_items','service_customer_orders','service_customer_order_items','service_order_change_log'
   ];
   for(const table of tables){
     const exists=await q('SELECT to_regclass($1) name',[table]);
