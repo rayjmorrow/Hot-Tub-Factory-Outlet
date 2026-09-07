@@ -6,23 +6,26 @@ import partsRoutes from './parts-routes.js';
 import financialRoutes from './financial-routes.js';
 import fieldRoutes from './field-routes.js';
 import paymentMethodRoutes,{initServicePaymentMethods} from './service-payment-methods.js';
+import operationsRoutes from './service-operations-routes.js';
 import {initServiceDb} from './service-db.js';
 import {initServiceFinancials} from './service-financials.js';
 import {initServiceScheduling} from './service-scheduling.js';
 import {initServiceTenancy} from './service-tenancy.js';
 import {initServiceAudit} from './service-audit.js';
+import {initServicePaymentGuard} from './service-payment-guard.js';
 
 const app=express();
 const port=Number(process.env.SERVICE_PORT||8790);
 const allowed=(process.env.ALLOWED_ORIGIN||'https://rayjmorrow.github.io,https://hottubfactoryoutlet.com,https://www.hottubfactoryoutlet.com').split(',').map(x=>x.trim());
 app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
 app.use(express.json({limit:'2mb'}));
-app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,tenancyFoundation:true,auditTrail:true}));
+app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,tenancyFoundation:true,auditTrail:true}));
 app.use('/api/service',serviceRoutes);
 app.use('/api/service',partsRoutes);
 app.use('/api/service',financialRoutes);
 app.use('/api/service',fieldRoutes);
 app.use('/api/service',paymentMethodRoutes);
+app.use('/api/service',operationsRoutes);
 
 try{
   await initServiceDb();
@@ -30,6 +33,7 @@ try{
   await initServiceScheduling();
   await initServiceTenancy();
   await initServicePaymentMethods();
+  await initServicePaymentGuard();
   await initServiceAudit();
   await ensureBootstrapAdmin();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
