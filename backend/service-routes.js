@@ -17,9 +17,12 @@ const canDispatch = req => ['admin','manager','service_manager','owner'].include
 export async function ensureBootstrapAdmin(){
   const username=clean(process.env.SERVICE_ADMIN_USER), password=process.env.SERVICE_ADMIN_PASSWORD, display=clean(process.env.SERVICE_ADMIN_NAME)||'HTFO Administrator';
   if(!username || !password) return;
-  const hit=await q('SELECT id FROM service_users WHERE lower(username)=lower($1)',[username]);
-  if(hit.rowCount) return;
   const hash=await bcrypt.hash(password,12);
+  const hit=await q('SELECT id FROM service_users WHERE lower(username)=lower($1)',[username]);
+  if(hit.rowCount){
+    await q('UPDATE service_users SET password_hash=$2,display_name=$3,role=$4,active=true WHERE id=$1',[hit.rows[0].id,hash,display,'admin']);
+    return;
+  }
   await q('INSERT INTO service_users(username,password_hash,display_name,role) VALUES($1,$2,$3,$4)',[username,hash,display,'admin']);
 }
 
