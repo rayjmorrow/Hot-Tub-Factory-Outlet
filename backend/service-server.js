@@ -44,19 +44,21 @@ app.use((req,res,next)=>{
 app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
 app.use(express.json({limit:'2mb'}));
 
-// Small in-memory login throttle for staging/production. A platform WAF can add another layer later.
+// Small in-memory failed-login throttle for staging/production. A platform WAF can add another layer later.
 const loginAttempts=new Map();
 app.use('/api/service/auth/login',(req,res,next)=>{
   if(req.method!=='POST')return next();
   const key=req.ip||req.socket?.remoteAddress||'unknown';
   const now=Date.now(),windowMs=15*60*1000,maxAttempts=10;
-  const prior=loginAttempts.get(key)||[];
-  const recent=prior.filter(t=>now-t<windowMs);
+  const recent=(loginAttempts.get(key)||[]).filter(t=>now-t<windowMs);
   if(recent.length>=maxAttempts){
     res.setHeader('Retry-After','900');
-    return res.status(429).json({error:'Too many login attempts. Try again in 15 minutes.'});
+    return res.status(429).json({error:'Too many failed login attempts. Try again in 15 minutes.'});
   }
-  recent.push(now);loginAttempts.set(key,recent);
+  res.on('finish',()=>{
+    if(res.statusCode>=200&&res.statusCode<300)loginAttempts.delete(key);
+    else if(res.statusCode===401){recent.push(Date.now());loginAttempts.set(key,recent)}
+  });
   next();
 });
 setInterval(()=>{const cutoff=Date.now()-15*60*1000;for(const [k,v] of loginAttempts){const recent=v.filter(t=>t>cutoff);if(recent.length)loginAttempts.set(k,recent);else loginAttempts.delete(k)}},15*60*1000).unref();
