@@ -1,4 +1,5 @@
 import { q } from './service-db.js';
+import { SERVICE_RULES } from './service-business-rules.js';
 
 export function calculateTripCharge(minutes){
   const m=Math.max(0,Number(minutes)||0);
@@ -7,12 +8,20 @@ export function calculateTripCharge(minutes){
 }
 
 export async function initServiceFinancials(){
+  const laborRate=Number(SERVICE_RULES.laborRatePerHour);
+  const diagnostic=Number(SERVICE_RULES.diagnosticCharge);
+  const partsTaxRate=Number(SERVICE_RULES.partsTaxRate);
   await q(`
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS travel_minutes NUMERIC(8,2);
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS calculated_trip_charge NUMERIC(12,2) NOT NULL DEFAULT 80;
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS trip_charge_override NUMERIC(12,2);
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS trip_charge_override_reason TEXT;
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS travel_time_source TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS diagnostic_amount NUMERIC(12,2) NOT NULL DEFAULT ${diagnostic};
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS labor_rate NUMERIC(12,2) NOT NULL DEFAULT ${laborRate};
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS parts_tax_rate NUMERIC(8,5) NOT NULL DEFAULT ${partsTaxRate};
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS charge_override_reason TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS charge_override_by TEXT;
 
     CREATE TABLE IF NOT EXISTS service_warranty_claims (
       id BIGSERIAL PRIMARY KEY,
