@@ -1,0 +1,1 @@
+Local Platinum Legend image assets used by the HTFO model catalog and expanded model pages.
