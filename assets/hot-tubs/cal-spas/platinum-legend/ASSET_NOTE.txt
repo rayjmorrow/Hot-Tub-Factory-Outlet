@@ -1,0 +1,1 @@
+Binary Platinum Legend model imagery is being stored locally in this folder for the HTFO catalog and expanded model views.
