@@ -42,22 +42,22 @@
       name:'Cal Spas',
       tag:'Hydrotherapy to Heal Minds and Bodies™.',
       lede:'A deep American-made lineup with everything from approachable plug-and-play models to advanced hydrotherapy, premium controls, swim spas and specialty wellness products.',
-      chips:['Made since 1978','Made in the USA','Patio through Platinum','Hot tubs & swim spas'],
-      heroImage:'assets/hot-tubs/cal-spas/arcata.webp',
-      heroLabel:'Cal Spas Arcata',
+      chips:['Made since 1978','Made in the USA','Patio through Platinum Legend','Hot tubs & swim spas'],
+      heroImage:'assets/hot-tubs/cal-spas/atlantic-x.webp',
+      heroLabel:'Cal Spas Atlantic X',
       visual:[
         ['Ergonomic Seating & Hydrotherapy','Contoured seating and strategically positioned jets are designed to support the body and target common areas of tension.','assets/hot-tubs/cal-spas/baja.webp','https://www.calspas.com/Why-Cal-Spas'],
         ['Insulation Built for Four Seasons','Cal Spas offers insulation systems designed to reduce heat loss and help maintain water temperature through changing seasons.','assets/hot-tubs/cal-spas/atlantic-x.webp','https://www.calspas.com/Why-Cal-Spas'],
-        ['Heating & Everyday Performance','A titanium heater and efficiency-focused equipment package support regular year-round use.','assets/hot-tubs/cal-spas/arcata.webp','https://www.calspas.com/Why-Cal-Spas'],
+        ['Heating & Everyday Performance','A titanium heater and efficiency-focused equipment package support regular year-round use.','assets/hot-tubs/cal-spas/malibu.webp','https://www.calspas.com/Why-Cal-Spas'],
         ['Covers, Controls & Smart Options','From insulated spa covers to touch controls, lighting, audio and Cal Connect™ Wi-Fi on compatible models, Cal offers a long menu of ways to tailor the spa.','assets/hot-tubs/cal-spas/malibu.webp','https://www.calspas.com/Why-Cal-Spas']
       ],
       series:[
         ['Patio & Patio Plus','A strong starting point for shoppers focused on value, comfort and straightforward hydrotherapy.'],
         ['Escape & Escape X','More therapy, more equipment and more ways to personalize the experience.'],
-        ['Platinum & Deck','Higher-feature collections for shoppers who want premium hydrotherapy, larger formats and elevated appointments.']
+        ['Platinum Legend & Deck','Platinum Legend is Cal Spas’ newest luxury hot-tub collection, replacing the previous Platinum Series; Deck remains the oversized entertaining format.']
       ],
       collections:[
-        ['Patio™','Approachable everyday hot tubs.'],['Patio Plus™','More features while staying value-focused.'],['Escape™','A step up in hydrotherapy and equipment.'],['Escape X™','Higher-performance therapy and appointments.'],['Platinum™','Premium Cal Spas hot tubs.'],['Deck™','Oversized spas for entertaining and integrated spaces.'],['Swim™','Exercise, family fun and hydrotherapy.'],['Cold Plunge™','Cold-water wellness options.']
+        ['Patio™','Approachable everyday hot tubs.'],['Patio Plus™','More features while staying value-focused.'],['Escape™','A step up in hydrotherapy and equipment.'],['Escape X™','Higher-performance therapy and appointments.'],['Platinum Legend™','New premium luxury collection: Crown, Monarch, Royal and Legacy.'],['Deck™','Oversized spas for entertaining and integrated spaces.'],['Swim™','Exercise, family fun and hydrotherapy.'],['Cold Plunge™','Cold-water wellness options.']
       ],
       external:'https://calspasmonroeville.com/'
     },
