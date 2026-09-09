@@ -8,6 +8,7 @@
   async function renderPaymentPanel(customerId){
     const detail=$('#customerDetail');
     if(!detail)return;
+    detail.querySelectorAll('.payment-panel').forEach(el=>el.remove());
     const [pm,cx]=await Promise.all([api(`/customers/${customerId}/payment-method`),api(`/customers/${customerId}`)]);
     const p=pm.payment||{},status=p.status||'needed';
     const ready=status==='card_on_file'||status==='cash_check_approved';
