@@ -18,6 +18,7 @@ import customerOrderRoutes,{initCustomerOrders} from './customer-orders-routes.j
 import commercialRulesRoutes,{initServiceCommercialRules} from './service-commercial-rules.js';
 import customerImportRoutes,{initServiceCustomerImport} from './service-customer-import-routes.js';
 import customerPrivacyRoutes,{initCustomerPrivacy} from './service-customer-privacy-routes.js';
+import {promoteLatestStagedCustomers} from './service-customer-promote.js';
 import {initServiceDb,q} from './service-db.js';
 import {initServiceFinancials} from './service-financials.js';
 import {initServiceScheduling} from './service-scheduling.js';
@@ -112,6 +113,7 @@ try{
   await initServiceCustomerImport();
   await initCustomerPrivacy();
   await ensureBootstrapAdmin();
+  await promoteLatestStagedCustomers();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
 }catch(err){
   console.error('Unable to start HTFO service backend:',err);
