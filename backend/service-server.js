@@ -19,6 +19,7 @@ import commercialRulesRoutes,{initServiceCommercialRules} from './service-commer
 import customerImportRoutes,{initServiceCustomerImport} from './service-customer-import-routes.js';
 import customerPrivacyRoutes,{initCustomerPrivacy} from './service-customer-privacy-routes.js';
 import customerEditRoutes from './service-customer-edit-routes.js';
+import equipmentEditRoutes from './service-equipment-edit-routes.js';
 import workOrderDetailRoutes from './service-workorder-detail-routes.js';
 import {promoteLatestStagedCustomers} from './service-customer-promote.js';
 import {initServiceDb,q} from './service-db.js';
@@ -67,13 +68,14 @@ app.use('/api/service/auth/login',(req,res,next)=>{
 });
 setInterval(()=>{const cutoff=Date.now()-15*60*1000;for(const [k,v] of loginAttempts){const recent=v.filter(t=>t>cutoff);if(recent.length)loginAttempts.set(k,recent);else loginAttempts.delete(k)}},15*60*1000).unref();
 
-app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true,workOrderDetailAndDelete:true}));
+app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true,equipmentProfileEditing:true,workOrderDetailAndDelete:true}));
 app.get('/ready',async(req,res)=>{try{await q('SELECT 1');res.json({ok:true,database:true})}catch(e){res.status(503).json({ok:false,database:false,error:'Database unavailable'})}});
 
 app.use('/api/service',publicServiceRoutes);
 app.use('/api/service',commercialRulesRoutes);
 app.use('/api/service',customerPrivacyRoutes);
 app.use('/api/service',customerEditRoutes);
+app.use('/api/service',equipmentEditRoutes);
 app.use('/api/service',workOrderDetailRoutes);
 app.use('/api/service',serviceRoutes);
 app.use('/api/service',partsRoutes);
