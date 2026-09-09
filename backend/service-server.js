@@ -45,7 +45,6 @@ app.use((req,res,next)=>{
 app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
 app.use(express.json({limit:'2mb'}));
 
-// Small in-memory failed-login throttle for staging/production. A platform WAF can add another layer later.
 const loginAttempts=new Map();
 app.use('/api/service/auth/login',(req,res,next)=>{
   if(req.method!=='POST')return next();
@@ -82,10 +81,9 @@ app.use('/api/service',customerOrderControls);
 app.use('/api/service',customerOrderRoutes);
 app.use('/api/service',customerImportRoutes);
 
-// Serve only the approved portal assets. Do not expose the repository or backend source tree.
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-payment-ui.js','service-customer-value-ui.js',
-  'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js',
+  'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js',
   'service-field.css','service-field.js','service-field-manifest.webmanifest'
 ]);
 app.get(['/', '/service-portal.html'],(req,res)=>res.sendFile(path.join(portalRoot,'service-portal.html')));
