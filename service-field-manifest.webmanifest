@@ -1,0 +1,10 @@
+{
+  "name": "HTFO Field Service",
+  "short_name": "HTFO Field",
+  "start_url": "/service-field.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fa",
+  "theme_color": "#0b314f",
+  "description": "Hot Tub Factory Outlet technician field service app"
+}
