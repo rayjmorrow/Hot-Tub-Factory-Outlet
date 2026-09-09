@@ -18,6 +18,7 @@ import customerOrderRoutes,{initCustomerOrders} from './customer-orders-routes.j
 import commercialRulesRoutes,{initServiceCommercialRules} from './service-commercial-rules.js';
 import customerImportRoutes,{initServiceCustomerImport} from './service-customer-import-routes.js';
 import customerPrivacyRoutes,{initCustomerPrivacy} from './service-customer-privacy-routes.js';
+import customerEditRoutes from './service-customer-edit-routes.js';
 import {promoteLatestStagedCustomers} from './service-customer-promote.js';
 import {initServiceDb,q} from './service-db.js';
 import {initServiceFinancials} from './service-financials.js';
@@ -65,12 +66,13 @@ app.use('/api/service/auth/login',(req,res,next)=>{
 });
 setInterval(()=>{const cutoff=Date.now()-15*60*1000;for(const [k,v] of loginAttempts){const recent=v.filter(t=>t>cutoff);if(recent.length)loginAttempts.set(k,recent);else loginAttempts.delete(k)}},15*60*1000).unref();
 
-app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true}));
+app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true}));
 app.get('/ready',async(req,res)=>{try{await q('SELECT 1');res.json({ok:true,database:true})}catch(e){res.status(503).json({ok:false,database:false,error:'Database unavailable'})}});
 
 app.use('/api/service',publicServiceRoutes);
 app.use('/api/service',commercialRulesRoutes);
 app.use('/api/service',customerPrivacyRoutes);
+app.use('/api/service',customerEditRoutes);
 app.use('/api/service',serviceRoutes);
 app.use('/api/service',partsRoutes);
 app.use('/api/service',financialRoutes);
@@ -86,7 +88,7 @@ app.use('/api/service',customerImportRoutes);
 
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-payment-ui.js','service-customer-value-ui.js',
-  'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js',
+  'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js',
   'service-field.css','service-field.js','service-field-manifest.webmanifest'
 ]);
 app.get(['/', '/service-portal.html'],(req,res)=>res.sendFile(path.join(portalRoot,'service-portal.html')));
