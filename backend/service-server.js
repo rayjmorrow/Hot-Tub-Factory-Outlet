@@ -91,7 +91,7 @@ app.use('/api/service',customerOrderRoutes);
 app.use('/api/service',customerImportRoutes);
 
 const portalAssets=new Set([
-  'service-portal.css','service-portal.js','service-payment-ui.js','service-customer-value-ui.js',
+  'service-portal.css','service-portal.js','service-customer-click-fix.js','service-payment-ui.js','service-customer-value-ui.js',
   'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js','service-workorder-detail-ui.js',
   'service-field.css','service-field.js','service-field-manifest.webmanifest'
 ]);
