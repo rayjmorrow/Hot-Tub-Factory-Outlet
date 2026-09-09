@@ -10,24 +10,28 @@
   document.body.appendChild(ed);
 
   let currentCustomer=null,currentEquipment=[];
-  const baseLoadCustomer=loadCustomer;
-  loadCustomer=async function(id){
-    await baseLoadCustomer(id);
-    try{
-      const x=await api('/customers/'+id);
-      currentCustomer=x.customer;
-      currentEquipment=x.equipment||[];
-      const toolbar=document.querySelector('.customer-toolbar .row.wrap');
-      if(toolbar && !document.getElementById('editCustomerBtn')){
-        const b=document.createElement('button');
-        b.id='editCustomerBtn';
-        b.className='secondary';
-        b.textContent='Edit Customer';
-        b.onclick=()=>openEditCustomer(currentCustomer,currentEquipment);
-        toolbar.prepend(b);
-      }
-    }catch(e){console.error(e)}
-  };
+
+  function installEditButton(){
+    const toolbar=document.querySelector('.customer-toolbar .row.wrap');
+    if(!toolbar || document.getElementById('editCustomerBtn'))return;
+    const b=document.createElement('button');
+    b.id='editCustomerBtn';
+    b.className='secondary';
+    b.textContent='Edit Customer';
+    b.onclick=async()=>{
+      try{
+        if(!activeCustomerId)return;
+        const x=await api('/customers/'+activeCustomerId);
+        openEditCustomer(x.customer,x.equipment||[]);
+      }catch(err){alert(err.message)}
+    };
+    toolbar.prepend(b);
+  }
+
+  const customerDetail=document.getElementById('customerDetail');
+  if(customerDetail){
+    new MutationObserver(()=>installEditButton()).observe(customerDetail,{childList:true,subtree:true});
+  }
 
   function renderProducts(){
     const box=document.getElementById('editCustomerProducts');
