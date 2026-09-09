@@ -33,6 +33,8 @@ export async function initServiceInvoiceItems(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE service_invoice_line_items ADD COLUMN IF NOT EXISTS supplier TEXT;
+    ALTER TABLE service_invoice_line_items ADD COLUMN IF NOT EXISTS source_url TEXT;
     CREATE INDEX IF NOT EXISTS idx_service_invoice_items_wo ON service_invoice_line_items(work_order_id);
     CREATE INDEX IF NOT EXISTS idx_service_invoice_items_invoice ON service_invoice_line_items(invoice_id);
 
@@ -116,6 +118,18 @@ router.post('/work-orders/:id/invoice-items/part',auth,async(req,res)=>{
     const qty=Math.max(.01,Number(req.body?.quantity)||1),unit=req.body?.unit_price==null?await sellPrice(part):num(req.body.unit_price),line=num(qty*unit);
     const r=await q(`INSERT INTO service_invoice_line_items(work_order_id,part_id,item_type,description,sku,quantity,unit_price,line_total,taxable,added_by_user_id,added_by_name)
       VALUES($1,$2,'part',$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[req.params.id,part.id,part.description,part.manufacturer_part_number||part.supplier_part_number,qty,unit,line,part.taxable!==false,req.user?.sub||null,req.user?.name||req.user?.username||'HTFO staff']);
+    const totals=await recalc(req.params.id);res.status(201).json({item:r.rows[0],totals});
+  }catch(e){res.status(400).json({error:e.message})}
+});
+
+router.post('/work-orders/:id/invoice-items/external-part',auth,async(req,res)=>{
+  try{
+    const description=clean(req.body?.description),sku=clean(req.body?.sku),supplier=clean(req.body?.supplier)||'External supplier',sourceUrl=clean(req.body?.source_url);
+    const qty=Math.max(.01,Number(req.body?.quantity)||1),unit=num(req.body?.unit_price),line=num(qty*unit);
+    if(!description)return res.status(400).json({error:'Part description is required'});
+    if(unit<=0)return res.status(400).json({error:'Retail price must be greater than zero'});
+    const r=await q(`INSERT INTO service_invoice_line_items(work_order_id,item_type,description,sku,quantity,unit_price,line_total,taxable,supplier,source_url,added_by_user_id,added_by_name)
+      VALUES($1,'part',$2,$3,$4,$5,$6,true,$7,$8,$9,$10) RETURNING *`,[req.params.id,description,sku,qty,unit,line,supplier,sourceUrl,req.user?.sub||null,req.user?.name||req.user?.username||'HTFO staff']);
     const totals=await recalc(req.params.id);res.status(201).json({item:r.rows[0],totals});
   }catch(e){res.status(400).json({error:e.message})}
 });
