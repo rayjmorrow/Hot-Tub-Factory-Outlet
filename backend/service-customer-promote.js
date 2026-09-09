@@ -1,9 +1,5 @@
 import { q } from './service-db.js';
 
-const clean=v=>v==null?null:String(v).trim();
-const splitFirst=v=>clean(v)||null;
-const splitLast=v=>clean(v)||null;
-
 export async function promoteLatestStagedCustomers(){
   await q(`
     CREATE TABLE IF NOT EXISTS service_customer_import_links (
@@ -23,66 +19,74 @@ export async function promoteLatestStagedCustomers(){
   const batch=await q(`SELECT * FROM service_customer_import_batches WHERE status='staging' ORDER BY created_at DESC LIMIT 1`);
   if(!batch.rowCount){
     console.log('Customer promotion: no staged batch awaiting promotion.');
-    return {promoted:0,skipped:0,batch:null};
+    return {promoted:0,batch:null};
   }
-
   const b=batch.rows[0];
-  const staged=await q(`SELECT * FROM service_customer_import_staging WHERE batch_id=$1 AND row_status='staged' ORDER BY id`,[b.id]);
-  let promoted=0,skipped=0;
 
-  for(const s of staged.rows){
-    const linked=await q('SELECT customer_id FROM service_customer_import_links WHERE staging_id=$1',[s.id]);
-    if(linked.rowCount){ skipped++; continue; }
+  const before=await q('SELECT count(*)::int n FROM service_customers');
 
-    // Duplicate protection: normalized address first, then email, then phone.
-    let existing={rowCount:0,rows:[]};
-    if(s.normalized_address){
-      existing=await q(`SELECT id FROM service_customers WHERE regexp_replace(lower(concat_ws(' ',street,city,state,zip)),'[^a-z0-9]','','g')=$1 LIMIT 1`,[s.normalized_address]);
-    }
-    if(!existing.rowCount && s.primary_email){
-      existing=await q('SELECT id FROM service_customers WHERE lower(email)=lower($1) LIMIT 1',[s.primary_email]);
-    }
-    if(!existing.rowCount && s.primary_phone){
-      existing=await q("SELECT id FROM service_customers WHERE regexp_replace(phone,'\\D','','g')=regexp_replace($1,'\\D','','g') LIMIT 1",[s.primary_phone]);
-    }
+  await q(`
+    INSERT INTO service_customers(first_name,last_name,email,phone,street,city,state,zip,notes,source)
+    SELECT
+      NULLIF(trim(s.first_name),''),
+      NULLIF(trim(s.last_name),''),
+      NULLIF(lower(trim(s.primary_email)),''),
+      NULLIF(trim(s.primary_phone),''),
+      NULLIF(trim(s.street),''),
+      NULLIF(trim(s.city),''),
+      NULLIF(upper(trim(s.state)),''),
+      NULLIF(trim(s.zip),''),
+      NULLIF(concat_ws(E'\n',
+        CASE WHEN nullif(trim(s.secondary_phone),'') IS NOT NULL THEN 'Secondary phone: '||trim(s.secondary_phone) END,
+        CASE WHEN nullif(trim(s.additional_phones),'') IS NOT NULL THEN 'Additional phones: '||trim(s.additional_phones) END,
+        CASE WHEN nullif(trim(s.additional_emails),'') IS NOT NULL THEN 'Additional emails: '||trim(s.additional_emails) END,
+        CASE WHEN nullif(trim(s.recent_notes),'') IS NOT NULL THEN 'Historical notes: '||trim(s.recent_notes) END
+      ),''),
+      'HTFO master import'
+    FROM service_customer_import_staging s
+    WHERE s.batch_id=$1 AND s.row_status='staged'
+      AND NOT EXISTS (
+        SELECT 1 FROM service_customers c
+        WHERE regexp_replace(lower(concat_ws(' ',c.street,c.city,c.state,c.zip)),'[^a-z0-9]','','g')=s.normalized_address
+           OR (s.primary_email IS NOT NULL AND s.primary_email<>'' AND lower(c.email)=lower(s.primary_email))
+           OR (s.primary_phone IS NOT NULL AND s.primary_phone<>'' AND regexp_replace(c.phone,'\\D','','g')=regexp_replace(s.primary_phone,'\\D','','g'))
+      )
+  `,[b.id]);
 
-    let customerId;
-    if(existing.rowCount){
-      customerId=existing.rows[0].id;
-      skipped++;
-    }else{
-      const notes=[
-        s.secondary_phone?`Secondary phone: ${s.secondary_phone}`:null,
-        s.additional_phones?`Additional phones: ${s.additional_phones}`:null,
-        s.additional_emails?`Additional emails: ${s.additional_emails}`:null,
-        s.recent_notes?`Historical notes: ${s.recent_notes}`:null
-      ].filter(Boolean).join('\n');
-      const r=await q(`INSERT INTO service_customers(first_name,last_name,email,phone,street,city,state,zip,notes,source)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,[
-          splitFirst(s.first_name),splitLast(s.last_name),clean(s.primary_email),clean(s.primary_phone),clean(s.street),clean(s.city),clean(s.state),clean(s.zip),notes||null,'HTFO master import'
-        ]);
-      customerId=r.rows[0].id;
-      promoted++;
-    }
+  await q(`
+    INSERT INTO service_customer_import_links(staging_id,batch_id,source_customer_id,customer_id,aliases,merged_customer_ids,review_note)
+    SELECT s.id,s.batch_id,s.source_customer_id,c.id,s.aliases,s.merged_customer_ids,s.review_note
+    FROM service_customer_import_staging s
+    JOIN LATERAL (
+      SELECT c.id
+      FROM service_customers c
+      WHERE regexp_replace(lower(concat_ws(' ',c.street,c.city,c.state,c.zip)),'[^a-z0-9]','','g')=s.normalized_address
+         OR (s.primary_email IS NOT NULL AND s.primary_email<>'' AND lower(c.email)=lower(s.primary_email))
+         OR (s.primary_phone IS NOT NULL AND s.primary_phone<>'' AND regexp_replace(c.phone,'\\D','','g')=regexp_replace(s.primary_phone,'\\D','','g'))
+      ORDER BY CASE WHEN regexp_replace(lower(concat_ws(' ',c.street,c.city,c.state,c.zip)),'[^a-z0-9]','','g')=s.normalized_address THEN 0 ELSE 1 END, c.id
+      LIMIT 1
+    ) c ON true
+    WHERE s.batch_id=$1 AND s.row_status='staged'
+    ON CONFLICT(staging_id) DO NOTHING
+  `,[b.id]);
 
-    await q(`INSERT INTO service_customer_import_links(staging_id,batch_id,source_customer_id,customer_id,aliases,merged_customer_ids,review_note)
-      VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(staging_id) DO NOTHING`,[
-        s.id,b.id,clean(s.source_customer_id),customerId,clean(s.aliases),clean(s.merged_customer_ids),clean(s.review_note)
-      ]);
+  await q(`
+    INSERT INTO service_equipment(customer_id,equipment_type,brand,model,install_date,notes)
+    SELECT l.customer_id,'Hot Tub',NULLIF(trim(s.spa_makes),''),NULLIF(trim(s.spa_models),''),s.purchase_date,
+      'Imported from historical HTFO customer database. Serial number not auto-assigned.'
+    FROM service_customer_import_staging s
+    JOIN service_customer_import_links l ON l.staging_id=s.id
+    WHERE s.batch_id=$1
+      AND (NULLIF(trim(s.spa_makes),'') IS NOT NULL OR NULLIF(trim(s.spa_models),'') IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM service_equipment e WHERE e.customer_id=l.customer_id)
+  `,[b.id]);
 
-    // Seed one equipment record when make/model history is available. Keep serial blank because old calendar names may contain serials ambiguously.
-    if((s.spa_makes||s.spa_models) && !(await q('SELECT 1 FROM service_equipment WHERE customer_id=$1 LIMIT 1',[customerId])).rowCount){
-      await q(`INSERT INTO service_equipment(customer_id,equipment_type,brand,model,install_date,notes)
-        VALUES($1,'Hot Tub',$2,$3,$4,$5)`,[
-          customerId,clean(s.spa_makes),clean(s.spa_models),s.purchase_date||null,
-          'Imported from historical HTFO customer database. Serial number not auto-assigned.'
-        ]);
-    }
-
-    await q(`UPDATE service_customer_import_staging SET row_status='promoted',updated_at=NOW() WHERE id=$1`,[s.id]);
-  }
-
+  await q(`UPDATE service_customer_import_staging SET row_status='promoted',updated_at=NOW() WHERE batch_id=$1 AND row_status='staged'`,[b.id]);
   await q(`UPDATE service_customer_import_batches SET status='promoted',updated_at=NOW() WHERE id=$1`,[b.id]);
-  console.log(`Customer promotion complete: ${promoted} inserted, ${skipped} linked/skipped, batch ${b.batch_key}.`);
-  return {promoted,skipped,batch:b.batch_key};
+
+  const after=await q('SELECT count(*)::int n FROM service_customers');
+  const linked=await q('SELECT count(*)::int n FROM service_customer_import_links WHERE batch_id=$1',[b.id]);
+  const promoted=after.rows[0].n-before.rows[0].n;
+  console.log(`Customer promotion complete: ${promoted} inserted, ${linked.rows[0].n} staged rows linked, batch ${b.batch_key}.`);
+  return {promoted,linked:linked.rows[0].n,batch:b.batch_key};
 }
