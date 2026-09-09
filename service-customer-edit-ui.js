@@ -33,6 +33,22 @@
     new MutationObserver(()=>installEditButton()).observe(customerDetail,{childList:true,subtree:true});
   }
 
+  document.addEventListener('click',async e=>{
+    const row=e.target.closest?.('.customer-row[data-id]');
+    if(!row)return;
+    e.preventDefault();
+    e.stopPropagation();
+    const id=row.dataset.id;
+    try{
+      if(customerDetail) customerDetail.innerHTML='<div class="card"><p class="muted">Loading customer…</p></div>';
+      await loadCustomer(id);
+    }catch(err){
+      console.error('Unable to open customer',err);
+      if(customerDetail) customerDetail.innerHTML=`<div class="card"><p class="error">Unable to open customer: ${esc(err?.message||'Unknown error')}</p></div>`;
+      else alert(err?.message||'Unable to open customer');
+    }
+  },true);
+
   function renderProducts(){
     const box=document.getElementById('editCustomerProducts');
     box.innerHTML=currentEquipment.length?currentEquipment.map(e=>`<div class="item"><div class="row between wrap"><div><b>${esc([e.equipment_type,e.brand,e.model].filter(Boolean).join(' ')||'Product')}</b><div class="muted">Serial: ${esc(e.serial_number||'Not entered')}</div></div><button type="button" class="secondary" data-edit-equipment="${e.id}">Edit Product / Serial</button></div></div>`).join(''):'<p class="muted">No products recorded for this customer yet.</p>';
