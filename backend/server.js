@@ -18,9 +18,30 @@ const authForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.ne
 const customerForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/customer/manage':'https://accept.authorize.net/customer/manage';
 const authLoginId=process.env.AUTHORIZE_API_LOGIN_ID||process.env.AUTHORIZENET_API_LOGIN_ID;
 const authTransactionKey=process.env.AUTHORIZE_TRANSACTION_KEY||process.env.AUTHORIZENET_TRANSACTION_KEY;
+const ghlBase='https://services.leadconnectorhq.com';
 
 function requireEnv(names){const missing=names.filter(x=>!process.env[x]||process.env[x]==='replace_me');if(missing.length)throw new Error(`Missing server configuration: ${missing.join(', ')}`)}
 function auth(){if(!authLoginId||!authTransactionKey)throw new Error('Authorize.Net is not configured');return{name:authLoginId,transactionKey:authTransactionKey}}
+function cleanText(v,max=500){return String(v??'').trim().slice(0,max)}
+function validEmail(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)}
+function ghlHeaders(){return{Authorization:`Bearer ${process.env.GHL_API_TOKEN}`,Version:'v3','Content-Type':'application/json',Accept:'application/json'}}
+async function noteAuthorId(){
+  if(process.env.GHL_NOTE_USER_ID)return process.env.GHL_NOTE_USER_ID;
+  const locationId=process.env.GHL_LOCATION_ID;
+  const lr=await fetch(`${ghlBase}/locations/${encodeURIComponent(locationId)}`,{headers:ghlHeaders()});
+  const lj=await lr.json().catch(()=>({}));
+  if(!lr.ok||!lj?.location?.companyId)return null;
+  const qs=new URLSearchParams({companyId:lj.location.companyId,locationId,limit:'25'});
+  const ur=await fetch(`${ghlBase}/users/search?${qs}`,{headers:ghlHeaders()});
+  const uj=await ur.json().catch(()=>({}));
+  if(!ur.ok||!Array.isArray(uj?.users))return null;
+  const user=uj.users.find(x=>!x.deleted)||uj.users[0];
+  return user?.id||null;
+}
+async function addContactNote(contactId,note){
+  const body=cleanText(note,5000);if(!body)return false;
+  try{const userId=await noteAuthorId();if(!userId){console.warn('Lead note skipped: no HighLevel note author found');return false;}const nr=await fetch(`${ghlBase}/contacts/${encodeURIComponent(contactId)}/notes`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify({userId,body,title:'Website Lead Details',pinned:false})});if(!nr.ok){const nj=await nr.json().catch(()=>({}));console.warn('Lead note failed:',nj?.message||nj?.error||nr.status);return false;}return true;}catch(e){console.warn('Lead note failed:',e.message);return false;}
+}
 
 function employeeDirectory(){
   const defaults={BILL10:{name:'Bill',id:'bill'},RICK10:{name:'Rick',id:'rick'},RAY10:{name:'Ray',id:'ray'},GINA10:{name:'Gina',id:'gina'}};
@@ -157,6 +178,38 @@ app.post('/account/activate',async(req,res)=>{
 app.post('/customer/manage-token',async(req,res)=>{res.status(410).json({ok:false,error:'Use the signed My HTFO Account payment-management flow.'})});
 
 app.post('/authorize/webhook',async(req,res)=>{res.sendStatus(200);try{console.log('AUTHORIZE_WEBHOOK',JSON.stringify(req.body||{}))}catch(e){console.error('Webhook processing error',e)}});
+
+
+app.post('/lead',async(req,res)=>{
+  try{
+    requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
+    const firstName=cleanText(req.body.firstName||req.body.first,100);
+    const lastName=cleanText(req.body.lastName||req.body.last,100);
+    const email=cleanText(req.body.email,254).toLowerCase();
+    const phone=cleanText(req.body.phone,50);
+    if(!firstName)throw new Error('First name is required');
+    if(!email&&!phone)throw new Error('Email or phone is required');
+    if(email&&!validEmail(email))throw new Error('Please enter a valid email address');
+    const source=cleanText(req.body.source||'HTFO Website',100);
+    const customFields=Array.isArray(req.body.customFields)?req.body.customFields.slice(0,25):undefined;
+    const payload={firstName,lastName,email:email||undefined,phone:phone||undefined,locationId:process.env.GHL_LOCATION_ID,source,country:'US',createNewIfDuplicateAllowed:false,customFields};
+    Object.keys(payload).forEach(k=>payload[k]===undefined&&delete payload[k]);
+    const r=await fetch(`${ghlBase}/contacts/upsert`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify(payload)});
+    const json=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(json?.message||json?.error||`HighLevel contact upsert returned ${r.status}`);
+    const contactId=json?.contact?.id;if(!contactId)throw new Error('HighLevel did not return a contact ID');
+    const incoming=Array.isArray(req.body.tags)?req.body.tags:[];
+    const tags=['website-lead','duck-bucks-lead',...incoming.map(x=>cleanText(x,100)).filter(Boolean)];
+    const uniqueTags=[...new Set(tags)].slice(0,20);
+    const tr=await fetch(`${ghlBase}/contacts/${encodeURIComponent(contactId)}/tags`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify({tags:uniqueTags})});
+    const tagJson=await tr.json().catch(()=>({}));
+    if(!tr.ok)throw new Error(tagJson?.message||tagJson?.error||`HighLevel tag update returned ${tr.status}`);
+    const details=[req.body.note,req.body.offer&&`Offer: ${cleanText(req.body.offer,300)}`,req.body.campaign&&`Campaign: ${cleanText(req.body.campaign,300)}`,req.body.location&&`Preferred showroom: ${cleanText(req.body.location,100)}`,req.body.utm_source&&`UTM source: ${cleanText(req.body.utm_source,200)}`,req.body.utm_campaign&&`UTM campaign: ${cleanText(req.body.utm_campaign,200)}`,req.body.utm_content&&`UTM content: ${cleanText(req.body.utm_content,200)}`].filter(Boolean).join('\n');
+    const noteSaved=await addContactNote(contactId,details);
+    console.log('LEAD_CAPTURE_OK',JSON.stringify({contactId,source,new:Boolean(json?.new),tags:uniqueTags}));
+    res.status(json?.new?201:200).json({ok:true,new:Boolean(json?.new),contactId,source,tags:tagJson?.tags||uniqueTags,noteSaved});
+  }catch(e){console.error('Lead capture error:',e);res.status(400).json({ok:false,error:e.message});}
+});
 
 app.post('/tax',async(req,res)=>{try{const t=await taxForOrder(req.body);res.json({tax:t.tax,shipping:t.shipping,rate:t.rate,hasNexus:t.hasNexus,taxableAmount:t.taxableAmount,employeeAttribution:t.attribution})}catch(e){res.status(400).json({error:e.message})}});
 
