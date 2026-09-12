@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import {installVoucherRoutes} from './vouchers.js';
 import {ensureCustomerProfile,profileSummary,signToken,verifyToken,addMonthsISO,occurrencesFor} from './autoship-account.js';
 
 const app=express();
@@ -8,6 +9,7 @@ const port=Number(process.env.PORT||8787);
 const allowed=(process.env.ALLOWED_ORIGIN||'https://rayjmorrow.github.io,https://hottubfactoryoutlet.com,https://www.hottubfactoryoutlet.com').split(',').map(x=>x.trim());
 app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
 app.use(express.json({limit:'256kb'}));
+installVoucherRoutes(app);
 
 const money=n=>Math.round((Number(n)||0)*100)/100;
 const taxjarBase=process.env.TAXJAR_SANDBOX==='true'?'https://api.sandbox.taxjar.com/v2':'https://api.taxjar.com/v2';
