@@ -165,7 +165,7 @@ router.post('/orders/:id/payment-record',auth,manager,async(req,res)=>{
 function verifyAuthorizeWebhook(req){
   const key=String(process.env.AUTHORIZENET_SIGNATURE_KEY||'').trim();
   if(!key||!req.rawBody)return false;
-  const supplied=String(req.headers['x-anet-signature']||'').replace(/^sha512=/i,'').toLowerCase();
+  const supplied=String(req.headers['x-anet-signature']||'').replace(/^(?:sha512|512)=/i,'').toLowerCase();
   if(!supplied)return false;
   const digest=crypto.createHmac('sha512',Buffer.from(key,'hex')).update(req.rawBody).digest('hex').toLowerCase();
   if(supplied.length!==digest.length)return false;
