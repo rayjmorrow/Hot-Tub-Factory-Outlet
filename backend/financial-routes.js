@@ -164,12 +164,26 @@ router.post('/orders/:id/payment-record',auth,manager,async(req,res)=>{
 
 function verifyAuthorizeWebhook(req){
   const key=String(process.env.AUTHORIZENET_SIGNATURE_KEY||'').trim();
-  if(!key||!req.rawBody)return false;
-  const supplied=String(req.headers['x-anet-signature']||'').replace(/^(?:sha512|512)=/i,'').toLowerCase();
-  if(!supplied)return false;
-  const digest=crypto.createHmac('sha512',Buffer.from(key,'hex')).update(req.rawBody).digest('hex').toLowerCase();
-  if(supplied.length!==digest.length)return false;
-  return crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(digest));
+  const rawHeader=String(req.headers['x-anet-signature']||'').trim();
+  const supplied=rawHeader.replace(/^(?:sha512|512)=/i,'').trim().toLowerCase();
+  const keyBytes=Buffer.from(key,'hex');
+  const rawBody=req.rawBody;
+  const diagnostics={
+    key_chars:key.length,
+    key_bytes:keyBytes.length,
+    header_chars:rawHeader.length,
+    signature_chars:supplied.length,
+    raw_body_bytes:rawBody?.length||0,
+    prefix:/^sha512=/i.test(rawHeader)?'sha512':(/^512=/i.test(rawHeader)?'512':'none')
+  };
+  if(!key||!rawBody||!supplied){
+    console.warn('Authorize.Net signature diagnostics',diagnostics);
+    return false;
+  }
+  const digest=crypto.createHmac('sha512',keyBytes).update(rawBody).digest('hex').toLowerCase();
+  const valid=supplied.length===digest.length && crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(digest));
+  console.log('Authorize.Net signature diagnostics',diagnostics);
+  return valid;
 }
 
 router.post('/public/authorize-order-webhook',(req,res)=>{
