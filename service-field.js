@@ -8,8 +8,8 @@ function time(v){return v?new Date(v).toLocaleTimeString('en-US',{hour:'numeric'
 function addr(w){return [w.street,w.street2,w.city,w.state,w.zip].filter(Boolean).join(', ')}
 function wazeUrl(w){const a=addr(w);return a?`https://waze.com/ul?q=${encodeURIComponent(a)}&navigate=yes`:''}
 function wazeLink(w,label='Open in Waze'){const u=wazeUrl(w);return u?`<a class=\"waze-link\" href=\"${u}\" target=\"_blank\" rel=\"noopener\">${esc(label)}</a>`:''}
-function mine(rows){if(!user?.name)return rows;return rows.filter(w=>String(w.assigned_to||'').toLowerCase()===String(user.name).toLowerCase())}
-function canManageCalendar(){return ['admin','manager','service_manager'].includes(user?.role)}
+function mine(rows){if(!user?.name&&!user?.username)return rows;const who=String(user?.name||user?.username||'').trim().toLowerCase();return rows.filter(w=>[w.assigned_to,w.assigned_team].some(v=>String(v||'').trim().toLowerCase()===who)||(/delivery/.test(who)&&String(w.job_type||'')==='delivery'))}
+function canManageCalendar(){return ['admin','owner','manager','service_manager'].includes(String(user?.role||'').toLowerCase())}
 function visibleRows(rows){return canManageCalendar()?rows:mine(rows)}
 async function boot(){if(!token)return;try{const x=await api('/me');user=x.user;showApp()}catch{logout()}}
 function showApp(){$('#login').hidden=true;$('#app').hidden=false;$('#who').textContent=user?.name||user?.username||'';const deliveryUser=/delivery/i.test(String(user?.name||user?.username||''));if(deliveryUser){const h=$('#jobsView h1');if(h)h.textContent='Delivery Loop';const w=$('#weekView h1');if(w)w.textContent='Upcoming Deliveries';}$('#todayLabel').textContent=new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});$('#showAll').checked=canManageCalendar();$('#weekSubtitle').textContent=canManageCalendar()?'Full dispatch view. Tap a job to open it.':'Read-only look ahead at your assigned work.';$('#calendarSubtitle').textContent=canManageCalendar()?'Full dispatch calendar — tap a day to schedule, edit, or reassign.':'Tap a day to see your assigned jobs.';showFieldView('jobsView')}
