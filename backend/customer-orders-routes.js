@@ -78,6 +78,15 @@ export async function initCustomerOrders(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS service_order_card_payments (
+      id BIGSERIAL PRIMARY KEY,
+      order_id BIGINT NOT NULL REFERENCES service_customer_orders(id) ON DELETE CASCADE,
+      authorize_transaction_id TEXT UNIQUE NOT NULL,
+      amount NUMERIC(12,2) NOT NULL,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      raw_event_type TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS service_order_change_log (
       id BIGSERIAL PRIMARY KEY,
       customer_id BIGINT NOT NULL REFERENCES service_customers(id) ON DELETE CASCADE,
