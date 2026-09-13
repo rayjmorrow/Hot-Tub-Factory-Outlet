@@ -6,6 +6,7 @@ export async function initServiceScheduling(){
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS job_type TEXT NOT NULL DEFAULT 'service';
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS assigned_team TEXT;
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS appointment_minutes INT NOT NULL DEFAULT ${Number(SERVICE_RULES.defaultAppointmentMinutes)};
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS customer_order_id BIGINT REFERENCES service_customer_orders(id) ON DELETE SET NULL;
 
     CREATE TABLE IF NOT EXISTS service_dispatch_resources (
       id BIGSERIAL PRIMARY KEY,
