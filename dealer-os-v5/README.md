@@ -60,3 +60,21 @@ The delivery form includes notes for damage, backordered items, missing accessor
 - POST /api/review-trigger
 
 The working application package is kept separate from the public HTFO site while it is tested. External carrier, AI, review, ad-publisher, and geofencing integrations remain adapter-based so the dealer platform is not locked to one vendor.
+
+
+## v5.4 Guided Delivery Field Workflow
+The delivery crew now works from a mobile-first Delivery Loop so multiple spas on the trailer can be opened, reviewed, closed, and reopened independently.
+
+Each open delivery uses a locked 10-step wizard:
+1. Open Waze / arrive at customer.
+2. Verify correct spa and enter serial number.
+3. Verify standard package and accessories.
+4. Review damage, missing items, property issues, and backorders.
+5. Take proof-of-delivery photo.
+6. Take required customer happy picture.
+7. Hand phone to customer for review.
+8. Customer accepts acknowledgement.
+9. Customer signs and taps Accept Signature.
+10. Final green-check review before Complete Delivery is enabled.
+
+The backend enforces the same required fields, so an incomplete delivery cannot be completed by bypassing the browser workflow.
