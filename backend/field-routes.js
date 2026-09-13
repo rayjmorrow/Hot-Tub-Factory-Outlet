@@ -39,7 +39,13 @@ router.get('/field/work-orders/:id',auth,async(req,res)=>{
   if(!canAccessWorkOrder(req,w.rows[0]))return res.status(403).json({error:'This job is not assigned to you'});
   const inv=await q(`SELECT *,total_amount-amount_paid balance FROM service_invoices WHERE work_order_id=$1 ORDER BY created_at DESC LIMIT 1`,[req.params.id]);
   const payments=inv.rowCount?await q(`SELECT amount,payment_method,reference_number,collected_by_name,received_at FROM service_payments WHERE invoice_id=$1 ORDER BY received_at DESC`,[inv.rows[0].id]):{rows:[]};
-  res.json({workOrder:w.rows[0],invoice:inv.rows[0]||null,payments:payments.rows});
+  let deliveryOrderItems=[];
+  let deliveryOrder=null;
+  if(String(w.rows[0].job_type||'')==='delivery' && w.rows[0].customer_order_id){
+    deliveryOrder=(await q('SELECT id,order_number,total_amount,amount_paid,delivery_exception_authorized,delivery_exception_reason FROM service_customer_orders WHERE id=$1',[w.rows[0].customer_order_id])).rows[0]||null;
+    deliveryOrderItems=(await q('SELECT id,description,quantity,sku FROM service_customer_order_items WHERE order_id=$1 ORDER BY id',[w.rows[0].customer_order_id])).rows;
+  }
+  res.json({workOrder:w.rows[0],invoice:inv.rows[0]||null,payments:payments.rows,deliveryOrder,deliveryOrderItems});
 });
 
 router.patch('/field/deliveries/:id/progress',auth,async(req,res)=>{
