@@ -166,7 +166,7 @@ function verifyAuthorizeWebhook(req){
   const key=String(process.env.AUTHORIZENET_SIGNATURE_KEY||'').trim();
   const rawHeader=String(req.headers['x-anet-signature']||'').trim();
   const supplied=rawHeader.replace(/^(?:sha512|512)=/i,'').trim().toLowerCase();
-  const keyBytes=Buffer.from(key,'hex');
+  const keyBytes=Buffer.from(key,'ascii');
   const rawBody=req.rawBody;
   const diagnostics={
     key_chars:key.length,
