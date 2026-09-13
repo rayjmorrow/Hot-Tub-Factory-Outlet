@@ -48,7 +48,7 @@ app.use((req,res,next)=>{
   next();
 });
 app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
-app.use(express.json({limit:'2mb'}));
+app.use(express.json({limit:'2mb',verify:(req,res,buf)=>{req.rawBody=buf}}));
 
 const loginAttempts=new Map();
 app.use('/api/service/auth/login',(req,res,next)=>{
