@@ -52,10 +52,10 @@ async function imageDataFromFile(file){
       const img=new Image();
       img.onerror=reject;
       img.onload=()=>{
-        const max=1280,scale=Math.min(1,max/Math.max(img.width,img.height));
+        const max=1024,scale=Math.min(1,max/Math.max(img.width,img.height));
         const c=document.createElement('canvas');c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);
         c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-        resolve(c.toDataURL('image/jpeg',.72));
+        resolve(c.toDataURL('image/jpeg',.65));
       };
       img.src=fr.result;
     };
@@ -70,6 +70,9 @@ async function saveDeliveryProgress(payload){
 function renderDeliveryWizard(x){
   const w=x.workOrder, brand=String(w.brand||''), model=String(w.model||''), addrText=addr(w), defaultLifter=!/innova|eco/i.test(brand)?'Spa Ease 100':'';
   const lifter=w.delivery_cover_lifter||defaultLifter;
+  const orderItems=Array.isArray(x.deliveryOrderItems)?x.deliveryOrderItems:[];
+  const orderItemChecks=orderItems.map(i=>`<label class="confirm-tile"><input type="checkbox" class="deliveryPackage"> ${esc(String(i.quantity||1))} × ${esc(i.description||'Order item')}</label>`).join('');
+  const orderReview=orderItems.length?orderItems.map(i=>`${esc(String(i.quantity||1))} × ${esc(i.description||'Order item')}`).join('<br>'):'No additional order items';
   const startStep=deliveryReadyStep(w);
   $('#jobDetail').innerHTML=`
   <div class="delivery-wizard">
@@ -97,6 +100,7 @@ function renderDeliveryWizard(x){
       <div class="panel wizard-card"><div class="step-kicker">STEP 3 · VERIFY INCLUDED ITEMS</div><h1>Check every item.</h1>
       <label class="confirm-tile"><input type="checkbox" class="deliveryPackage"> Promo Step is here</label>
       <label class="confirm-tile"><input type="checkbox" class="deliveryPackage"> Frog Ease Start-Up Kit is here</label>
+      ${orderItemChecks}
       <label>Cover lifter<input id="deliveryLifter" value="${esc(lifter)}" placeholder="Spa Ease 100 or replacement model"></label>
       <label class="confirm-tile"><input type="checkbox" class="deliveryPackage"> Cover lifter / accessory status verified</label>
       <button type="button" class="primary huge" data-dnext>ALL ITEMS VERIFIED → CONTINUE</button></div>
@@ -131,7 +135,7 @@ function renderDeliveryWizard(x){
       <div class="panel wizard-card"><div class="handoff">HAND THE PHONE TO THE CUSTOMER</div><div class="step-kicker">STEP 7 · CUSTOMER REVIEW</div>
       <h1>Please review your delivery.</h1>
       <p><b>Customer:</b> ${esc(w.customer_name||'')}<br><b>Address:</b> ${esc(addrText)}<br><b>Spa:</b> ${esc([brand,model].filter(Boolean).join(' '))}</p>
-      <p><b>Serial:</b> <span id="deliveryReviewSerial"></span><br><b>Cover lifter:</b> <span id="deliveryReviewLifter"></span><br><b>Notes:</b> <span id="deliveryReviewNotes"></span></p>
+      <p><b>Serial:</b> <span id="deliveryReviewSerial"></span><br><b>Cover lifter:</b> <span id="deliveryReviewLifter"></span><br><b>Order items:</b><br>${orderReview}<br><b>Notes:</b> <span id="deliveryReviewNotes"></span></p>
       <label class="confirm-tile"><input type="checkbox" id="deliveryCustomerReviewed" ${w.delivery_customer_reviewed?'checked':''}> I HAVE REVIEWED THIS DELIVERY INFORMATION</label>
       <button type="button" class="primary huge" data-dnext>I HAVE REVIEWED → CONTINUE</button></div>
     </section>
