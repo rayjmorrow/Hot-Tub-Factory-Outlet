@@ -121,7 +121,7 @@ router.post('/orders/:id/payment-link',auth,async(req,res)=>{
   const balance=Math.max(0,money(num(order.total_amount)-num(order.amount_paid)));
   if(balance<=0)return res.status(400).json({error:'This order is already paid in full'});
   const token=jwt.sign({type:'order_balance_payment',order_id:order.id,customer_id:order.customer_id},secret(),{expiresIn:'7d'});
-  const base=process.env.SERVICE_ORDER_PAYMENT_URL||'https://hottubfactoryoutlet.com/order-payment.html';
+  const base=process.env.SERVICE_ORDER_PAYMENT_URL||'https://service.hottubfactoryoutlet.com/order-payment.html';
   const url=`${base}${base.includes('?')?'&':'?'}t=${encodeURIComponent(token)}`;
   res.json({url,balance,order_number:order.order_number,customer_name:[order.first_name,order.last_name].filter(Boolean).join(' '),email:order.email,phone:order.phone,expires_in_days:7});
 });
@@ -136,7 +136,7 @@ router.post('/public/order-payment/session',async(req,res)=>{
     if(!order)return res.status(404).json({error:'Order not found'});
     const balance=Math.max(0,money(num(order.total_amount)-num(order.amount_paid)));
     if(balance<=0)return res.json({paid:true,order_number:order.order_number,balance:0});
-    const returnUrl=(process.env.SERVICE_ORDER_PAYMENT_URL||'https://hottubfactoryoutlet.com/order-payment.html')+'?complete=1';
+    const returnUrl=(process.env.SERVICE_ORDER_PAYMENT_URL||'https://service.hottubfactoryoutlet.com/order-payment.html')+'?complete=1';
     const request={getHostedPaymentPageRequest:{merchantAuthentication:merchantAuth(),transactionRequest:{transactionType:'authCaptureTransaction',amount:balance,order:{invoiceNumber:String(order.order_number||order.id).slice(0,20),description:`HTFO spa balance ${order.order_number||order.id}`},customer:{email:order.email||undefined},billTo:{firstName:order.first_name||'',lastName:order.last_name||'',address:order.street||'',city:order.city||'',state:order.state||'',zip:order.zip||'',country:'US'}},hostedPaymentSettings:{setting:[{settingName:'hostedPaymentReturnOptions',settingValue:JSON.stringify({showReceipt:true,url:returnUrl,urlText:'Return to Hot Tub Factory Outlet',cancelUrl:returnUrl,cancelUrlText:'Cancel'})},{settingName:'hostedPaymentCustomerOptions',settingValue:JSON.stringify({showEmail:true,requiredEmail:false})},{settingName:'hostedPaymentPaymentOptions',settingValue:JSON.stringify({cardCodeRequired:true,showCreditCard:true,showBankAccount:false})}]}}};
     const j=await anet(request);
     if(!j.token)throw new Error('Authorize.Net did not return a payment token');
