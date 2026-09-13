@@ -17,7 +17,7 @@
     const panel=document.createElement('div');panel.className='card customer-orders';
     const upcoming=(x.orders||[]).filter(o=>!['shipped','cancelled'].includes(o.status));
     const past=(x.orders||[]).filter(o=>['shipped','cancelled'].includes(o.status));
-    panel.innerHTML=`<div class="row between wrap"><div><h3 style="margin:.1rem 0">Orders & Auto-Ship</h3><div class="muted">Scheduled online orders, past shipments and recurring shipment settings.</div></div><div class="row wrap">${canFullOps()?'<button class="secondary" id="newDiscountCode">+ Discount Code</button><button class="secondary" id="newAutoship">+ Auto-Ship</button>':''}</div></div>
+    panel.innerHTML=`<div class="row between wrap"><div><h3 style="margin:.1rem 0">Orders & Auto-Ship</h3><div class="muted">Scheduled online orders, past shipments and recurring shipment settings.</div></div><div class="row wrap"><button class="primary" id="newSaleOrder">+ New Sale</button>${canFullOps()?'<button class="secondary" id="newDiscountCode">+ Discount Code</button><button class="secondary" id="newAutoship">+ Auto-Ship</button>':''}</div></div>
       <div class="perm-note">${canFullOps()?'<b>Ray/Rick access:</b> Full order, auto-ship, price override and discount-code control.':'<b>Staff access:</b> Add approved products and use preset discount codes. No manual price discounts.'}</div>
       <div class="value-tabs"><button class="value-tab active" data-order-tab="upcoming">Upcoming Orders (${upcoming.length})</button><button class="value-tab" data-order-tab="autoship">Auto-Ship (${(x.recurringOrders||[]).length})</button><button class="value-tab" data-order-tab="past">Past Orders (${past.length})</button><button class="value-tab" data-order-tab="changes">Change History</button></div>
       <div id="ordersUpcoming"></div><div id="ordersAutoship" hidden></div><div id="ordersPast" hidden></div><div id="ordersChanges" hidden></div>`;
@@ -60,6 +60,24 @@
   }
 
   function bindOrderButtons(customerId,x){
+    if($('#newSaleOrder'))$('#newSaleOrder').onclick=async()=>{
+      try{
+        const order=await api(`/customers/${customerId}/orders`,{method:'POST',body:JSON.stringify({order_type:'spa_sale',source:'in_store',status:'open'})});
+        let product=null;
+        try{product=await chooseCatalogProduct()}catch(e){if(!canFullOps())throw e}
+        if(product){
+          await api(`/orders/${order.id}/add-item`,{method:'POST',body:JSON.stringify({catalog_id:product.id,quantity:1,scope:'one_time'})});
+        }else if(canFullOps()){
+          const description=prompt('Product / spa description:','Payment Integration Test');
+          if(description){
+            const price=Math.max(0,Number(prompt('Sale price:','1.00')||0));
+            await api(`/orders/${order.id}/add-item`,{method:'POST',body:JSON.stringify({description,unit_price:price,quantity:1,scope:'one_time'})});
+          }
+        }
+        await loadCustomer(customerId);
+      }catch(e){alert(e.message)}
+    };
+
     $$('[data-add-order-item]').forEach(b=>b.onclick=async()=>{const orderId=b.dataset.addOrderItem,order=(x.orders||[]).find(o=>String(o.id)===String(orderId));let product;try{product=await chooseCatalogProduct()}catch(e){return alert(e.message)}if(!product)return;const quantity=Math.max(.01,Number(prompt('Quantity:','1')||1));const recurring=confirm('Add this product to FUTURE AUTO-SHIPMENTS too?\n\nOK = recurring\nCancel = this shipment only');let recurringOrderId=order?.recurring_order_id||null;if(recurring&&!recurringOrderId){const active=(x.recurringOrders||[]).find(s=>s.status==='active');if(active)recurringOrderId=active.id;else return alert('This customer does not have an active auto-ship yet. Ray or Rick can create one.')}try{await api(`/orders/${orderId}/add-item`,{method:'POST',body:JSON.stringify({catalog_id:product.id,quantity,scope:recurring?'recurring':'one_time',recurring_order_id:recurringOrderId})});await loadCustomer(customerId)}catch(e){alert(e.message)}});
     $$('[data-discount-code]').forEach(b=>b.onclick=async()=>{const code=prompt('Approved discount code:','');if(!code)return;try{await api(`/orders/${b.dataset.discountCode}/apply-discount-code`,{method:'POST',body:JSON.stringify({code})});await loadCustomer(customerId)}catch(e){alert(e.message)}});
     $$('[data-edit-order-item]').forEach(b=>b.onclick=async()=>{const o=(x.orders||[]).find(v=>String(v.id)===b.dataset.orderId),i=o?.items?.find(v=>String(v.id)===b.dataset.editOrderItem);if(!i)return;const quantity=Math.max(.01,Number(prompt('Quantity:',i.quantity)||i.quantity));let updateRecurring=false;if(i.recurring_order_item_id)updateRecurring=confirm('Apply quantity change to FUTURE AUTO-SHIPMENTS too?');const body={quantity,update_recurring:updateRecurring};if(canFullOps()){const price=prompt('Unit price (manager override allowed):',i.unit_price);if(price!==null&&price!=='')body.unit_price=Math.max(0,Number(price)||0)}try{await api(`/orders/${o.id}/items/${i.id}`,{method:'PATCH',body:JSON.stringify(body)});await loadCustomer(customerId)}catch(e){alert(e.message)}});
