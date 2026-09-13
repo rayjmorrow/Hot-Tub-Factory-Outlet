@@ -7,6 +7,19 @@ export async function initServiceScheduling(){
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS assigned_team TEXT;
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS appointment_minutes INT NOT NULL DEFAULT ${Number(SERVICE_RULES.defaultAppointmentMinutes)};
     ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS customer_order_id BIGINT REFERENCES service_customer_orders(id) ON DELETE SET NULL;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_serial_number TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_cover_lifter TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_exception_notes TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_correct_spa BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_package_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_damage_reviewed BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_customer_reviewed BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_acceptance_confirmed BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_signature_accepted BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_proof_photo TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_happy_photo TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_signature_data TEXT;
+    ALTER TABLE service_work_orders ADD COLUMN IF NOT EXISTS delivery_completed_by TEXT;
 
     CREATE TABLE IF NOT EXISTS service_dispatch_resources (
       id BIGSERIAL PRIMARY KEY,
