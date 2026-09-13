@@ -1,5 +1,6 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { q } from './service-db.js';
 import { calculateTripCharge } from './service-financials.js';
 
@@ -159,6 +160,51 @@ router.post('/orders/:id/payment-record',auth,manager,async(req,res)=>{
   await q(`INSERT INTO service_order_change_log(customer_id,order_id,action,description,actor)
     VALUES($1,$2,'payment_recorded',$3,$4)`,[order.customer_id,order.id,`Recorded payment ${amount.toFixed(2)}; balance ${Number(updated.balance||0).toFixed(2)}`,req.user?.name||req.user?.username||'Manager']);
   res.json(updated);
+});
+
+function verifyAuthorizeWebhook(req){
+  const key=String(process.env.AUTHORIZENET_SIGNATURE_KEY||'').trim();
+  if(!key||!req.rawBody)return false;
+  const supplied=String(req.headers['x-anet-signature']||'').replace(/^sha512=/i,'').toLowerCase();
+  if(!supplied)return false;
+  const digest=crypto.createHmac('sha512',Buffer.from(key,'hex')).update(req.rawBody).digest('hex').toLowerCase();
+  if(supplied.length!==digest.length)return false;
+  return crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(digest));
+}
+
+router.post('/public/authorize-order-webhook',async(req,res)=>{
+  if(!verifyAuthorizeWebhook(req))return res.status(401).json({error:'Invalid Authorize.Net signature'});
+  const eventType=String(req.body?.eventType||'');
+  const transId=String(req.body?.payload?.id||'').trim();
+  if(!transId)return res.status(202).json({ok:true,ignored:true});
+  if(!/authcapture|payment/i.test(eventType))return res.status(202).json({ok:true,ignored:true});
+  try{
+    const j=await anet({getTransactionDetailsRequest:{merchantAuthentication:merchantAuth(),transId}});
+    const t=j.transaction||{};
+    if(String(t.responseCode||'')!=='1')return res.status(202).json({ok:true,ignored:true});
+    const orderNumber=String(t.order?.invoiceNumber||'').trim();
+    if(!orderNumber)return res.status(202).json({ok:true,ignored:true});
+    const order=(await q('SELECT * FROM service_customer_orders WHERE order_number=$1',[orderNumber])).rows[0];
+    if(!order)return res.status(202).json({ok:true,unmatched:true});
+    const existing=await q('SELECT id FROM service_order_card_payments WHERE authorize_transaction_id=$1',[transId]);
+    if(existing.rowCount)return res.json({ok:true,duplicate:true});
+    const balance=Math.max(0,money(num(order.total_amount)-num(order.amount_paid)));
+    const amount=Math.min(balance,money(t.authAmount||t.settleAmount||0));
+    if(amount<=0)return res.status(202).json({ok:true,ignored:true});
+    await q(`INSERT INTO service_order_card_payments(order_id,authorize_transaction_id,amount,raw_event_type)
+      VALUES($1,$2,$3,$4)`,[order.id,transId,amount,eventType]);
+    const updated=(await q(`UPDATE service_customer_orders
+      SET amount_paid=least(total_amount,amount_paid+$2),
+          status=CASE WHEN amount_paid+$2>=total_amount THEN 'paid' ELSE status END,
+          updated_at=NOW()
+      WHERE id=$1 RETURNING *,total_amount-amount_paid balance`,[order.id,amount])).rows[0];
+    await q(`INSERT INTO service_order_change_log(customer_id,order_id,action,description,actor)
+      VALUES($1,$2,'card_payment_received',$3,'Authorize.Net')`,
+      [order.customer_id,order.id,`Card payment ${amount.toFixed(2)} received; balance ${Number(updated.balance||0).toFixed(2)}`]);
+    res.json({ok:true,order_id:order.id,balance:Number(updated.balance||0)});
+  }catch(e){
+    res.status(500).json({error:'Unable to reconcile payment'});
+  }
 });
 
 export default router;
