@@ -5,7 +5,7 @@ async function api(path,opts={}){const r=await fetch(API+path,{...opts,headers:{
 function logout(){token='';user=null;sessionStorage.removeItem('htfoServiceToken');$('#app').hidden=true;$('#login').hidden=false}
 function localYmd(d=new Date()){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
 function time(v){return v?new Date(v).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'Unscheduled'}
-function addr(w){return [w.street,w.street2,w.city,w.state,w.zip].filter(Boolean).join(', ')}
+function addr(w){return [w.street,w.street2,w.city,w.state,w.zip].filter(Boolean).join(', ')}\nfunction wazeUrl(w){const a=addr(w);return a?`https://waze.com/ul?q=${encodeURIComponent(a)}&navigate=yes`:''}\nfunction wazeLink(w,label='Open in Waze'){const u=wazeUrl(w);return u?`<a class=\"waze-link\" href=\"${u}\" target=\"_blank\" rel=\"noopener\">${esc(label)}</a>`:''}
 function mine(rows){if(!user?.name)return rows;return rows.filter(w=>String(w.assigned_to||'').toLowerCase()===String(user.name).toLowerCase())}
 function canManageCalendar(){return ['admin','manager','service_manager'].includes(user?.role)}
 function visibleRows(rows){return canManageCalendar()?rows:mine(rows)}
