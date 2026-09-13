@@ -1,4 +1,4 @@
-# HTFO Dealer OS v5.1
+# HTFO Dealer OS v5.2
 
 Development integration scaffold for the HTFO dealer operating system.
 
@@ -13,16 +13,24 @@ Development integration scaffold for the HTFO dealer operating system.
 8. Review Engine with delivery/service trigger endpoint.
 9. AI-first/human-second routing.
 
-## v5.1 delivery proof workflow
+## v5.2 delivery proof + spa package workflow
 A delivery cannot be marked Completed until the required proof package exists:
 - customer "happy picture" beside the delivered hot tub;
 - proof-of-delivery photo showing the product in place;
 - customer typed acceptance name;
 - explicit receipt acknowledgement;
+- customer finger signature captured on the iPhone;
 - completion timestamp and completing user;
 - model/serial data when available.
 
-Ray and Rick can open the delivery record to review the evidence package. The Owner Command Center includes deliveries due today and delivery issues/incomplete proof. Completion automatically schedules the post-delivery review workflow.
+For spa deliveries the form carries customer name, address, phone and email from the customer record and preloads the standard package:
+- Promo Step;
+- Frog Ease Start-Up Kit;
+- Spa Ease 100 cover lifter for qualifying brands.
+
+Innova Spas and Eco Spas do not automatically receive the Spa Ease 100. The lifter field remains editable so another cover-lifter model can be substituted when needed.
+
+The delivery form includes notes for damage, backordered items, missing accessories, property issues or other exceptions. Ray and Rick can review the stored proof package from the delivery record.
 
 ## Routing states
 - AI Can Handle
