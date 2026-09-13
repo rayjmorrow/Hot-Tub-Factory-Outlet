@@ -9,7 +9,7 @@ const num=v=>Number(v||0);
 const money=v=>Math.round(num(v)*100)/100;
 function secret(){if(!process.env.SERVICE_JWT_SECRET)throw new Error('SERVICE_JWT_SECRET is required');return process.env.SERVICE_JWT_SECRET}
 function auth(req,res,next){try{const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!raw)return res.status(401).json({error:'Login required'});req.user=jwt.verify(raw,secret());next()}catch{res.status(401).json({error:'Session expired or invalid'})}}
-function manager(req,res,next){if(!['admin','manager','service_manager'].includes(req.user?.role))return res.status(403).json({error:'Service manager permission required'});next()}
+function manager(req,res,next){if(!['admin','owner','manager','service_manager'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Ray/Rick manager permission required'});next()}
 
 const authLoginId=()=>process.env.AUTHORIZE_API_LOGIN_ID||process.env.AUTHORIZENET_API_LOGIN_ID;
 const authTransactionKey=()=>process.env.AUTHORIZE_TRANSACTION_KEY||process.env.AUTHORIZENET_TRANSACTION_KEY;
@@ -111,6 +111,54 @@ router.patch('/warranty-claims/:id',auth,manager,async(req,res)=>{
 router.get('/warranty-summary',auth,async(req,res)=>{
   const r=await q(`SELECT coalesce(sum(total_claimed),0)::numeric claimed,coalesce(sum(total_approved),0)::numeric approved,coalesce(sum(total_paid),0)::numeric paid,coalesce(sum(total_claimed-total_paid),0)::numeric outstanding,count(*) FILTER (WHERE status NOT IN ('paid','denied','closed'))::int open_claims FROM service_warranty_claims`);
   res.json(r.rows[0]);
+});
+
+router.post('/orders/:id/payment-link',auth,async(req,res)=>{
+  const order=(await q(`SELECT o.*,c.first_name,c.last_name,c.email,c.phone
+    FROM service_customer_orders o JOIN service_customers c ON c.id=o.customer_id
+    WHERE o.id=$1`,[req.params.id])).rows[0];
+  if(!order)return res.status(404).json({error:'Order not found'});
+  const balance=Math.max(0,money(num(order.total_amount)-num(order.amount_paid)));
+  if(balance<=0)return res.status(400).json({error:'This order is already paid in full'});
+  const token=jwt.sign({type:'order_balance_payment',order_id:order.id,customer_id:order.customer_id},secret(),{expiresIn:'7d'});
+  const base=process.env.SERVICE_ORDER_PAYMENT_URL||'https://hottubfactoryoutlet.com/order-payment.html';
+  const url=`${base}${base.includes('?')?'&':'?'}t=${encodeURIComponent(token)}`;
+  res.json({url,balance,order_number:order.order_number,customer_name:[order.first_name,order.last_name].filter(Boolean).join(' '),email:order.email,phone:order.phone,expires_in_days:7});
+});
+
+router.post('/public/order-payment/session',async(req,res)=>{
+  try{
+    const decoded=jwt.verify(String(req.body?.token||''),secret());
+    if(decoded?.type!=='order_balance_payment')return res.status(400).json({error:'Invalid payment link'});
+    const order=(await q(`SELECT o.*,c.first_name,c.last_name,c.email,c.street,c.city,c.state,c.zip
+      FROM service_customer_orders o JOIN service_customers c ON c.id=o.customer_id
+      WHERE o.id=$1 AND o.customer_id=$2`,[decoded.order_id,decoded.customer_id])).rows[0];
+    if(!order)return res.status(404).json({error:'Order not found'});
+    const balance=Math.max(0,money(num(order.total_amount)-num(order.amount_paid)));
+    if(balance<=0)return res.json({paid:true,order_number:order.order_number,balance:0});
+    const returnUrl=(process.env.SERVICE_ORDER_PAYMENT_URL||'https://hottubfactoryoutlet.com/order-payment.html')+'?complete=1';
+    const request={getHostedPaymentPageRequest:{merchantAuthentication:merchantAuth(),transactionRequest:{transactionType:'authCaptureTransaction',amount:balance,order:{invoiceNumber:String(order.order_number||order.id).slice(0,20),description:`HTFO spa balance ${order.order_number||order.id}`},customer:{email:order.email||undefined},billTo:{firstName:order.first_name||'',lastName:order.last_name||'',address:order.street||'',city:order.city||'',state:order.state||'',zip:order.zip||'',country:'US'}},hostedPaymentSettings:{setting:[{settingName:'hostedPaymentReturnOptions',settingValue:JSON.stringify({showReceipt:true,url:returnUrl,urlText:'Return to Hot Tub Factory Outlet',cancelUrl:returnUrl,cancelUrlText:'Cancel'})},{settingName:'hostedPaymentCustomerOptions',settingValue:JSON.stringify({showEmail:true,requiredEmail:false})},{settingName:'hostedPaymentPaymentOptions',settingValue:JSON.stringify({cardCodeRequired:true,showCreditCard:true,showBankAccount:false})}]}}};
+    const j=await anet(request);
+    if(!j.token)throw new Error('Authorize.Net did not return a payment token');
+    res.json({paid:false,token:j.token,form_url:authForm(),balance,order_number:order.order_number});
+  }catch(e){res.status(400).json({error:e.message==='jwt expired'?'This payment link has expired':e.message})}
+});
+
+router.post('/orders/:id/payment-record',auth,manager,async(req,res)=>{
+  const order=(await q('SELECT * FROM service_customer_orders WHERE id=$1',[req.params.id])).rows[0];
+  if(!order)return res.status(404).json({error:'Order not found'});
+  const amount=money(req.body?.amount);
+  if(amount<=0)return res.status(400).json({error:'Payment amount must be greater than zero'});
+  const balance=Math.max(0,money(num(order.total_amount)-num(order.amount_paid)));
+  if(amount>balance+0.001)return res.status(400).json({error:'Payment exceeds remaining balance'});
+  const updated=(await q(`UPDATE service_customer_orders
+    SET amount_paid=least(total_amount,amount_paid+$2),
+        status=CASE WHEN amount_paid+$2>=total_amount THEN 'paid' ELSE status END,
+        updated_at=NOW()
+    WHERE id=$1 RETURNING *,total_amount-amount_paid balance`,[order.id,amount])).rows[0];
+  await q(`INSERT INTO service_order_change_log(customer_id,order_id,action,description,actor)
+    VALUES($1,$2,'payment_recorded',$3,$4)`,[order.customer_id,order.id,`Recorded payment ${amount.toFixed(2)}; balance ${Number(updated.balance||0).toFixed(2)}`,req.user?.name||req.user?.username||'Manager']);
+  res.json(updated);
 });
 
 export default router;
