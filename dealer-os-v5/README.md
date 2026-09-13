@@ -1,4 +1,4 @@
-# HTFO Dealer OS v5.2
+# HTFO Dealer OS v5.3
 
 Development integration scaffold for the HTFO dealer operating system.
 
@@ -31,6 +31,11 @@ For spa deliveries the form carries customer name, address, phone and email from
 Innova Spas and Eco Spas do not automatically receive the Spa Ease 100. The lifter field remains editable so another cover-lifter model can be substituted when needed.
 
 The delivery form includes notes for damage, backordered items, missing accessories, property issues or other exceptions. Ray and Rick can review the stored proof package from the delivery record.
+
+## v5.3 Waze field navigation
+- Technician Today, Week, Calendar Day and Work Order views include one-tap Waze routing from the customer address.
+- Delivery board and delivery record include one-tap Waze routing.
+- Waze receives the full street, city, state and ZIP destination so field staff do not retype addresses.
 
 ## Routing states
 - AI Can Handle
