@@ -1,4 +1,4 @@
-# HTFO Dealer OS v5.0
+# HTFO Dealer OS v5.1
 
 Development integration scaffold for the HTFO dealer operating system.
 
@@ -13,6 +13,17 @@ Development integration scaffold for the HTFO dealer operating system.
 8. Review Engine with delivery/service trigger endpoint.
 9. AI-first/human-second routing.
 
+## v5.1 delivery proof workflow
+A delivery cannot be marked Completed until the required proof package exists:
+- customer "happy picture" beside the delivered hot tub;
+- proof-of-delivery photo showing the product in place;
+- customer typed acceptance name;
+- explicit receipt acknowledgement;
+- completion timestamp and completing user;
+- model/serial data when available.
+
+Ray and Rick can open the delivery record to review the evidence package. The Owner Command Center includes deliveries due today and delivery issues/incomplete proof. Completion automatically schedules the post-delivery review workflow.
+
 ## Routing states
 - AI Can Handle
 - Human Attention Recommended
@@ -20,8 +31,10 @@ Development integration scaffold for the HTFO dealer operating system.
 - Appointment Booked
 - Long-Term Nurture
 
-## New application routes
+## Application routes
 - /command-center
+- /deliveries
+- /delivery/:id
 - /call-queue
 - /ai-coach
 - /setter-queue
@@ -29,8 +42,8 @@ Development integration scaffold for the HTFO dealer operating system.
 - /event-builder
 - /advanced-ads
 
-## New integration endpoints
+## Integration endpoints
 - POST /api/call-event
 - POST /api/review-trigger
 
-The working v5 application package is being kept separate from the public HTFO site while it is tested. External carrier, AI, review, ad-publisher, and geofencing integrations remain adapter-based so the dealer platform is not locked to one vendor.
+The working application package is kept separate from the public HTFO site while it is tested. External carrier, AI, review, ad-publisher, and geofencing integrations remain adapter-based so the dealer platform is not locked to one vendor.
