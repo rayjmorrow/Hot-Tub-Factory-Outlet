@@ -123,19 +123,19 @@ router.get('/work-orders',auth,async(req,res)=>{
 router.post('/work-orders',auth,async(req,res)=>{
   if(!canDispatch(req)) return res.status(403).json({error:'Dispatch permission required'});
   const b=req.body||{};
-  if(b.scheduled_start && !(await paymentReady(b.customer_id))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
+  if((clean(b.job_type)||'service')==='service' && b.scheduled_start && !(await paymentReady(b.customer_id))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
   const number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
   const scheduledEnd=b.scheduled_end||defaultScheduledEnd(b.scheduled_start,b.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes);
   const appointmentMinutes=Math.max(15,Number(b.appointment_minutes)||SERVICE_RULES.defaultAppointmentMinutes);
-  const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,assigned_to,assigned_team,job_type,status,priority,scheduled_start,scheduled_end,appointment_minutes,complaint,warranty,internal_notes,diagnostic_amount,labor_rate,parts_tax_rate)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,[number,b.customer_id,b.equipment_id||null,clean(b.assigned_to),clean(b.assigned_team),clean(b.job_type)||'service',clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,scheduledEnd,appointmentMinutes,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes),SERVICE_RULES.diagnosticCharge,SERVICE_RULES.laborRatePerHour,SERVICE_RULES.partsTaxRate]);
+  const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,customer_order_id,assigned_to,assigned_team,job_type,status,priority,scheduled_start,scheduled_end,appointment_minutes,complaint,warranty,internal_notes,diagnostic_amount,labor_rate,parts_tax_rate)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,[number,b.customer_id,b.equipment_id||null,b.customer_order_id||null,clean(b.assigned_to),clean(b.assigned_team),clean(b.job_type)||'service',clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,scheduledEnd,appointmentMinutes,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes),SERVICE_RULES.diagnosticCharge,SERVICE_RULES.laborRatePerHour,SERVICE_RULES.partsTaxRate]);
   res.status(201).json(r.rows[0]);
 });
 router.patch('/work-orders/:id',auth,async(req,res)=>{
   const current=(await q('SELECT * FROM service_work_orders WHERE id=$1',[req.params.id])).rows[0];
   if(!current) return res.status(404).json({error:'Work order not found'});
   const b=req.body||{},dispatch=canDispatch(req),override=canOverrideCharges(req);
-  if(dispatch && b.scheduled_start && !(await paymentReady(current.customer_id))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled.'});
+  if(dispatch && (clean(b.job_type)||current.job_type||'service')==='service' && b.scheduled_start && !(await paymentReady(current.customer_id))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled.'});
   const laborHours=b.labor_hours==null?num(current.labor_hours):Math.max(0,num(b.labor_hours));
   const labor=override&&b.labor_amount!=null?Math.max(0,num(b.labor_amount)):calculateLaborAmount(laborHours);
   const parts=override&&b.parts_amount!=null?Math.max(0,num(b.parts_amount)):num(current.parts_amount);
