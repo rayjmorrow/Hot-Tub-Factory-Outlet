@@ -161,4 +161,29 @@ router.patch('/orders/:orderId/items/:itemId',auth,async(req,res)=>{
   const order=await recalcOrder(req.params.orderId);await logChange({customerId:item.customer_id,orderId:req.params.orderId,action:'item_updated',description:`Updated ${description}; price ${isFullOps(req)?'manager-controlled':'unchanged'}${item.recurring_order_item_id&&b.update_recurring===true?' and future auto-ship updated':''}`,actor:req.user?.name||req.user?.username});res.json({item:updated,order});
 });
 
+router.post('/orders/:id/delivery-exception',auth,fullOps,async(req,res)=>{
+  const order=(await q('SELECT * FROM service_customer_orders WHERE id=$1',[req.params.id])).rows[0];
+  if(!order)return res.status(404).json({error:'Order not found'});
+  const authorized=req.body?.authorized!==false;
+  const reason=clean(req.body?.reason);
+  if(authorized&&!reason)return res.status(400).json({error:'Exception reason is required (example: cash due on delivery)'});
+  const actor=req.user?.name||req.user?.username||'Manager';
+  const updated=(await q(`UPDATE service_customer_orders
+    SET delivery_exception_authorized=$2,
+        delivery_exception_reason=$3,
+        delivery_exception_by=$4,
+        delivery_exception_at=CASE WHEN $2 THEN NOW() ELSE NULL END,
+        updated_at=NOW()
+    WHERE id=$1 RETURNING *`,
+    [order.id,authorized,authorized?reason:null,authorized?actor:null])).rows[0];
+  await logChange({
+    customerId:order.customer_id,
+    orderId:order.id,
+    action:authorized?'delivery_exception_authorized':'delivery_exception_removed',
+    description:authorized?`Delivery payment exception authorized by ${actor}: ${reason}`:`Delivery payment exception removed by ${actor}`,
+    actor
+  });
+  res.json(updated);
+});
+
 export default router;
