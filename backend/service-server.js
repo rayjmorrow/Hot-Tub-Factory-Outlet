@@ -44,7 +44,7 @@ app.use((req,res,next)=>{
   res.setHeader('Referrer-Policy','same-origin');
   res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
   res.setHeader('Cache-Control',req.path.startsWith('/api/')?'no-store':'no-cache');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accept.authorize.net https://test.authorize.net");
   next();
 });
 app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
@@ -93,7 +93,7 @@ app.use('/api/service',customerImportRoutes);
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
   'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js','service-workorder-detail-ui.js',
-  'service-field.css','service-field.js','service-field-manifest.webmanifest'
+  'service-field.css','service-field.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js'
 ]);
 app.get(['/', '/service-portal.html'],(req,res)=>res.sendFile(path.join(portalRoot,'service-portal.html')));
 app.get('/field',(req,res)=>res.sendFile(path.join(portalRoot,'service-field.html')));
@@ -106,13 +106,13 @@ app.use((req,res)=>res.status(404).send('Not found'));
 try{
   await initServiceDb();
   await initServiceFinancials();
+  await initCustomerOrders();
   await initServiceScheduling();
   await initServiceTenancy();
   await initServicePaymentMethods();
   await initServicePaymentGuard();
   await initServiceCustomerValue();
   await initServiceInvoiceItems();
-  await initCustomerOrders();
   await initCustomerOrderControls();
   await initServiceCommercialRules();
   await initServiceAudit();
