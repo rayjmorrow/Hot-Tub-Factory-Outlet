@@ -8,7 +8,7 @@ const clean=v=>v==null?null:String(v).trim();
 function secret(){if(!process.env.SERVICE_JWT_SECRET)throw new Error('SERVICE_JWT_SECRET is required');return process.env.SERVICE_JWT_SECRET}
 function auth(req,res,next){try{const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!raw)return res.status(401).json({error:'Login required'});req.user=jwt.verify(raw,secret());next()}catch{res.status(401).json({error:'Session expired or invalid'})}}
 function manager(req,res,next){if(!['admin','owner','manager','service_manager'].includes(req.user?.role))return res.status(403).json({error:'Manager permission required'});next()}
-function ownerAdmin(req,res,next){if(!['admin','owner'].includes(req.user?.role))return res.status(403).json({error:'Owner/admin permission required'});next()}
+function ownerAdmin(req,res,next){if(!['admin','owner','manager','service_manager'].includes(req.user?.role))return res.status(403).json({error:'Manager permission required'});next()}
 const allowedRoles=new Set(['admin','owner','manager','service_manager','technician','delivery','staff']);
 
 router.get('/admin/users',auth,ownerAdmin,async(req,res)=>{
