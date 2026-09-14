@@ -7,7 +7,7 @@ function money(n){return Number(n||0).toLocaleString('en-US',{style:'currency',c
 function dt(v){return v?new Date(v).toLocaleString():''}
 function esc(v=''){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function customerName(c){return [c.first_name,c.last_name].filter(Boolean).join(' ')||c.company||'Unnamed customer'}
-function showApp(user){currentServiceUser=user||null;$('#login').hidden=true;$('#app').hidden=false;$('#userName').textContent=user?.name||user?.username||'';applyRoleUi();showView('dashboard')}
+function showApp(user){currentServiceUser=user||null;const role=String(user?.role||'').toLowerCase();if(role==='delivery'){location.replace('/field');return;}$('#login').hidden=true;$('#app').hidden=false;$('#userName').textContent=user?.name||user?.username||'';applyRoleUi();showView('dashboard')}
 function logout(){currentServiceUser=null;token='';sessionStorage.removeItem('htfoServiceToken');$('#app').hidden=true;$('#login').hidden=false}
 async function boot(){if(!token)return;try{const x=await api('/me');showApp(x.user)}catch{logout()}}
 function applyRoleUi(){const sales=String(currentServiceUser?.role||'').toLowerCase()==='sales';const scheduleNav=$('nav [data-view="schedule"]');if(scheduleNav)scheduleNav.hidden=sales;['#newDeliveryBtn','#newWorkOrderBtn','#customerDeliveryBtn','#customerServiceBtn'].forEach(sel=>{const el=$(sel);if(el)el.hidden=sales});$$('[data-service-equipment]').forEach(el=>{if(sales)el.hidden=true})}
