@@ -45,7 +45,9 @@ router.post('/auth/login', async(req,res)=>{
   const username=clean(req.body?.username), password=String(req.body?.password||'');
   const r=await q('SELECT * FROM service_users WHERE lower(username)=lower($1) AND active=true',[username]);
   const u=r.rows[0];
-  if(!u || !(await bcrypt.compare(password,u.password_hash))) return res.status(401).json({error:'Invalid username or password'});
+  const matched=Boolean(u && await bcrypt.compare(password,u.password_hash));
+  console.log('Service login attempt',{username,account_found:Boolean(u),role:u?.role||null,matched});
+  if(!matched) return res.status(401).json({error:'Invalid username or password'});
   res.json({token:tokenFor(u),user:{id:u.id,username:u.username,name:u.display_name,role:u.role}});
 });
 router.get('/me',auth,(req,res)=>res.json({user:req.user}));
