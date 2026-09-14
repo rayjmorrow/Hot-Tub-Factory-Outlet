@@ -126,10 +126,11 @@ router.post('/work-orders',auth,async(req,res)=>{
     if(!canDispatch(req)) return res.status(403).json({error:'Dispatch permission required'});
     const b=req.body||{};
     const customerId=clean(b.customer_id);
-    if(!customerId || !/^\\d+$/.test(customerId)) return res.status(400).json({error:'Select a customer before scheduling this job.'});
+    const customerIdNumber=Number(customerId);
+    if(!Number.isInteger(customerIdNumber) || customerIdNumber<=0) return res.status(400).json({error:'Select a customer before scheduling this job.'});
     const equipmentId=clean(b.equipment_id), customerOrderId=clean(b.customer_order_id);
-    if(equipmentId && !/^\\d+$/.test(equipmentId)) return res.status(400).json({error:'Invalid equipment selection.'});
-    if(customerOrderId && !/^\\d+$/.test(customerOrderId)) return res.status(400).json({error:'Invalid customer order selection.'});
+    if(equipmentId){const n=Number(equipmentId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid equipment selection.'});}
+    if(customerOrderId){const n=Number(customerOrderId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid customer order selection.'});}
     if((clean(b.job_type)||'service')==='service' && b.scheduled_start && !(await paymentReady(customerId))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
     const number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
     const scheduledEnd=b.scheduled_end||defaultScheduledEnd(b.scheduled_start,b.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes);
