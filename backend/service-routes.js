@@ -132,7 +132,7 @@ router.post('/work-orders',auth,async(req,res)=>{
     let customerOrderId=clean(b.customer_order_id);
     if(equipmentId){const n=Number(equipmentId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid equipment selection.'});}
     if(customerOrderId){const n=Number(customerOrderId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid customer order selection.'});}
-    const jobType=jobType;
+    const jobType=clean(b.job_type)||'service';
     if(jobType==='delivery' && !customerOrderId){
       const existing=(await q(`SELECT id FROM service_customer_orders
         WHERE customer_id=$1 AND status NOT IN ('shipped','cancelled')
