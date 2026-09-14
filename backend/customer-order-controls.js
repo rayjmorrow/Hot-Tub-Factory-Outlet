@@ -20,7 +20,7 @@ function fullOps(req,res,next){if(!isFullOps(req))return res.status(403).json({e
 const HTFO_HOT_TUB_MODELS={
   'American Whirlpool':['101','151','160','171','250','261','270','271','280','281','282','451','460','461','470','471','472','480','481','880','881','982'],
   'Vita Spa':['Duet','Image','Voeux','Amour','Intrigue','Elegant','Luxe','Sensation','Trio','Joli','Prestige','Monarque','Envie','Salon','Grand','Cabaret','Riviera','Vivre','Rendezvous','Mystique'],
-  'Cal Spas':['Aloha','Balboa','Kona','Hawaiian','Maui','Balboa Plus','Kona Plus','Hawaiian Plus','Maui Plus','Pacifica Plus','Tropical Plus','Atlantic Plus','Bel Air Plus','Costa','Baja','Avalon','Cancun','Atlantic','Bel Air','Malibu','Atlantic X','Bel Air X','Avalon X','Cancun X','Malibu X','Crown','Monarch','Royal','Legacy','El Grande','Newporter'],
+  'Cal Spas':['Aloha','Balboa','Kona','Hawaiian','Maui','Balboa Plus','Kona Plus','Hawaiian Plus','Maui Plus','Pacifica Plus','Tropical Plus','Atlantic Plus','Bel Air Plus','Costa','Baja','Avalon','Cancun','Atlantic','Bel Air','Malibu','Atlantic X','Bel Air X','Avalon X','Cancun X','Malibu X','LES-867B','LES-867L','LES-855','Crown','Monarch','Royal','Legacy','El Grande','Newporter'],
   'AquaSolus':['Brook','Cypress','Zephyr','Cove','Sierra','Eden','Harmony','Calma','Aspen','Cascade','Serenity','Solstice','Zenith'],
   'Eco Spas':['E1','E2','E3','E4','E5','E5 DLUX','E6','E6 DLUX'],
   'Innova Spas':['Storm','Fantom','Monsoon','Stream 110V','Stream 220V']
@@ -163,7 +163,7 @@ router.post('/orders/:id/add-item',auth,async(req,res)=>{
   const order=(await q('SELECT * FROM service_customer_orders WHERE id=$1',[req.params.id])).rows[0];if(!order)return res.status(404).json({error:'Order not found'});
   if(['shipped','cancelled'].includes(order.status))return res.status(409).json({error:'This order can no longer be edited'});
   const b=req.body||{},scope=clean(b.scope)||'one_time';if(!['one_time','recurring'].includes(scope))return res.status(400).json({error:'scope must be one_time or recurring'});
-  const cat=await catalogItem(b);if(!cat&&!isFullOps(req))return res.status(400).json({error:'Sales/service staff must select an approved product from the order pricebook'});
+  const cat=await catalogItem(b);const approvedPackageItems=new Set(['Cover Lifter — Spa Ease 100','Promo Step','Frog Ease Start-Up Kit']);if(!cat&&!isFullOps(req)&&!approvedPackageItems.has(clean(b.description)))return res.status(400).json({error:'Sales/service staff must select an approved product from the order pricebook'});
   const description=cat?.description||clean(b.description);if(!description)return res.status(400).json({error:'Product description required'});
   const quantity=qty(b.quantity),unitPrice=cat?(Number(cat.unit_price)>0?money(cat.unit_price):money(b.unit_price)):money(b.unit_price),lineTotal=money(quantity*unitPrice);
   let recurringItemId=null,recurringOrderId=order.recurring_order_id||b.recurring_order_id||null;
