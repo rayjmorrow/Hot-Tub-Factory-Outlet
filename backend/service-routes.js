@@ -122,6 +122,7 @@ router.get('/work-orders',auth,async(req,res)=>{
 });
 router.post('/work-orders',auth,async(req,res)=>{
   try{
+    console.log('Scheduling work order request', {customer_id:req.body?.customer_id,job_type:req.body?.job_type,scheduled_start:req.body?.scheduled_start,assigned_to:req.body?.assigned_to});
     if(!canDispatch(req)) return res.status(403).json({error:'Dispatch permission required'});
     const b=req.body||{};
     const customerId=clean(b.customer_id);
