@@ -16,6 +16,31 @@ function isFullOps(req){
 }
 function fullOps(req,res,next){if(!isFullOps(req))return res.status(403).json({error:'Ray/Rick manager permission required'});next()}
 
+
+const HTFO_HOT_TUB_MODELS={
+  'American Whirlpool':['101','151','160','171','250','261','270','271','280','281','282','451','460','461','470','471','472','480','481','880','881','982'],
+  'Vita Spa':['Duet','Image','Voeux','Amour','Intrigue','Elegant','Luxe','Sensation','Trio','Joli','Prestige','Monarque','Envie','Salon','Grand','Cabaret','Riviera','Vivre','Rendezvous','Mystique'],
+  'Cal Spas':['Aloha','Balboa','Kona','Hawaiian','Maui','Balboa Plus','Kona Plus','Hawaiian Plus','Maui Plus','Pacifica Plus','Tropical Plus','Atlantic Plus','Bel Air Plus','Costa','Baja','Avalon','Cancun','Atlantic','Bel Air','Malibu','Atlantic X','Bel Air X','Avalon X','Cancun X','Malibu X','Crown','Monarch','Royal','Legacy','El Grande','Newporter'],
+  'AquaSolus':['Brook','Cypress','Zephyr','Cove','Sierra','Eden','Harmony','Calma','Aspen','Cascade','Serenity','Solstice','Zenith'],
+  'Eco Spas':['E1','E2','E3','E4','E5','E5 DLUX','E6','E6 DLUX'],
+  'Innova Spas':['Storm','Fantom','Monsoon','Stream 110V','Stream 220V']
+};
+function catalogSku(brand,model){
+  const b={'American Whirlpool':'AW','Vita Spa':'VITA','Cal Spas':'CAL','AquaSolus':'AQUA','Eco Spas':'ECO','Innova Spas':'INNOVA'}[brand]||'HT';
+  return ('HT-'+b+'-'+model).toUpperCase().replace(/[^A-Z0-9]+/g,'-').replace(/^-|-$/g,'');
+}
+async function seedHtfoHotTubCatalog(){
+  for(const [brand,models] of Object.entries(HTFO_HOT_TUB_MODELS)){
+    for(const model of models){
+      const sku=catalogSku(brand,model),description=`${brand} ${model}`,productId=`hot-tub|${brand}|${model}`;
+      await q(`INSERT INTO service_order_product_catalog(product_id,sku,description,unit_price,active,source)
+        VALUES($1,$2,$3,0,true,'htfo_website')
+        ON CONFLICT(sku) DO UPDATE SET product_id=excluded.product_id,description=excluded.description,active=true,source='htfo_website',updated_at=NOW()`,
+        [productId,sku,description]);
+    }
+  }
+}
+
 export async function initCustomerOrderControls(){
   await q(`
     CREATE TABLE IF NOT EXISTS service_order_product_catalog (
@@ -59,6 +84,7 @@ export async function initCustomerOrderControls(){
       UNIQUE(order_id,code)
     );
   `);
+  await seedHtfoHotTubCatalog();
 }
 
 async function logChange({customerId,orderId=null,recurringOrderId=null,action,description,actor}){
@@ -139,7 +165,7 @@ router.post('/orders/:id/add-item',auth,async(req,res)=>{
   const b=req.body||{},scope=clean(b.scope)||'one_time';if(!['one_time','recurring'].includes(scope))return res.status(400).json({error:'scope must be one_time or recurring'});
   const cat=await catalogItem(b);if(!cat&&!isFullOps(req))return res.status(400).json({error:'Sales/service staff must select an approved product from the order pricebook'});
   const description=cat?.description||clean(b.description);if(!description)return res.status(400).json({error:'Product description required'});
-  const quantity=qty(b.quantity),unitPrice=cat?money(cat.unit_price):money(b.unit_price),lineTotal=money(quantity*unitPrice);
+  const quantity=qty(b.quantity),unitPrice=cat?(Number(cat.unit_price)>0?money(cat.unit_price):money(b.unit_price)):money(b.unit_price),lineTotal=money(quantity*unitPrice);
   let recurringItemId=null,recurringOrderId=order.recurring_order_id||b.recurring_order_id||null;
   if(scope==='recurring'){
     if(!recurringOrderId)return res.status(400).json({error:'Choose an auto-ship before adding a recurring item'});
