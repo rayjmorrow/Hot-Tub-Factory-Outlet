@@ -1,6 +1,6 @@
 (()=>{
   const managerRoles=new Set(['admin','owner','manager','service_manager']);
-  const ownerAdminRoles=new Set(['admin','owner']);
+  const ownerAdminRoles=new Set(['admin','owner','manager','service_manager']);
   let currentUser=null;
 
   function ensureAdminUi(user){
