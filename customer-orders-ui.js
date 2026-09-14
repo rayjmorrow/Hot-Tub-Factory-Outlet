@@ -52,9 +52,9 @@
   function autoshipCard(s){return `<div class="order-card"><div class="row between wrap"><div><b>Auto-Ship #${s.id}</b><div><span class="pill">${esc(s.status)}</span> · Every ${s.frequency_value} ${esc(s.frequency_unit)} · Next ${dateSafe(s.next_ship_date)}</div></div>${canFullOps()?`<button class="secondary" data-edit-autoship="${s.id}">Edit Auto-Ship</button>`:''}</div>${(s.items||[]).map(i=>`<div class="order-item"><div><b>${Number(i.quantity)} × ${esc(i.description)}</b><div class="muted">${esc(i.sku||'No SKU')} · ${moneySafe(i.unit_price)} each</div></div><b>${moneySafe(Number(i.quantity)*Number(i.unit_price))}</b></div>`).join('')||'<p class="muted">No recurring items.</p>'}</div>`}
 
   async function chooseCatalogProduct(){
-    const term=prompt('Search approved product / SKU:','');if(term===null)return null;
+    const term=prompt('Search hot tub by brand or model (example: 867, Vivre, 261, Cal Spas):','');if(term===null)return null;
     const rows=await api('/order-product-catalog?q='+encodeURIComponent(term));
-    if(!rows.length){alert('No approved product found in the order pricebook. Ray or Rick can add it first.');return null}
+    if(!rows.length){alert('No matching HTFO hot tub model found. Try the brand name or model number.');return null}
     const menu=rows.slice(0,10).map((p,i)=>`${i+1}. ${p.description} · ${p.sku||'No SKU'} · ${moneySafe(p.unit_price)}`).join('\n');
     const pick=Number(prompt(`Choose product number:\n\n${menu}`,'1')||0);return rows[pick-1]||null;
   }
@@ -63,16 +63,13 @@
     if($('#newSaleOrder'))$('#newSaleOrder').onclick=async()=>{
       try{
         const order=await api(`/customers/${customerId}/orders`,{method:'POST',body:JSON.stringify({order_type:'spa_sale',source:'in_store',status:'open'})});
-        let product=null;
-        try{product=await chooseCatalogProduct()}catch(e){if(!canFullOps())throw e}
-        if(product){
-          await api(`/orders/${order.id}/add-item`,{method:'POST',body:JSON.stringify({catalog_id:product.id,quantity:1,scope:'one_time'})});
-        }else if(canFullOps()){
-          const description=prompt('Product / spa description:','Payment Integration Test');
-          if(description){
-            const price=Math.max(0,Number(prompt('Sale price:','1.00')||0));
-            await api(`/orders/${order.id}/add-item`,{method:'POST',body:JSON.stringify({description,unit_price:price,quantity:1,scope:'one_time'})});
-          }
+        const product=await chooseCatalogProduct();
+        if(!product)throw new Error('Choose a hot tub model for the sales order.');
+        const salePrice=Math.max(0,Number(prompt(`Sale price for ${product.description}:`,Number(product.unit_price||0)>0?Number(product.unit_price).toFixed(2):'')||0));
+        if(salePrice<=0)throw new Error('Enter the actual sale price.');
+        await api(`/orders/${order.id}/add-item`,{method:'POST',body:JSON.stringify({catalog_id:product.id,unit_price:salePrice,quantity:1,scope:'one_time'})});
+        for(const description of ['Cover Lifter — Spa Ease 100','Promo Step','Frog Ease Start-Up Kit']){
+          await api(`/orders/${order.id}/add-item`,{method:'POST',body:JSON.stringify({description,unit_price:0,quantity:1,scope:'one_time'})});
         }
         await loadCustomer(customerId);
       }catch(e){alert(e.message)}
