@@ -128,10 +128,32 @@ router.post('/work-orders',auth,async(req,res)=>{
     const customerId=clean(b.customer_id);
     const customerIdNumber=Number(customerId);
     if(!Number.isInteger(customerIdNumber) || customerIdNumber<=0) return res.status(400).json({error:'Select a customer before scheduling this job.'});
-    const equipmentId=clean(b.equipment_id), customerOrderId=clean(b.customer_order_id);
+    const equipmentId=clean(b.equipment_id);
+    let customerOrderId=clean(b.customer_order_id);
     if(equipmentId){const n=Number(equipmentId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid equipment selection.'});}
     if(customerOrderId){const n=Number(customerOrderId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid customer order selection.'});}
-    if((clean(b.job_type)||'service')==='service' && b.scheduled_start && !(await paymentReady(customerId))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
+    const jobType=jobType;
+    if(jobType==='delivery' && !customerOrderId){
+      const existing=(await q(`SELECT id FROM service_customer_orders
+        WHERE customer_id=$1 AND status NOT IN ('shipped','cancelled')
+        ORDER BY created_at DESC LIMIT 1`,[customerId])).rows[0];
+      if(existing){
+        customerOrderId=String(existing.id);
+      }else{
+        const orderNo=`ORD-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
+        const order=(await q(`INSERT INTO service_customer_orders
+          (customer_id,order_number,status,order_type,source,notes,total_amount,subtotal,tax_amount,shipping_amount)
+          VALUES($1,$2,'scheduled','delivery','manual_schedule',$3,0,0,0,0) RETURNING id`,
+          [customerId,orderNo,clean(b.complaint)||'Delivery scheduled from customer profile'])).rows[0];
+        customerOrderId=String(order.id);
+        if(clean(b.complaint)){
+          await q(`INSERT INTO service_customer_order_items
+            (order_id,description,quantity,unit_price,line_total,item_scope)
+            VALUES($1,$2,1,0,0,'one_time')`,[customerOrderId,clean(b.complaint)]);
+        }
+      }
+    }
+    if(jobType==='service' && b.scheduled_start && !(await paymentReady(customerId))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
     const number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
     const scheduledEnd=b.scheduled_end||defaultScheduledEnd(b.scheduled_start,b.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes);
     const appointmentMinutes=Math.max(15,Number(b.appointment_minutes)||SERVICE_RULES.defaultAppointmentMinutes);
