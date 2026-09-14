@@ -121,15 +121,25 @@ router.get('/work-orders',auth,async(req,res)=>{
   res.json(r.rows);
 });
 router.post('/work-orders',auth,async(req,res)=>{
-  if(!canDispatch(req)) return res.status(403).json({error:'Dispatch permission required'});
-  const b=req.body||{};
-  if((clean(b.job_type)||'service')==='service' && b.scheduled_start && !(await paymentReady(b.customer_id))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
-  const number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
-  const scheduledEnd=b.scheduled_end||defaultScheduledEnd(b.scheduled_start,b.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes);
-  const appointmentMinutes=Math.max(15,Number(b.appointment_minutes)||SERVICE_RULES.defaultAppointmentMinutes);
-  const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,customer_order_id,assigned_to,assigned_team,job_type,status,priority,scheduled_start,scheduled_end,appointment_minutes,complaint,warranty,internal_notes,diagnostic_amount,labor_rate,parts_tax_rate)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,[number,b.customer_id,b.equipment_id||null,b.customer_order_id||null,clean(b.assigned_to),clean(b.assigned_team),clean(b.job_type)||'service',clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,scheduledEnd,appointmentMinutes,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes),SERVICE_RULES.diagnosticCharge,SERVICE_RULES.laborRatePerHour,SERVICE_RULES.partsTaxRate]);
-  res.status(201).json(r.rows[0]);
+  try{
+    if(!canDispatch(req)) return res.status(403).json({error:'Dispatch permission required'});
+    const b=req.body||{};
+    const customerId=clean(b.customer_id);
+    if(!customerId || !/^\\d+$/.test(customerId)) return res.status(400).json({error:'Select a customer before scheduling this job.'});
+    const equipmentId=clean(b.equipment_id), customerOrderId=clean(b.customer_order_id);
+    if(equipmentId && !/^\\d+$/.test(equipmentId)) return res.status(400).json({error:'Invalid equipment selection.'});
+    if(customerOrderId && !/^\\d+$/.test(customerOrderId)) return res.status(400).json({error:'Invalid customer order selection.'});
+    if((clean(b.job_type)||'service')==='service' && b.scheduled_start && !(await paymentReady(customerId))) return res.status(409).json({error:'Payment method must be secured before this service call can be scheduled. Add a card on file or approve cash/check first.'});
+    const number=`WO-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
+    const scheduledEnd=b.scheduled_end||defaultScheduledEnd(b.scheduled_start,b.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes);
+    const appointmentMinutes=Math.max(15,Number(b.appointment_minutes)||SERVICE_RULES.defaultAppointmentMinutes);
+    const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,customer_order_id,assigned_to,assigned_team,job_type,status,priority,scheduled_start,scheduled_end,appointment_minutes,complaint,warranty,internal_notes,diagnostic_amount,labor_rate,parts_tax_rate)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,[number,customerId,equipmentId||null,customerOrderId||null,clean(b.assigned_to),clean(b.assigned_team),clean(b.job_type)||'service',clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,scheduledEnd,appointmentMinutes,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes),SERVICE_RULES.diagnosticCharge,SERVICE_RULES.laborRatePerHour,SERVICE_RULES.partsTaxRate]);
+    res.status(201).json(r.rows[0]);
+  }catch(e){
+    console.error('Create work order failed:',e);
+    res.status(400).json({error:e.message||'Unable to schedule job'});
+  }
 });
 router.patch('/work-orders/:id',auth,async(req,res)=>{
   const current=(await q('SELECT * FROM service_work_orders WHERE id=$1',[req.params.id])).rows[0];
