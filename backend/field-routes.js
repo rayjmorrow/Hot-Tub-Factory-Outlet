@@ -24,6 +24,7 @@ function canManage(req){
 function canAccessWorkOrder(req,w){
   if(canManage(req))return true;
   const role=String(req.user?.role||'').toLowerCase();
+  if(role==='sales')return true;
   if(role==='delivery')return String(w.job_type||'').toLowerCase()==='delivery';
   const who=String(req.user?.name||req.user?.username||'').trim().toLowerCase();
   return [w.assigned_to,w.assigned_team].some(v=>String(v||'').trim().toLowerCase()===who);
