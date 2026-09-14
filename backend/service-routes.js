@@ -146,10 +146,16 @@ router.post('/work-orders',auth,async(req,res)=>{
           VALUES($1,$2,'scheduled','delivery','manual_schedule',$3,0,0,0,0) RETURNING id`,
           [customerId,orderNo,clean(b.complaint)||'Delivery scheduled from customer profile'])).rows[0];
         customerOrderId=String(order.id);
-        if(clean(b.complaint)){
+        const deliveryItems=[
+          clean(b.complaint)||'Spa / primary product',
+          'Cover Lifter — Spa Ease 100',
+          'Promo Step',
+          'Frog Ease Start-Up Kit'
+        ];
+        for(const description of deliveryItems){
           await q(`INSERT INTO service_customer_order_items
             (order_id,description,quantity,unit_price,line_total,item_scope)
-            VALUES($1,$2,1,0,0,'one_time')`,[customerOrderId,clean(b.complaint)]);
+            VALUES($1,$2,1,0,0,'one_time')`,[customerOrderId,description]);
         }
       }
     }
