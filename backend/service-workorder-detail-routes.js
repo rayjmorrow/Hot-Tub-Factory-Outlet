@@ -30,7 +30,13 @@ router.get('/work-orders/:id/detail',auth,async(req,res)=>{
     q('SELECT id,estimate_number,status,total_amount FROM service_estimates WHERE work_order_id=$1 ORDER BY created_at DESC',[req.params.id]),
     q('SELECT id,status,requested_quantity,source_status,source_name FROM service_part_requests WHERE work_order_id=$1 ORDER BY created_at DESC',[req.params.id])
   ]);
-  res.json({workOrder:r.rows[0],invoices:inv.rows,estimates:est.rows,partRequests:parts.rows,canDelete:canDelete(req)});
+  let deliveryOrder=null,deliveryOrderItems=[];
+  const workOrder=r.rows[0];
+  if(String(workOrder.job_type||'').toLowerCase()==='delivery' && workOrder.customer_order_id){
+    deliveryOrder=(await q('SELECT id,order_number,status,total_amount,amount_paid,delivery_exception_authorized,delivery_exception_reason,source FROM service_customer_orders WHERE id=$1',[workOrder.customer_order_id])).rows[0]||null;
+    deliveryOrderItems=(await q('SELECT id,description,quantity,sku,unit_price,line_total FROM service_customer_order_items WHERE order_id=$1 ORDER BY id',[workOrder.customer_order_id])).rows;
+  }
+  res.json({workOrder,invoices:inv.rows,estimates:est.rows,partRequests:parts.rows,deliveryOrder,deliveryOrderItems,canDelete:canDelete(req)});
 });
 
 router.delete('/work-orders/:id',auth,async(req,res)=>{
