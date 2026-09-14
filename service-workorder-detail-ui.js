@@ -35,6 +35,21 @@
     }catch(e){out.innerHTML=`<p class="error">${esc(e.message)}</p>`}
   }
 
+  function renderDeliveryOrder(x,w){
+    if(String(w.job_type||'').toLowerCase()!=='delivery')return '';
+    const standard=['Cover Lifter — Spa Ease 100','Promo Step','Frog Ease Start-Up Kit'];
+    const actual=Array.isArray(x.deliveryOrderItems)?x.deliveryOrderItems:[];
+    const descriptions=actual.map(i=>String(i.description||'').trim()).filter(Boolean);
+    const rows=[...descriptions];
+    standard.forEach(s=>{if(!descriptions.some(d=>d.toLowerCase().includes(s.split(' — ')[0].toLowerCase())||d.toLowerCase().includes(s.toLowerCase())))rows.push(s)});
+    return `<div class="card" id="woDeliveryOrderBox">
+      <div class="row between wrap"><div><h3 style="margin:.2rem 0">Delivery Order</h3><div class="muted">${x.deliveryOrder?.order_number?esc(x.deliveryOrder.order_number):'Linked delivery package'}</div></div><span class="pill">DELIVERY</span></div>
+      <div style="margin-top:.7rem"><b>Components to deliver</b></div>
+      ${rows.map(v=>`<div class="item"><b>✓ ${esc(v)}</b></div>`).join('')||'<p class="muted">No delivery components recorded.</p>'}
+      <div class="muted" style="margin-top:.65rem">Delivery team verifies these items in the 10-step Delivery Loop before customer sign-off.</div>
+    </div>`;
+  }
+
   function renderServiceEditor(w){
     return `<div class="card" id="woServiceEditBox"><div class="row between wrap"><h3 style="margin:.2rem 0">Service / Labor</h3><button type="button" id="woEditServiceBtn">Edit Service</button></div>
       <div id="woServiceReadout">
@@ -91,18 +106,19 @@
           ${detailLine('Internal notes',w.internal_notes)}
         </div>
       </div>
-      ${renderServiceEditor(w)}
+      ${renderDeliveryOrder(x,w)}
+      ${String(w.job_type||'').toLowerCase()==='delivery'?'':renderServiceEditor(w)}
       <div class="card" id="woPartsBox"><p class="muted">Loading parts…</p></div>
-      <div class="card"><h3>Charges</h3>
+      <div class="card"><h3>${String(w.job_type||'').toLowerCase()==='delivery'?'Delivery Charges':'Charges'}</h3>
         <div class="row wrap"><span>Diagnostic: <b>${money(w.diagnostic_amount)}</b></span><span>Labor: <b>${money(w.labor_amount)}</b></span><span>Parts: <b>${money(w.parts_amount)}</b></span><span>Trip: <b>${money(w.trip_amount)}</b></span><span>Tax: <b>${money(w.tax_amount)}</b></span><span>Total: <b>${money(w.total_amount)}</b></span></div>
       </div>
       ${x.invoices.length?`<div class="card"><h3>Invoices</h3>${x.invoices.map(i=>`<div>${esc(i.invoice_number)} · ${esc(i.status)} · ${money(i.total_amount)}</div>`).join('')}</div>`:''}
       ${x.estimates.length?`<div class="card"><h3>Estimates</h3>${x.estimates.map(i=>`<div>${esc(i.estimate_number)} · ${esc(i.status)} · ${money(i.total_amount)}</div>`).join('')}</div>`:''}
     `;
     const status=$('#woServiceForm [name="status"]');if(status)status.value=w.status||'scheduled';
-    $('#woEditServiceBtn').onclick=()=>{$('#woServiceReadout').hidden=true;$('#woEditServiceBtn').hidden=true;$('#woServiceForm').hidden=false};
-    $('#woCancelServiceEdit').onclick=()=>{$('#woServiceForm').hidden=true;$('#woServiceReadout').hidden=false;$('#woEditServiceBtn').hidden=false};
-    $('#woServiceForm').onsubmit=async e=>{
+    if($('#woEditServiceBtn'))$('#woEditServiceBtn').onclick=()=>{$('#woServiceReadout').hidden=true;$('#woEditServiceBtn').hidden=true;$('#woServiceForm').hidden=false};
+    if($('#woCancelServiceEdit'))$('#woCancelServiceEdit').onclick=()=>{$('#woServiceForm').hidden=true;$('#woServiceReadout').hidden=false;$('#woEditServiceBtn').hidden=false};
+    if($('#woServiceForm'))$('#woServiceForm').onsubmit=async e=>{
       e.preventDefault();const b=Object.fromEntries(new FormData(e.currentTarget));
       b.labor_hours=n(b.labor_hours);b.travel_minutes=n(b.travel_minutes);
       if(b.trip_charge_override==='')delete b.trip_charge_override;else b.trip_charge_override=n(b.trip_charge_override);
