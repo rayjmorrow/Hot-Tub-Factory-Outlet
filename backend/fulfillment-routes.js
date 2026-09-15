@@ -166,7 +166,7 @@ router.get('/fulfillment/summary',auth,async(req,res)=>{
   const mail=(await q('SELECT id,order_id,recipient,subject,status,last_error,created_at,sent_at FROM service_notification_outbox ORDER BY created_at DESC LIMIT 50')).rows;
   res.json({waiting:rows.length,overdue:rows.filter(x=>x.scheduled_ship_date&&ymd(x.scheduled_ship_date)<today).length,alerts,mail});
 });
-router.patch('/fulfillment/orders/:id',auth,manager,async(req,res)=>{
+router.patch('/fulfillment/orders/:id',auth,async(req,res)=>{
   const o=(await q('SELECT * FROM service_customer_orders WHERE id=$1',[req.params.id])).rows[0];if(!o)return res.status(404).json({error:'Order not found'});
   const b=req.body||{},status=clean(b.fulfillment_status)||o.fulfillment_status||'waiting';
   if(!['waiting','processing','hold','ready','packed','shipped','delivered'].includes(status))return res.status(400).json({error:'Invalid fulfillment status'});
@@ -174,7 +174,7 @@ router.patch('/fulfillment/orders/:id',auth,manager,async(req,res)=>{
     [o.id,status,num(b.package_weight_lbs??o.package_weight_lbs)||null,num(b.package_length_in??o.package_length_in)||null,num(b.package_width_in??o.package_width_in)||null,num(b.package_height_in??o.package_height_in)||null])).rows[0];
   await logEvent(o.id,o.recurring_order_id,'fulfillment_status','Fulfillment status changed to '+status+'.',req.user?.name||req.user?.username);res.json(row);
 });
-router.post('/fulfillment/orders/:id/ship',auth,manager,async(req,res)=>{
+router.post('/fulfillment/orders/:id/ship',auth,async(req,res)=>{
   const o=(await q(`SELECT o.*,c.first_name,c.email FROM service_customer_orders o JOIN service_customers c ON c.id=o.customer_id WHERE o.id=$1`,[req.params.id])).rows[0];if(!o)return res.status(404).json({error:'Order not found'});
   const b=req.body||{},local=Boolean(b.local_delivery),tracking=clean(b.tracking_number),carrier=local?'HTFO Local Delivery':(clean(b.carrier)||'Carrier'),service=local?'Local Delivery':clean(b.shipping_service);
   if(!local&&!tracking)return res.status(400).json({error:'Tracking number is required unless this is an HTFO local delivery'});
