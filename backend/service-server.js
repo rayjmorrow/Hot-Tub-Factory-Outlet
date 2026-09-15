@@ -125,6 +125,7 @@ try{
   await runFulfillmentAutomation();
   await promoteLatestStagedCustomers();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
+  setInterval(()=>runFulfillmentAutomation().catch(e=>console.error('Fulfillment automation error:',e)),60*60*1000).unref();
 }catch(err){
   console.error('Unable to start HTFO service backend:',err);
   process.exit(1);
