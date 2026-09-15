@@ -97,6 +97,41 @@ async function queueRows(){
       AND (o.source IN ('online','autoship') OR o.order_type IN ('online','autoship','ship'))
     ORDER BY coalesce(o.scheduled_ship_date,o.created_at::date),o.created_at\`)).rows;
 }
+
+function storeSecretOk(req){const expected=process.env.FULFILLMENT_WEBHOOK_SECRET||'';const got=req.headers['x-htfo-fulfillment-secret']||'';return expected&&got===expected}
+router.post('/fulfillment/store-order',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized fulfillment handoff'});
+  const b=req.body||{},cust=b.customer||{},items=Array.isArray(b.items)?b.items:[];
+  const email=clean(cust.email)?.toLowerCase()||null,phone=clean(cust.phone);
+  let customer=null;
+  if(email)customer=(await q('SELECT * FROM service_customers WHERE lower(email)=lower($1) ORDER BY id DESC LIMIT 1',[email])).rows[0];
+  if(!customer&&phone)customer=(await q('SELECT * FROM service_customers WHERE phone=$1 ORDER BY id DESC LIMIT 1',[phone])).rows[0];
+  if(!customer){
+    customer=(await q(\`INSERT INTO service_customers(first_name,last_name,email,phone,street,street2,city,state,zip,notes)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *\`,[clean(cust.first_name),clean(cust.last_name),email,phone,clean(cust.street),clean(cust.street2),clean(cust.city),clean(cust.state),clean(cust.zip),'Created from online store fulfillment handoff'])).rows[0];
+  }else{
+    customer=(await q(\`UPDATE service_customers SET first_name=coalesce($2,first_name),last_name=coalesce($3,last_name),email=coalesce($4,email),phone=coalesce($5,phone),street=coalesce($6,street),street2=coalesce($7,street2),city=coalesce($8,city),state=coalesce($9,state),zip=coalesce($10,zip),updated_at=NOW() WHERE id=$1 RETURNING *\`,
+      [customer.id,clean(cust.first_name),clean(cust.last_name),email,phone,clean(cust.street),clean(cust.street2),clean(cust.city),clean(cust.state),clean(cust.zip)])).rows[0];
+  }
+  const external=clean(b.external_order_id)||clean(b.transaction_id)||clean(b.order_number);
+  if(external){
+    const existing=(await q('SELECT * FROM service_customer_orders WHERE external_order_id=$1 LIMIT 1',[external])).rows[0];
+    if(existing)return res.json({ok:true,duplicate:true,order_id:existing.id});
+  }
+  const orderNo=clean(b.order_number)||('WEB-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-7));
+  const order=(await q(\`INSERT INTO service_customer_orders(customer_id,external_order_id,order_number,status,order_type,shipping_amount,total_amount,source,fulfillment_status,package_weight_lbs,package_length_in,package_width_in,package_height_in,notes)
+    VALUES($1,$2,$3,'processing','online',$4,$5,'online','waiting',$6,$7,$8,$9,$10) RETURNING *\`,
+    [customer.id,external,orderNo,num(b.shipping_amount),num(b.total_amount),num(b.package_weight_lbs)||10,num(b.package_length_in)||12,num(b.package_width_in)||12,num(b.package_height_in)||12,clean(b.notes)])).rows[0];
+  for(const i of items){
+    const qty=Math.max(.01,num(i.quantity)||1),unit=num(i.unit_price);
+    await q(\`INSERT INTO service_customer_order_items(order_id,product_id,sku,description,quantity,unit_price,line_total,item_scope)
+      VALUES($1,$2,$3,$4,$5,$6,$7,'one_time')\`,[order.id,clean(i.product_id),clean(i.sku),clean(i.description)||'Online item',qty,unit,qty*unit]);
+  }
+  await q(\`UPDATE service_customer_orders SET subtotal=(SELECT coalesce(sum(line_total),0) FROM service_customer_order_items WHERE order_id=$1),updated_at=NOW() WHERE id=$1\`,[order.id]);
+  await logEvent(order.id,null,'store_order_received','Online store order '+orderNo+' entered Fulfillment.','online store');
+  res.status(201).json({ok:true,order_id:order.id,customer_id:customer.id});
+});
+
 router.get('/fulfillment/queue',auth,async(req,res)=>{await runFulfillmentAutomation();res.json(await queueRows())});
 router.get('/fulfillment/summary',auth,async(req,res)=>{
   await runFulfillmentAutomation(); const rows=await queueRows(),today=ymd(new Date());
