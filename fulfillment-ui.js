@@ -9,7 +9,7 @@
     if(!r.ok)throw new Error(j.error||('Request failed ('+r.status+')'));
     return j;
   }
-  function manager(){return ['admin','owner','manager','service_manager'].includes(String(window.currentServiceUser?.role||'').toLowerCase())}
+  function canFulfill(){return Boolean(window.currentServiceUser)}
   function money(v){return Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD'})}
   async function exportCsv(){
     const token=sessionStorage.getItem('htfoServiceToken')||'';
@@ -22,7 +22,7 @@
     let items=(o.items||[]).map(i=>'<div>• '+Number(i.quantity)+' × '+esc(i.description)+(i.sku?' <span class="muted">('+esc(i.sku)+')</span>':'')+'</div>').join('');
     if(!items)items='<span class="muted">No line items</span>';
     let actions='';
-    if(manager())actions='<div class="row wrap" style="margin-top:12px">'+
+    if(canFulfill())actions='<div class="row wrap" style="margin-top:12px">'+
       '<button class="secondary" data-fulfill-status="'+o.id+'" data-status="processing">Start Fulfillment</button>'+
       '<button class="secondary" data-fulfill-status="'+o.id+'" data-status="packed">Packed</button>'+
       '<button class="secondary" data-fulfill-status="'+o.id+'" data-status="hold">Put On Hold</button>'+
