@@ -1,0 +1,1 @@
+document.addEventListener('DOMContentLoaded',()=>{const f=document.querySelector('#serviceForm');if(f){f.addEventListener('submit',e=>{e.preventDefault();const s=document.querySelector('.status');s.style.display='block';s.textContent='Preview successful — your request has been captured in this demo. Production email delivery will route service requests to Rick.';f.reset();});}});
