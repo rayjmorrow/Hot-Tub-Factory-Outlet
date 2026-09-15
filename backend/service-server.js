@@ -15,6 +15,7 @@ import customerValueRoutes,{initServiceCustomerValue} from './service-customer-v
 import invoiceItemRoutes,{initServiceInvoiceItems} from './service-invoice-items.js';
 import customerOrderControls,{initCustomerOrderControls} from './customer-order-controls.js';
 import customerOrderRoutes,{initCustomerOrders} from './customer-orders-routes.js';
+import fulfillmentRoutes,{initFulfillment,runFulfillmentAutomation} from './fulfillment-routes.js';
 import commercialRulesRoutes,{initServiceCommercialRules} from './service-commercial-rules.js';
 import customerImportRoutes,{initServiceCustomerImport} from './service-customer-import-routes.js';
 import customerPrivacyRoutes,{initCustomerPrivacy} from './service-customer-privacy-routes.js';
@@ -68,7 +69,7 @@ app.use('/api/service/auth/login',(req,res,next)=>{
 });
 setInterval(()=>{const cutoff=Date.now()-15*60*1000;for(const [k,v] of loginAttempts){const recent=v.filter(t=>t>cutoff);if(recent.length)loginAttempts.set(k,recent);else loginAttempts.delete(k)}},15*60*1000).unref();
 
-app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,quickSpaParts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true,equipmentProfileEditing:true,workOrderDetailAndDelete:true}));
+app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,quickSpaParts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true,equipmentProfileEditing:true,workOrderDetailAndDelete:true,fulfillment:true,autoshipFulfillment:true,pirateShipExport:true}));
 app.get('/ready',async(req,res)=>{try{await q('SELECT 1');res.json({ok:true,database:true})}catch(e){res.status(503).json({ok:false,database:false,error:'Database unavailable'})}});
 
 app.use('/api/service',publicServiceRoutes);
@@ -88,12 +89,13 @@ app.use('/api/service',customerValueRoutes);
 app.use('/api/service',invoiceItemRoutes);
 app.use('/api/service',customerOrderControls);
 app.use('/api/service',customerOrderRoutes);
+app.use('/api/service',fulfillmentRoutes);
 app.use('/api/service',customerImportRoutes);
 
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
   'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js','service-workorder-detail-ui.js',
-  'service-field.css','service-field.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js'
+  'service-field.css','service-field.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js','fulfillment-ui.js'
 ]);
 app.get(['/', '/service-portal.html'],(req,res)=>res.sendFile(path.join(portalRoot,'service-portal.html')));
 app.get('/field',(req,res)=>res.sendFile(path.join(portalRoot,'service-field.html')));
@@ -107,6 +109,7 @@ try{
   await initServiceDb();
   await initServiceFinancials();
   await initCustomerOrders();
+  await initFulfillment();
   await initServiceScheduling();
   await initServiceTenancy();
   await initServicePaymentMethods();
@@ -119,6 +122,7 @@ try{
   await initServiceCustomerImport();
   await initCustomerPrivacy();
   await ensureBootstrapAdmin();
+  await runFulfillmentAutomation();
   await promoteLatestStagedCustomers();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
 }catch(err){
