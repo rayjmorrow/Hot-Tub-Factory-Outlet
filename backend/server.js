@@ -100,6 +100,40 @@ async function findUnsettledByInvoice(invoice){
 
 async function transactionDetails(transId){return (await anet({getTransactionDetailsRequest:{merchantAuthentication:auth(),transId:String(transId)}})).transaction||{}}
 
+async function fulfillmentPost(path,body){
+  const base=String(process.env.FULFILLMENT_SERVICE_URL||'').replace(/\/$/,'');
+  const secret=process.env.FULFILLMENT_WEBHOOK_SECRET||'';
+  if(!base||!secret){console.warn('FULFILLMENT_HANDOFF_SKIPPED: service URL/secret not configured');return null}
+  const r=await fetch(base+'/api/service'+path,{method:'POST',headers:{'Content-Type':'application/json','x-htfo-fulfillment-secret':secret},body:JSON.stringify(body)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||('Fulfillment handoff returned '+r.status));
+  return j;
+}
+function transactionUserField(tx,name){
+  const raw=tx?.userFields?.userField??tx?.userFields??[];
+  const list=Array.isArray(raw)?raw:[raw];
+  return String(list.find(x=>String(x?.name||'').toLowerCase()===String(name).toLowerCase())?.value||'');
+}
+async function handoffPaidTransaction(transId){
+  const tx=await transactionDetails(transId);
+  const fulfillment=transactionUserField(tx,'Fulfillment');
+  if(/^pickup-/i.test(fulfillment))return {skipped:'store pickup'};
+  const ship=tx.shipTo||{},bill=tx.billTo||{},customer=tx.customer||{};
+  const rawItems=tx?.lineItems?.lineItem??tx?.lineItems??[];
+  const items=(Array.isArray(rawItems)?rawItems:[rawItems]).filter(Boolean).map(x=>({product_id:x.itemId||'',sku:x.itemId||'',description:x.name||x.description||'Online item',quantity:Number(x.quantity)||1,unit_price:Number(x.unitPrice)||0}));
+  return fulfillmentPost('/fulfillment/store-order',{
+    transaction_id:String(transId),
+    external_order_id:String(transId),
+    order_number:tx?.order?.invoiceNumber||'',
+    shipping_amount:Number(tx?.shipping?.amount||0),
+    total_amount:Number(tx?.authAmount||tx?.settleAmount||0),
+    package_weight_lbs:10,package_length_in:12,package_width_in:12,package_height_in:12,
+    customer:{first_name:ship.firstName||bill.firstName||'',last_name:ship.lastName||bill.lastName||'',email:customer.email||bill.email||'',phone:customer.phoneNumber||bill.phoneNumber||'',street:ship.address||bill.address||'',street2:'',city:ship.city||bill.city||'',state:ship.state||bill.state||'',zip:ship.zip||bill.zip||''},
+    items,
+    notes:'Paid online store order'
+  });
+}
+
 function normalizeProfileIds(tx,fallbackProfileId){
   const p=tx.profile||{};
   return{customerProfileId:String(p.customerProfileId||fallbackProfileId||''),customerPaymentProfileId:String(p.customerPaymentProfileId||'')};
@@ -115,7 +149,7 @@ async function createRecurringGroup({profileId,paymentProfileId,frequencyMonths,
   const name=`HTFO AutoShip ${names}`.slice(0,50);
   try{
     const j=await anet({ARBCreateSubscriptionRequest:{merchantAuthentication:auth(),refId:String(invoice).slice(0,20),subscription:{name,paymentSchedule:{interval:{length:Number(frequencyMonths),unit:'months'},startDate,totalOccurrences,trialOccurrences:0},amount,profile:{customerProfileId:String(profileId),customerPaymentProfileId:String(paymentProfileId)},order:{invoiceNumber:String(invoice).slice(0,20),description:`HTFO AutoShip ${employeeCode?`employee ${employeeCode}`:'standard'} · ${frequencyMonths} month cadence`.slice(0,255)}}}});
-    return{subscriptionId:String(j.subscriptionId||''),frequencyMonths:Number(frequencyMonths),amount,startDate,totalOccurrences,items:priced.items.map(x=>({id:x.id,name:x.name,quantity:x.quantity,discountPercent:Math.round(x.autoshipLockedDiscount*100)}))};
+    return{subscriptionId:String(j.subscriptionId||''),frequencyMonths:Number(frequencyMonths),amount,startDate,totalOccurrences,items:priced.items.map(x=>({id:x.id,sku:x.id,name:x.name,quantity:x.quantity,unit_price:x.unit_price,discountPercent:Math.round(x.autoshipLockedDiscount*100)}))};
   }catch(e){
     if(String(e.code||'').toUpperCase()==='E00012'||/duplicate/i.test(e.message||''))return{duplicate:true,frequencyMonths:Number(frequencyMonths),amount,startDate,items:priced.items.map(x=>({id:x.id,name:x.name,quantity:x.quantity,discountPercent:Math.round(x.autoshipLockedDiscount*100)}))};
     throw e;
@@ -169,6 +203,7 @@ app.post('/account/activate',async(req,res)=>{
       const groupBody={items,first:t.customer.first,last:t.customer.last,email:t.customer.email,phone:t.customer.phone,fulfillment:t.fulfillment,shippingAddress:t.shippingAddress,employeeAttribution:t.employeeAttribution||null};
       autoship.push(await createRecurringGroup({profileId:ids.customerProfileId,paymentProfileId,frequencyMonths,groupBody,invoice:t.invoice,employeeCode:t.employeeAttribution?.code||''}));
     }
+    try{await fulfillmentPost('/fulfillment/store-autoship',{customer:{first_name:t.customer.first,last_name:t.customer.last,email:t.customer.email,phone:t.customer.phone},subscriptions:autoship,payment_reference:ids.customerPaymentProfileId})}catch(e){console.error('AutoShip fulfillment handoff failed',e)}
     const accountToken=signToken({kind:'account',profileId:ids.customerProfileId,email:t.customer.email,autoship,employeeAttribution:t.employeeAttribution||null});
     const profile=await profileSummary(anet,auth,ids.customerProfileId);
     res.json({ok:true,accountToken,profile,autoship,transactionId:String(transId)});
@@ -177,7 +212,7 @@ app.post('/account/activate',async(req,res)=>{
 
 app.post('/customer/manage-token',async(req,res)=>{res.status(410).json({ok:false,error:'Use the signed My HTFO Account payment-management flow.'})});
 
-app.post('/authorize/webhook',async(req,res)=>{res.sendStatus(200);try{console.log('AUTHORIZE_WEBHOOK',JSON.stringify(req.body||{}))}catch(e){console.error('Webhook processing error',e)}});
+app.post('/authorize/webhook',async(req,res)=>{res.sendStatus(200);try{const evt=req.body||{};console.log('AUTHORIZE_WEBHOOK',JSON.stringify(evt));const type=String(evt.eventType||'').toLowerCase(),transId=evt?.payload?.id||evt?.payload?.transId||'';if(transId&&type.includes('payment')&&type.includes('authcapture')){try{await handoffPaidTransaction(transId);console.log('FULFILLMENT_HANDOFF_OK',transId)}catch(e){console.error('Fulfillment handoff failed',e)}}}catch(e){console.error('Webhook processing error',e)}});
 
 
 app.post('/lead',async(req,res)=>{
@@ -223,7 +258,7 @@ app.post('/checkout/session',async(req,res)=>{
       activationToken=signToken({kind:'autoship-checkout',invoice,profileId:customerProfileId,items:req.body.items,customer:t.customer,fulfillment:req.body.fulfillment,shippingAddress:req.body.shippingAddress,employeeAttribution:req.body.employeeAttribution||null},60*60*24);
       returnUrl=`https://hottubfactoryoutlet.com/account.html?activate=${encodeURIComponent(activationToken)}`;
     }
-    const userField=[{name:'Purchase Discount',value:purchaseDiscount?`${purchaseDiscount}% employee code`:'None'},{name:'AutoShip Savings',value:hasAutoship?`${autoshipDiscount}%`:'None'},{name:'AutoShip Discount Policy',value:hasAutoship&&t.attribution?'10% of current price until canceled':hasAutoship?'5% standard AutoShip':'None'}];
+    const userField=[{name:'Purchase Discount',value:purchaseDiscount?`${purchaseDiscount}% employee code`:'None'},{name:'AutoShip Savings',value:hasAutoship?`${autoshipDiscount}%`:'None'},{name:'AutoShip Discount Policy',value:hasAutoship&&t.attribution?'10% of current price until canceled':hasAutoship?'5% standard AutoShip':'None'},{name:'Fulfillment',value:String(req.body.fulfillment||'ship')}];
     if(t.attribution)userField.push({name:'Employee Code',value:t.attribution.code},{name:'Employee Name',value:t.attribution.employeeName},{name:'Employee ID',value:t.attribution.employeeId});
     const d=t.destination;
     const transactionRequest={transactionType:'authCaptureTransaction',amount:total,order:{invoiceNumber:invoice,description:(hasAutoship?'HTFO order with AutoShip enrollment':'HTFO online order')+attributionText},lineItems:{lineItem:t.items.map(x=>({itemId:x.id,name:x.name,description:x.autoship?`${x.description} | AutoShip ${Math.round(x.autoshipLockedDiscount*100)}% of current price until canceled | every ${x.frequencyMonths} months`:x.description,quantity:x.quantity,unitPrice:x.unit_price,taxable:true}))},tax:{amount:t.tax,name:'Sales Tax'},shipping:{amount:t.shipping,name:'Shipping'},billTo:{firstName:t.customer.first,lastName:t.customer.last,address:t.customer.street,city:t.customer.city,state:t.customer.state,zip:t.customer.zip,country:'US',email:t.customer.email},shipTo:{firstName:t.customer.first,lastName:t.customer.last,address:d.street,city:d.city,state:d.state,zip:d.zip,country:'US'},userFields:{userField}};
