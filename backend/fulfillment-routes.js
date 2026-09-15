@@ -132,6 +132,33 @@ router.post('/fulfillment/store-order',async(req,res)=>{
   res.status(201).json({ok:true,order_id:order.id,customer_id:customer.id});
 });
 
+
+router.post('/fulfillment/store-autoship',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized AutoShip handoff'});
+  const b=req.body||{},cust=b.customer||{},email=clean(cust.email)?.toLowerCase()||null,phone=clean(cust.phone);
+  let customer=null;
+  if(email)customer=(await q('SELECT * FROM service_customers WHERE lower(email)=lower($1) ORDER BY id DESC LIMIT 1',[email])).rows[0];
+  if(!customer&&phone)customer=(await q('SELECT * FROM service_customers WHERE phone=$1 ORDER BY id DESC LIMIT 1',[phone])).rows[0];
+  if(!customer)return res.status(404).json({error:'Customer must exist before AutoShip handoff'});
+  const created=[];
+  for(const sub of (Array.isArray(b.subscriptions)?b.subscriptions:[])){
+    const external=clean(sub.subscriptionId);
+    let rec=external?(await q('SELECT * FROM service_recurring_orders WHERE external_subscription_id=$1 LIMIT 1',[external])).rows[0]:null;
+    if(!rec){
+      const months=Math.max(1,Number(sub.frequencyMonths)||1),days=months*30,next=clean(sub.startDate)||addDays(ymd(new Date()),days);
+      rec=(await q(\`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes)
+        VALUES($1,$2,'active',$3,'days',$4,$5,'ship',$6) RETURNING *\`,[customer.id,external,days,next,clean(b.payment_reference),'Online store AutoShip'])).rows[0];
+      const subItems=Array.isArray(sub.items)?sub.items:[];
+      for(const i of subItems)await q(\`INSERT INTO service_recurring_order_items(recurring_order_id,product_id,sku,description,quantity,unit_price,active)
+        VALUES($1,$2,$3,$4,$5,$6,true)\`,[rec.id,clean(i.id),clean(i.sku),clean(i.name)||clean(i.description)||'AutoShip item',Math.max(.01,num(i.quantity)||1),num(i.unit_price)]);
+      await logEvent(null,rec.id,'autoship_enrolled','AutoShip enrolled from online store. First shipment '+next+'.','online store');
+    }
+    created.push(rec);
+  }
+  await runFulfillmentAutomation();
+  res.json({ok:true,recurring_orders:created.map(x=>x.id)});
+});
+
 router.get('/fulfillment/queue',auth,async(req,res)=>{await runFulfillmentAutomation();res.json(await queueRows())});
 router.get('/fulfillment/summary',auth,async(req,res)=>{
   await runFulfillmentAutomation(); const rows=await queueRows(),today=ymd(new Date());
