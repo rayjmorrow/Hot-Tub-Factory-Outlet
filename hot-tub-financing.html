@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Hot tub financing options from Hot Tub Factory Outlet. See example monthly payments on three popular spas, plus a separate 60 months 0% financing option on approved credit.">
+<title>Hot Tub Financing Options | Hot Tub Factory Outlet</title>
+<style>
+*{box-sizing:border-box}
+:root{--navy:#062e63;--blue:#0b9bd7;--red:#e51f2a;--gold:#ffd51c;--light:#eef7ff;--muted:#5a6e80}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#eef7ff;color:#0b2d4d}
+a{text-decoration:none}
+.top{background:#062e63;color:#fff;text-align:center;padding:10px 14px;font-weight:800}
+.nav{background:#fff;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:13px max(20px,calc((100% - 1180px)/2));box-shadow:0 3px 16px #0001;position:sticky;top:0;z-index:5}
+.nav img{height:54px}
+.call{background:var(--red);color:#fff;padding:12px 18px;border-radius:999px;font-weight:900}
+.hero{background:linear-gradient(135deg,#eaf7ff,#fff 55%,#e8f4ff);padding:44px 20px 34px}
+.wrap{max-width:1180px;margin:auto}
+.hero-grid{display:grid;grid-template-columns:1.08fr .92fr;gap:28px;align-items:start}
+.hero-copy,.formbox,.spa-card,.benefit,.location{background:#fff;border-radius:24px;box-shadow:0 16px 45px #0a39651a}
+.hero-copy{padding:34px}
+.eyebrow{display:inline-block;background:#e8f7ff;color:#0789c8;padding:8px 14px;border-radius:999px;font-size:13px;font-weight:900;text-transform:uppercase}
+h1{font-size:58px;line-height:.97;margin:16px 0;color:var(--navy)}
+h1 span{color:var(--blue)}
+.lead{font-size:20px;line-height:1.5;color:#4e6579}
+.finance-banner{margin:22px 0 0;background:linear-gradient(135deg,#07366f,#0aa8e6);color:#fff;padding:20px;border-radius:18px;text-align:center}
+.finance-banner strong{display:block;font-size:34px}
+.finance-banner small{display:block;margin-top:7px;font-size:14px;line-height:1.4}
+.formbox{overflow:hidden}
+.formhead{background:linear-gradient(135deg,#8f171d,#e51f2a);color:#fff;padding:25px}
+.formhead h2{margin:0 0 8px;font-size:31px}
+.formhead p{margin:0;line-height:1.5}
+.formbody{padding:24px}
+label{display:block;font-weight:800;margin:10px 0 5px}
+input,select{width:100%;padding:13px;border:1px solid #cdddeb;border-radius:11px;font-size:16px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.submit{width:100%;border:0;border-radius:13px;background:var(--red);color:#fff;padding:17px;font-size:19px;font-weight:900;margin-top:17px;cursor:pointer;box-shadow:0 10px 24px #e51f2a45}
+.note{font-size:12px;color:#6b7d90;line-height:1.45;margin-top:12px}
+.success{display:none;background:#e9faef;color:#14532d;border:1px solid #9bd3aa;border-radius:12px;padding:14px;margin-top:14px}
+.section{padding:36px 20px}
+.section h2{text-align:center;font-size:38px;color:var(--navy);margin:0 0 26px}
+.spas{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.spa-card{overflow:hidden;text-align:center}
+.spa-img{height:320px;background:#fff;padding:16px;display:flex;align-items:center;justify-content:center}
+.spa-img img{width:100%;height:100%;object-fit:contain}
+.spa-copy{padding:18px 20px 22px}
+.spa-copy h3{font-size:26px;margin:0 0 5px;color:var(--navy)}
+.brand{font-size:13px;font-weight:800;color:#6a7e8e;text-transform:uppercase}
+.price{font-size:20px;font-weight:900;margin-top:14px}
+.payment{font-size:48px;font-weight:900;line-height:1;color:var(--navy);margin:8px 0}
+.payment span{font-size:19px}
+.details{font-size:13px;color:var(--muted);line-height:1.45}
+.choice{background:#fff;padding:32px;border-radius:24px;box-shadow:0 16px 45px #0a39651a}
+.choice-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.choice-box{border:2px solid #dce9f3;border-radius:18px;padding:24px}
+.choice-box h3{font-size:29px;color:var(--navy);margin:0 0 10px}
+.choice-box strong{font-size:38px;color:var(--red)}
+.choice-box p{color:var(--muted);line-height:1.55}
+.disclaimer{margin-top:18px;padding:18px;background:#fff8d8;border:1px solid #f0d66a;border-radius:14px;color:#5c531f;font-size:13px;line-height:1.5}
+.benefits{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.benefit{padding:22px}
+.benefit b{font-size:26px}
+.benefit h3{margin:10px 0 7px}
+.benefit p{margin:0;color:var(--muted);line-height:1.5}
+.locations{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.location{padding:22px}
+.location h3{margin:0 0 8px;color:var(--navy)}
+.cta{margin-top:22px;background:#062e63;color:#fff;border-radius:24px;padding:28px;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.cta h2{color:#fff;text-align:left;margin:0 0 8px}
+.cta a{background:var(--red);color:#fff;padding:14px 20px;border-radius:12px;font-weight:900}
+@media(max-width:900px){.hero-grid,.choice-grid{grid-template-columns:1fr}.spas{grid-template-columns:1fr}.benefits{grid-template-columns:1fr 1fr}.spa-img{height:300px}h1{font-size:46px}}
+@media(max-width:620px){.nav{flex-direction:column}.two,.benefits,.locations{grid-template-columns:1fr}.hero{padding:24px 12px}.hero-copy{padding:24px}h1{font-size:40px}.payment{font-size:42px}}
+</style>
+<script src="landing-page-tracking.js?v=20260918-financing-1"></script>
+</head>
+<body>
+<div class="top">Two Pittsburgh Showrooms • Monroeville & Wexford • 412-326-0361</div>
+<div class="nav">
+  <img src="assets/htfo-logo.webp" alt="Hot Tub Factory Outlet">
+  <a class="call" href="tel:4123260361">Call 412-326-0361</a>
+</div>
+
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <span class="eyebrow">Flexible Hot Tub Financing</span>
+      <h1>PAYMENTS AS LOW AS <span>$73/MO*</span></h1>
+      <p class="lead">Choose the financing option that fits your budget. See example payments on three popular spas, or ask about our separate 60 months 0% financing program.</p>
+      <div class="finance-banner">
+        <strong>60 MONTHS 0% FINANCING</strong>
+        <span>AVAILABLE O.A.C. ON SELECT MODELS</span>
+        <small>This is a separate financing program from the monthly-payment examples shown below. Offers cannot be combined.</small>
+      </div>
+    </div>
+
+    <aside class="formbox" id="claim">
+      <div class="formhead">
+        <h2>See Your Financing Options</h2>
+        <p>Tell us which spa interests you and where to send your options.</p>
+      </div>
+      <div class="formbody">
+        <form id="leadForm">
+          <div class="two">
+            <div><label>First Name</label><input name="firstName" required></div>
+            <div><label>Last Name</label><input name="lastName" required></div>
+          </div>
+          <label>Email</label><input name="email" type="email" required>
+          <label>Mobile Phone</label><input name="phone" type="tel" required>
+          <label>Which spa interests you?</label>
+          <select name="spaInterest" required>
+            <option value="">Choose one</option>
+            <option>InnovaSpa Fantom</option>
+            <option>Vita Spa Elegant</option>
+            <option>American Whirlpool 880</option>
+            <option>Show me all options</option>
+          </select>
+          <label>Preferred Showroom</label>
+          <select name="location" required>
+            <option value="">Choose one</option>
+            <option>Monroeville</option>
+            <option>Wexford</option>
+            <option>Either Location</option>
+          </select>
+          <input type="hidden" name="source" value="Hot Tub Financing Landing Page">
+          <input type="hidden" name="campaign" value="HTFO - Hot Tub Financing">
+          <input type="hidden" name="offer" value="Payments As Low As + 60 Months 0 Percent">
+          <input type="hidden" name="utm_source" id="utm_source">
+          <input type="hidden" name="utm_campaign" id="utm_campaign">
+          <input type="hidden" name="utm_content" id="utm_content">
+          <button class="submit" type="submit">SHOW ME MY OPTIONS</button>
+          <div class="note">By submitting, you agree to be contacted by Hot Tub Factory Outlet by phone, text and email about your request. Financing subject to approval and program terms.</div>
+          <div id="msg" class="success"></div>
+        </form>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <h2>Three Spas. Three Example Payments.</h2>
+    <div class="spas">
+      <article class="spa-card">
+        <div class="spa-img"><img src="https://s3.amazonaws.com/innovaspa.com/app/uploads/2019/05/17125139/Fantom-charcoal_dessus.jpg" alt="InnovaSpa Fantom overhead view"></div>
+        <div class="spa-copy">
+          <div class="brand">InnovaSpa</div>
+          <h3>Fantom</h3>
+          <div class="price">Starting at $4,999</div>
+          <div class="payment">$73<span>/mo*</span></div>
+          <div class="details">Example payment using 120-month financing at 9.99% APR with a 10% financing fee included.</div>
+        </div>
+      </article>
+
+      <article class="spa-card">
+        <div class="spa-img"><img src="https://vitaspa.com/app/uploads/2026/02/vitaspa-elegant-silver-marble-top-crop-11.jpg" alt="Vita Spa Elegant overhead view"></div>
+        <div class="spa-copy">
+          <div class="brand">Vita Spa</div>
+          <h3>Elegant</h3>
+          <div class="price">Starting at $8,999</div>
+          <div class="payment">$131<span>/mo*</span></div>
+          <div class="details">Example payment using 120-month financing at 9.99% APR with a 10% financing fee included.</div>
+        </div>
+      </article>
+
+      <article class="spa-card">
+        <div class="spa-img"><img src="assets/hot-tubs/american-whirlpool/880.webp" alt="American Whirlpool 880 overhead view"></div>
+        <div class="spa-copy">
+          <div class="brand">American Whirlpool</div>
+          <h3>880</h3>
+          <div class="price">Starting at $11,999</div>
+          <div class="payment">$174<span>/mo*</span></div>
+          <div class="details">Example payment using 120-month financing at 9.99% APR with a 10% financing fee included.</div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap choice">
+    <h2>Two Different Ways to Finance</h2>
+    <div class="choice-grid">
+      <div class="choice-box">
+        <h3>Lower Monthly Payment</h3>
+        <strong>From $73/Mo*</strong>
+        <p>Example payments shown above use a 120-month program at 9.99% APR and include the 10% financing fee in the financed amount.</p>
+      </div>
+      <div class="choice-box">
+        <h3>Promotional Financing</h3>
+        <strong>60 Months 0%</strong>
+        <p>Available on approved credit on select models. This is a separate program from the long-term monthly-payment examples.</p>
+      </div>
+    </div>
+    <div class="disclaimer"><strong>Financing disclosure:</strong> Payment examples are estimates based on the advertised starting prices, a 10% financing fee added to the amount financed, 120 monthly payments, and 9.99% APR. Actual payment may vary by model, options, taxes, delivery, credit approval and final selling price. The 60 months 0% offer is a separate promotional financing program, available on approved credit on select models. Offers cannot be combined. See store for complete terms.</div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <h2>Why Buy From Hot Tub Factory Outlet?</h2>
+    <div class="benefits">
+      <div class="benefit"><b>🚚</b><h3>White-Glove Delivery</h3><p>Professional placement and setup by our experienced local team.</p></div>
+      <div class="benefit"><b>🛠️</b><h3>In-House Service</h3><p>Local service and support after delivery day.</p></div>
+      <div class="benefit"><b>📍</b><h3>Two Showrooms</h3><p>Compare spas in Monroeville or Wexford.</p></div>
+      <div class="benefit"><b>🤝</b><h3>Locally Owned</h3><p>Serving Western Pennsylvania with local sales, delivery and service.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="locations">
+      <div class="location"><h3>Monroeville</h3><p>4680 Old William Penn Hwy, Suite 205<br>Monroeville, PA 15146</p></div>
+      <div class="location"><h3>Wexford</h3><p>10269 Perry Highway<br>Wexford, PA 15090</p></div>
+    </div>
+    <div class="cta">
+      <div><h2>Want to see which program fits best?</h2><p>Tell us the spa you like and we’ll walk you through the available options.</p></div>
+      <a href="#claim">SEE MY OPTIONS</a>
+    </div>
+  </div>
+</section>
+
+<script>
+const q=new URLSearchParams(location.search);
+['utm_source','utm_campaign','utm_content'].forEach(k=>{const e=document.getElementById(k);if(e)e.value=q.get(k)||''});
+const f=document.getElementById('leadForm'),m=document.getElementById('msg');
+f.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const b=f.querySelector('button');
+  b.disabled=true;b.textContent='SUBMITTING...';
+  const d=Object.fromEntries(new FormData(f).entries());
+  d.name=((d.firstName||'')+' '+(d.lastName||'')).trim();
+  d.note='Financing interest: '+(d.spaInterest||'Not selected');
+  try{
+    const r=await fetch('https://hot-tub-factory-outlet.onrender.com/lead',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(d)
+    });
+    if(!r.ok)throw 0;
+    f.reset();
+    m.style.display='block';
+    m.innerHTML='<strong>Success!</strong> We received your request. An HTFO team member will follow up with financing options for the spa you selected.';
+  }catch(x){
+    m.style.display='block';
+    m.innerHTML='<strong>We could not submit the form.</strong> Please call 412-326-0361 and we will help you right away.';
+  }finally{
+    b.disabled=false;b.textContent='SHOW ME MY OPTIONS';
+  }
+});
+</script>
+</body>
+</html>
