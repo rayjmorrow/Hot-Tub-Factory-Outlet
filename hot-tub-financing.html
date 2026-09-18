@@ -114,6 +114,8 @@ input,select{width:100%;padding:13px;border:1px solid #cdddeb;border-radius:11px
             <option>American Whirlpool 880</option>
             <option>Show me all options</option>
           </select>
+          <label>What monthly payment would you like to stay under? <span style="font-weight:400;color:#6b7d90">(optional)</span></label>
+          <div style="position:relative"><span style="position:absolute;left:13px;top:13px;font-weight:800;color:#5a6e80">$</span><input name="desiredMonthlyPayment" type="number" min="0" step="1" inputmode="numeric" placeholder="125" style="padding-left:29px"></div>
           <label>Preferred Showroom</label>
           <select name="location" required>
             <option value="">Choose one</option>
@@ -230,7 +232,27 @@ f.addEventListener('submit',async e=>{
   b.disabled=true;b.textContent='SUBMITTING...';
   const d=Object.fromEntries(new FormData(f).entries());
   d.name=((d.firstName||'')+' '+(d.lastName||'')).trim();
-  d.note='Financing interest: '+(d.spaInterest||'Not selected');
+  d.note='Financing interest: '+(d.spaInterest||'Not selected')+'\\nDesired max payment: '+(d.desiredMonthlyPayment?'
+  try{
+    const r=await fetch('https://hot-tub-factory-outlet.onrender.com/lead',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(d)
+    });
+    if(!r.ok)throw 0;
+    f.reset();
+    m.style.display='block';
+    m.innerHTML='<strong>Success!</strong> We received your request. An HTFO team member will follow up with financing options for the spa you selected.';
+  }catch(x){
+    m.style.display='block';
+    m.innerHTML='<strong>We could not submit the form.</strong> Please call 412-326-0361 and we will help you right away.';
+  }finally{
+    b.disabled=false;b.textContent='SHOW ME MY OPTIONS';
+  }
+});
+</script>
+</body>
+</html>+d.desiredMonthlyPayment+'/month':'Not specified');
   try{
     const r=await fetch('https://hot-tub-factory-outlet.onrender.com/lead',{
       method:'POST',
