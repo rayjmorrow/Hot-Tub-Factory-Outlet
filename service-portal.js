@@ -30,14 +30,61 @@ $('#saveEquipment').onclick=async e=>{e.preventDefault();const b=Object.fromEntr
 async function loadWorkOrders(){const rows=await api('/work-orders');$('#scheduleList').innerHTML=rows.map(workCard).join('')||'<p class="muted">No scheduled calls.</p>';$('#workOrderList').innerHTML=rows.map(workCard).join('')||'<p class="muted">No work orders.</p>'}
 async function populateWorkEquipment(customerId,selected=''){workEquipmentRows=[];$('#workEquipment').innerHTML='<option value="">No product selected / general service</option>';$('#selectedEquipmentSummary').textContent='';if(!customerId)return;const x=await api('/customers/'+customerId);workEquipmentRows=x.equipment;$('#workEquipment').innerHTML+=$xEquipmentOptions(workEquipmentRows);if(selected)$('#workEquipment').value=String(selected);renderSelectedEquipment()}
 function $xEquipmentOptions(rows){return rows.map(e=>`<option value="${e.id}">${esc([e.equipment_type,e.brand,e.model].filter(Boolean).join(' '))}${e.serial_number?` · S/N ${esc(e.serial_number)}`:''}</option>`).join('')}
+
+async function loadWorkPaymentGate(customerId){
+  const gate=$('#workPaymentGate'),status=$('#workPaymentStatus'),linkBox=$('#workPaymentLinkBox');
+  if(!gate||!status)return;
+  if(!customerId){gate.hidden=true;return}
+  gate.hidden=false;linkBox.innerHTML='';status.textContent='Checking payment method…';
+  try{
+    const x=await api('/customers/'+customerId+'/payment-method'),p=x.payment||{},s=p.status||'needed';
+    if(s==='card_on_file'){
+      status.innerHTML='<span class="payment-ready">✓ '+esc(p.card_brand||'Card')+' •••• '+esc(p.card_last_four||'')+' on file</span>';
+      $('#workApproveCashCheck').textContent='Approve Cash / Check';
+    }else if(s==='cash_check_approved'){
+      status.innerHTML='<span class="payment-ready">✓ Cash / Check approved</span>';
+      $('#workApproveCashCheck').textContent='Remove Cash / Check Approval';
+    }else{
+      status.innerHTML='<span class="payment-needed">⚠ Payment method required before scheduling</span>';
+      $('#workApproveCashCheck').textContent='Approve Cash / Check';
+    }
+    $('#workApproveCashCheck').dataset.customerId=customerId;
+    $('#workApproveCashCheck').dataset.approved=s==='cash_check_approved'?'1':'0';
+    $('#workSendCardAuth').dataset.customerId=customerId;
+  }catch(e){status.textContent='Unable to load payment method: '+e.message}
+}
+
 function renderSelectedEquipment(){const e=workEquipmentRows.find(x=>String(x.id)===String($('#workEquipment').value));$('#selectedEquipmentSummary').textContent=e?`${e.equipment_type} · ${[e.brand,e.model].filter(Boolean).join(' ')} · Serial ${e.serial_number||'not recorded'}${e.warranty_expires?' · Warranty through '+e.warranty_expires:''}`:'No specific product selected.'}
-function selectWorkCustomer(c){workSelectedCustomerId=String(c.id);$('#workDialog').dataset.customerId=workSelectedCustomerId;$('#workCustomer').value=workSelectedCustomerId;$('#workSelectedCustomer').innerHTML=`<div class="item" style="background:white"><b>${esc(customerName(c))}</b><span>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</span><span class="muted">${esc([c.street,c.city,c.state,c.zip].filter(Boolean).join(', '))}</span></div>`;$('#workCustomerMatches').innerHTML='';$('#workCustomerSearchStatus').textContent='Customer selected.';populateWorkEquipment(c.id,'')}
+function selectWorkCustomer(c){workSelectedCustomerId=String(c.id);$('#workDialog').dataset.customerId=workSelectedCustomerId;$('#workCustomer').value=workSelectedCustomerId;$('#workSelectedCustomer').innerHTML=`<div class="item" style="background:white"><b>${esc(customerName(c))}</b><span>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</span><span class="muted">${esc([c.street,c.city,c.state,c.zip].filter(Boolean).join(', '))}</span></div>`;$('#workCustomerMatches').innerHTML='';$('#workCustomerSearchStatus').textContent='Customer selected.';populateWorkEquipment(c.id,'');loadWorkPaymentGate(c.id)}
 function renderWorkCustomerOptions(rows,selected=''){workCustomerRows=rows;$('#workCustomerMatches').innerHTML=rows.map(c=>`<button type="button" class="item work-customer-row" data-work-customer="${c.id}" style="text-align:left;color:inherit;background:white"><b>${esc(customerName(c))}</b><span>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</span><span class="muted">${esc([c.street,c.city,c.state,c.zip].filter(Boolean).join(', '))}</span></button>`).join('');$('#workCustomerSearchStatus').textContent=rows.length?`${rows.length} customer${rows.length===1?'':'s'} found — click the customer below.`:'No customers found.';$$('[data-work-customer]').forEach(b=>b.onclick=()=>{const c=workCustomerRows.find(x=>String(x.id)===String(b.dataset.workCustomer));if(c)selectWorkCustomer(c)});if(selected){const c=rows.find(x=>String(x.id)===String(selected));if(c)selectWorkCustomer(c)}}
 async function searchWorkCustomers(term,selected=''){const q=String(term||'').trim();if(!q&&selected){const x=await api('/customers/'+selected);renderWorkCustomerOptions([x.customer],selected);return}if(!q){renderWorkCustomerOptions([],'');$('#workCustomerSearchStatus').textContent='Type a name, phone, email or address.';return}$('#workCustomerSearchStatus').textContent='Searching…';const rows=await api('/customers?q='+encodeURIComponent(q));renderWorkCustomerOptions(rows.slice(0,50),selected)}
 $('#workCustomerSearch').oninput=()=>{clearTimeout(workCustomerSearchTimer);workCustomerSearchTimer=setTimeout(()=>searchWorkCustomers($('#workCustomerSearch').value,''),200)};
 $('#workEquipment').onchange=renderSelectedEquipment;
-async function openWorkDialog(customerId='',equipmentId='',jobType='service'){if(String(currentServiceUser?.role||'').toLowerCase()==='sales'){alert('Sales users can view service and delivery information but cannot schedule jobs.');return;}$('#workForm').reset();$('#workSaveStatus').textContent='';workSelectedCustomerId=customerId?String(customerId):'';$('#workDialog').dataset.customerId=workSelectedCustomerId;$('#workCustomer').value=workSelectedCustomerId;$('#workSelectedCustomer').innerHTML='';$('#workCustomerMatches').innerHTML='';$('#workCustomerSearch').value='';await searchWorkCustomers('',customerId);if(customerId)await populateWorkEquipment(customerId,equipmentId);const type=$('#workForm [name="job_type"]');type.value=jobType==='delivery'?'delivery':'service';const delivery=type.value==='delivery';$('#workDialogTitle').textContent=delivery?'Schedule Delivery':'New Service Call';$('#workDescriptionLabel').textContent=delivery?'Delivery notes / items':'Customer complaint';$('#workDescription').placeholder=delivery?'Spa/model, accessories, access notes, special delivery instructions…':'Describe the service issue…';const assigned=$('#workForm [name="assigned_to"]');if(delivery)assigned.value='Delivery';$('#saveWork').textContent=delivery?'Schedule Delivery':'Create Service Work Order';$('#workDialog').showModal()}
+async function openWorkDialog(customerId='',equipmentId='',jobType='service'){if(String(currentServiceUser?.role||'').toLowerCase()==='sales'){alert('Sales users can view service and delivery information but cannot schedule jobs.');return;}$('#workForm').reset();$('#workSaveStatus').textContent='';if($('#workPaymentGate'))$('#workPaymentGate').hidden=true;if($('#workPaymentLinkBox'))$('#workPaymentLinkBox').innerHTML='';workSelectedCustomerId=customerId?String(customerId):'';$('#workDialog').dataset.customerId=workSelectedCustomerId;$('#workCustomer').value=workSelectedCustomerId;$('#workSelectedCustomer').innerHTML='';$('#workCustomerMatches').innerHTML='';$('#workCustomerSearch').value='';await searchWorkCustomers('',customerId);if(customerId)await populateWorkEquipment(customerId,equipmentId);const type=$('#workForm [name="job_type"]');type.value=jobType==='delivery'?'delivery':'service';const delivery=type.value==='delivery';$('#workDialogTitle').textContent=delivery?'Schedule Delivery':'New Service Call';$('#workDescriptionLabel').textContent=delivery?'Delivery notes / items':'Customer complaint';$('#workDescription').placeholder=delivery?'Spa/model, accessories, access notes, special delivery instructions…':'Describe the service issue…';const assigned=$('#workForm [name="assigned_to"]');if(delivery)assigned.value='Delivery';$('#saveWork').textContent=delivery?'Schedule Delivery':'Create Service Work Order';$('#workDialog').showModal()}
 $('#newWorkOrderBtn').onclick=()=>openWorkDialog('','','service');const newDeliveryBtn=$('#newDeliveryBtn');if(newDeliveryBtn)newDeliveryBtn.onclick=()=>openWorkDialog('','','delivery');const jobTypeSelect=$('#workForm [name="job_type"]');if(jobTypeSelect)jobTypeSelect.onchange=()=>{const delivery=jobTypeSelect.value==='delivery';$('#workDialogTitle').textContent=delivery?'Schedule Delivery':'New Service Call';$('#workDescriptionLabel').textContent=delivery?'Delivery notes / items':'Customer complaint';$('#saveWork').textContent=delivery?'Schedule Delivery':'Create Service Work Order';if(delivery&&!$('#workForm [name="assigned_to"]').value)$('#workForm [name="assigned_to"]').value='Delivery'};
+
+const workSendCardAuth=$('#workSendCardAuth');
+if(workSendCardAuth)workSendCardAuth.onclick=async()=>{
+  const customerId=workSendCardAuth.dataset.customerId||$('#workDialog').dataset.customerId;
+  if(!customerId)return alert('Select a customer first.');
+  try{
+    const x=await api('/customers/'+customerId+'/payment-authorization-link',{method:'POST',body:JSON.stringify({expires_days:7})});
+    $('#workPaymentLinkBox').innerHTML='<div class="sourcebox"><b>Secure card authorization link</b><p class="muted">Copy/send this to the customer. It expires in '+x.expires_days+' days.</p><input id="workPaymentAuthUrl" value="'+esc(x.url)+'" readonly><button type="button" id="workSelectPaymentAuthUrl" class="secondary">Select Link</button></div>';
+    $('#workSelectPaymentAuthUrl').onclick=()=>{$('#workPaymentAuthUrl').focus();$('#workPaymentAuthUrl').select()};
+  }catch(e){alert(e.message)}
+};
+const workApproveCashCheck=$('#workApproveCashCheck');
+if(workApproveCashCheck)workApproveCashCheck.onclick=async()=>{
+  const customerId=workApproveCashCheck.dataset.customerId||$('#workDialog').dataset.customerId;
+  if(!customerId)return alert('Select a customer first.');
+  const remove=workApproveCashCheck.dataset.approved==='1';
+  const note=remove?'':(prompt('Optional note for cash/check arrangement (example: customer will leave a check):','')||'');
+  try{
+    await api('/customers/'+customerId+'/payment-cash-check',{method:'PATCH',body:JSON.stringify({approved:!remove,note})});
+    await loadWorkPaymentGate(customerId);
+  }catch(e){alert(e.message)}
+};
+
 $('#workForm').onsubmit=e=>e.preventDefault();
 $('#saveWork').onclick=async e=>{e.preventDefault();e.stopPropagation();const status=$('#workSaveStatus');status.className='muted';status.textContent='Scheduling…';const save=$('#saveWork');save.disabled=true;try{const b=Object.fromEntries(new FormData($('#workForm')));b.customer_id=$('#workDialog').dataset.customerId||$('#workCustomer').value||workSelectedCustomerId||activeCustomerId||'';if(!b.customer_id)throw new Error('Select a customer before scheduling.');if(!b.scheduled_start)throw new Error('Choose a delivery/service date and time.');if(!String(b.complaint||'').trim())throw new Error(b.job_type==='delivery'?'Add delivery notes/items before scheduling.':'Add the customer complaint before scheduling.');b.warranty=b.warranty==='true';b.equipment_id=b.equipment_id||null;if(b.job_type==='delivery'&&!b.assigned_to)b.assigned_to='Delivery';b.assigned_team=b.job_type==='delivery'?'Delivery':null;const created=await api('/work-orders',{method:'POST',body:JSON.stringify(b)});status.className='ok';status.textContent=(b.job_type==='delivery'?'Delivery':'Service call')+' scheduled successfully · '+(created.work_order_number||'work order created');await loadWorkOrders();setTimeout(()=>{if($('#workDialog').open)$('#workDialog').close();$('#workForm').reset();workSelectedCustomerId='';$('#workDialog').dataset.customerId='';status.textContent='';if(activeCustomerId&&String(b.customer_id)===activeCustomerId){showView('customers');loadCustomer(activeCustomerId)}else showView('schedule')},500)}catch(err){status.className='error';status.textContent=err.message||'Unable to schedule. Please try again.';alert(status.textContent)}finally{save.disabled=false}}
 let partsTimer;$('#partsSearch').oninput=()=>{clearTimeout(partsTimer);partsTimer=setTimeout(loadParts,250)};
