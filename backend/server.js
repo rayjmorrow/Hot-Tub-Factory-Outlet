@@ -13,6 +13,13 @@ app.use(express.json({limit:'256kb'}));
 installVoucherRoutes(app);
 
 const money=n=>Math.round((Number(n)||0)*100)/100;
+const coverCatalog={
+  Economy:{sku:'CVTH100',price:565},
+  Bronze:{sku:'CVTH200',price:636},
+  Silver:{sku:'CVTH300',price:699},
+  Gold:{sku:'CVTH400',price:765},
+  Platinum:{sku:'CVTH500',price:899}
+};
 const taxjarBase=process.env.TAXJAR_SANDBOX==='true'?'https://api.sandbox.taxjar.com/v2':'https://api.taxjar.com/v2';
 const authApi=process.env.AUTHORIZE_SANDBOX==='true'?'https://apitest.authorize.net/xml/v1/request.api':'https://api.authorize.net/xml/v1/request.api';
 const authForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/payment/payment':'https://accept.authorize.net/payment/payment';
@@ -82,9 +89,18 @@ async function anet(body){
   return j;
 }
 
+async function verifiedStoreItems(rawItems){
+  const items=cleanItems(rawItems);
+  return Promise.all(items.map(async x=>{
+    if(!x.cover_form_id)return x;
+    const saved=await fulfillmentGet('/fulfillment/cover-form/'+encodeURIComponent(x.cover_form_id));
+    if(!saved||String(saved.form_id||'')!==x.cover_form_id)throw new Error('Configured cover form could not be verified.');
+    return {...x,id:String(saved.cover_sku||x.id).slice(0,31),name:String((saved.cover_model||'Custom')+' Replacement Cover').slice(0,31),description:String((saved.cover_model||'Custom')+' custom replacement cover').slice(0,200),original_price:money(saved.cover_price)};
+  }));
+}
 async function taxForOrder(body){
   requireEnv(['TAXJAR_API_KEY','SHIP_FROM_STATE','SHIP_FROM_ZIP','SHIP_FROM_CITY','SHIP_FROM_STREET']);
-  const attribution=orderAttribution(body),items=priceItems(cleanItems(body.items),attribution),c=customer(body);validateShip(c);
+  const attribution=orderAttribution(body),items=priceItems(await verifiedStoreItems(body.items),attribution),c=customer(body);validateShip(c);
   const dest=destinationFor(body,c),shipping=shippingFor(body,items);
   const payload={from_country:'US',from_zip:process.env.SHIP_FROM_ZIP,from_state:process.env.SHIP_FROM_STATE,from_city:process.env.SHIP_FROM_CITY,from_street:process.env.SHIP_FROM_STREET,to_country:'US',to_zip:dest.zip,to_state:dest.state,to_city:dest.city,to_street:[dest.street,dest.street2].filter(Boolean).join(' '),shipping,line_items:items.map(x=>({id:x.id,name:x.name,quantity:x.quantity,unit_price:x.unit_price}))};
   const r=await fetch(`${taxjarBase}/taxes`,{method:'POST',headers:{Authorization:`Bearer ${process.env.TAXJAR_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json().catch(()=>({}));
@@ -253,8 +269,9 @@ app.post('/authorize/webhook',async(req,res)=>{res.sendStatus(200);try{const evt
 app.post('/cover-order-form',async(req,res)=>{
   try{
     const b=req.body||{},data=b.formData&&typeof b.formData==='object'?b.formData:{};
-    const model=cleanText(b.coverModel,60),sku=cleanText(b.coverSku,40),price=money(b.coverPrice);
-    if(!model||!sku||price<=0)throw new Error('Choose a valid cover model before continuing.');
+    const model=cleanText(b.coverModel,60),catalog=coverCatalog[model];
+    if(!catalog)throw new Error('Choose a valid cover model before continuing.');
+    const sku=catalog.sku,price=catalog.price;
     const id='COV-'+randomUUID().replace(/-/g,'').slice(0,16).toUpperCase();
     await fulfillmentPost('/fulfillment/cover-form',{
       form_id:id,customer_name:cleanText(data.name,150),customer_email:cleanText(data.email,254),customer_phone:cleanText(data.phone,60),
