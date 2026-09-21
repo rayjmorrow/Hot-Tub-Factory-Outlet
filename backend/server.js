@@ -44,7 +44,7 @@ async function addContactNote(contactId,note){
 }
 
 function employeeDirectory(){
-  const defaults={BILL10:{name:'Bill',id:'bill'},RICK10:{name:'Rick',id:'rick'},RAY10:{name:'Ray',id:'ray'},GINA10:{name:'Gina',id:'gina'}};
+  const defaults={STEVE10:{name:'Steve',id:'steve'},BILL10:{name:'Bill',id:'bill'},RICK10:{name:'Rick',id:'rick'},RAY10:{name:'Ray',id:'ray'},GINA10:{name:'Gina',id:'gina'}};
   let raw={};try{raw=JSON.parse(process.env.EMPLOYEE_CODES_JSON||'{}')}catch{raw={}}
   raw={...defaults,...raw};const out={};
   for(const [code,value] of Object.entries(raw)){
@@ -116,11 +116,36 @@ function transactionUserField(tx,name){
 }
 async function handoffPaidTransaction(transId){
   const tx=await transactionDetails(transId);
+  const rawItems=tx?.lineItems?.lineItem??tx?.lineItems??[];
+  const itemList=(Array.isArray(rawItems)?rawItems:[rawItems]).filter(Boolean);
+  const items=itemList.map(x=>({product_id:x.itemId||'',sku:x.itemId||'',description:x.name||x.description||'Online item',quantity:Number(x.quantity)||1,unit_price:Number(x.unitPrice)||0}));
+  const hasAutoship=itemList.some(x=>/autoship/i.test(String(x.description||'')));
+  const employeeCode=transactionUserField(tx,'Employee Code').trim().toUpperCase();
+  if(hasAutoship&&employeeCode){
+    const hit=employeeForCode(employeeCode);
+    if(hit){
+      const merchandiseSubtotal=money(itemList.reduce((sum,x)=>sum+(Number(x.quantity)||1)*(Number(x.unitPrice)||0),0));
+      const ship=tx.shipTo||{},bill=tx.billTo||{},customer=tx.customer||{};
+      try{
+        await fulfillmentPost('/fulfillment/autoship-attribution',{
+          transaction_id:String(transId),
+          order_number:tx?.order?.invoiceNumber||'',
+          employee_code:hit.code,
+          employee_id:hit.employeeId,
+          employee_name:hit.employeeName,
+          merchandise_subtotal:merchandiseSubtotal,
+          commission_rate:0.10,
+          customer_name:[ship.firstName||bill.firstName||'',ship.lastName||bill.lastName||''].filter(Boolean).join(' '),
+          customer_email:customer.email||bill.email||'',
+          paid_at:tx?.submitTimeUTC||tx?.submitTimeLocal||new Date().toISOString()
+        });
+        console.log('AUTOSHIP_ATTRIBUTION_OK',transId,hit.code,merchandiseSubtotal);
+      }catch(e){console.error('AutoShip attribution handoff failed',e)}
+    }
+  }
   const fulfillment=transactionUserField(tx,'Fulfillment');
   if(/^pickup-/i.test(fulfillment))return {skipped:'store pickup'};
   const ship=tx.shipTo||{},bill=tx.billTo||{},customer=tx.customer||{};
-  const rawItems=tx?.lineItems?.lineItem??tx?.lineItems??[];
-  const items=(Array.isArray(rawItems)?rawItems:[rawItems]).filter(Boolean).map(x=>({product_id:x.itemId||'',sku:x.itemId||'',description:x.name||x.description||'Online item',quantity:Number(x.quantity)||1,unit_price:Number(x.unitPrice)||0}));
   return fulfillmentPost('/fulfillment/store-order',{
     transaction_id:String(transId),
     external_order_id:String(transId),
