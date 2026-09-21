@@ -15,6 +15,7 @@ function csv(v){const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g
 export async function initFulfillment(){
   await q(`
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS fulfillment_status TEXT NOT NULL DEFAULT 'waiting';
+    ALTER TABLE service_customer_order_items ADD COLUMN IF NOT EXISTS cover_form_id TEXT;
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS carrier TEXT;
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS shipping_service TEXT;
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS tracking_number TEXT;
@@ -50,6 +51,22 @@ export async function initFulfillment(){
     );
     CREATE INDEX IF NOT EXISTS idx_autoship_attr_paid_at ON service_autoship_employee_attribution(paid_at);
     CREATE INDEX IF NOT EXISTS idx_autoship_attr_employee_code ON service_autoship_employee_attribution(employee_code,paid_at);
+
+    CREATE TABLE IF NOT EXISTS service_cover_order_forms(
+      form_id TEXT PRIMARY KEY,
+      customer_name TEXT,
+      customer_email TEXT,
+      customer_phone TEXT,
+      cover_model TEXT,
+      cover_sku TEXT,
+      cover_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+      form_data JSONB NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending_payment',
+      external_order_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      paid_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_cover_forms_email ON service_cover_order_forms(customer_email,created_at DESC);
 
     CREATE TABLE IF NOT EXISTS service_notification_outbox(
       id BIGSERIAL PRIMARY KEY,
@@ -109,7 +126,7 @@ export async function runFulfillmentAutomation(){
 }
 async function queueRows(){
   return (await q(`SELECT o.*,c.first_name,c.last_name,c.company,c.email,c.phone,c.street,c.street2,c.city,c.state,c.zip,
-    coalesce((SELECT json_agg(json_build_object('id',i.id,'sku',i.sku,'description',i.description,'quantity',i.quantity,'unit_price',i.unit_price,'line_total',i.line_total) ORDER BY i.id) FROM service_customer_order_items i WHERE i.order_id=o.id),'[]'::json) items
+    coalesce((SELECT json_agg(json_build_object('id',i.id,'sku',i.sku,'description',i.description,'quantity',i.quantity,'unit_price',i.unit_price,'line_total',i.line_total,'cover_form_id',i.cover_form_id) ORDER BY i.id) FROM service_customer_order_items i WHERE i.order_id=o.id),'[]'::json) items
     FROM service_customer_orders o JOIN service_customers c ON c.id=o.customer_id
     WHERE o.status <> 'cancelled' AND coalesce(o.fulfillment_status,'waiting') NOT IN ('shipped','delivered')
       AND (o.source IN ('online','autoship') OR o.order_type IN ('online','autoship','ship'))
@@ -132,6 +149,25 @@ router.post('/fulfillment/autoship-attribution',async(req,res)=>{
       commission_rate=EXCLUDED.commission_rate,commission_amount=EXCLUDED.commission_amount,paid_at=EXCLUDED.paid_at
     RETURNING *`,[transactionId,clean(b.order_number),code,clean(b.employee_id),employeeName,clean(b.customer_name),clean(b.customer_email)?.toLowerCase()||null,subtotal,rate,commission,paidAt.toISOString()])).rows[0];
   res.status(201).json({ok:true,attribution:row});
+});
+
+router.post('/fulfillment/cover-form',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized cover form handoff'});
+  const b=req.body||{},id=clean(b.form_id);
+  if(!id)return res.status(400).json({error:'form_id is required'});
+  const data=b.form_data&&typeof b.form_data==='object'?b.form_data:{};
+  const row=(await q(`INSERT INTO service_cover_order_forms(form_id,customer_name,customer_email,customer_phone,cover_model,cover_sku,cover_price,form_data)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+    ON CONFLICT(form_id) DO UPDATE SET customer_name=EXCLUDED.customer_name,customer_email=EXCLUDED.customer_email,customer_phone=EXCLUDED.customer_phone,
+      cover_model=EXCLUDED.cover_model,cover_sku=EXCLUDED.cover_sku,cover_price=EXCLUDED.cover_price,form_data=EXCLUDED.form_data
+    RETURNING form_id,status,created_at`,[id,clean(b.customer_name),clean(b.customer_email)?.toLowerCase()||null,clean(b.customer_phone),clean(b.cover_model),clean(b.cover_sku),num(b.cover_price),JSON.stringify(data)])).rows[0];
+  res.status(201).json({ok:true,...row});
+});
+router.get('/fulfillment/cover-form/:id',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized cover form lookup'});
+  const row=(await q('SELECT form_id,customer_name,customer_email,customer_phone,cover_model,cover_sku,cover_price,form_data,status,external_order_id,created_at,paid_at FROM service_cover_order_forms WHERE form_id=$1',[clean(req.params.id)])).rows[0];
+  if(!row)return res.status(404).json({error:'Cover form not found'});
+  res.json(row);
 });
 
 router.post('/fulfillment/store-order',async(req,res)=>{
@@ -159,8 +195,10 @@ router.post('/fulfillment/store-order',async(req,res)=>{
     [customer.id,external,orderNo,num(b.shipping_amount),num(b.total_amount),num(b.package_weight_lbs)||10,num(b.package_length_in)||12,num(b.package_width_in)||12,num(b.package_height_in)||12,clean(b.notes)])).rows[0];
   for(const i of items){
     const qty=Math.max(.01,num(i.quantity)||1),unit=num(i.unit_price);
-    await q(`INSERT INTO service_customer_order_items(order_id,product_id,sku,description,quantity,unit_price,line_total,item_scope)
-      VALUES($1,$2,$3,$4,$5,$6,$7,'one_time')`,[order.id,clean(i.product_id),clean(i.sku),clean(i.description)||'Online item',qty,unit,qty*unit]);
+    const coverFormId=clean(i.cover_form_id);
+    await q(`INSERT INTO service_customer_order_items(order_id,product_id,sku,description,quantity,unit_price,line_total,item_scope,cover_form_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,'one_time',$8)`,[order.id,clean(i.product_id),clean(i.sku),clean(i.description)||'Online item',qty,unit,qty*unit,coverFormId]);
+    if(coverFormId)await q("UPDATE service_cover_order_forms SET status='paid',external_order_id=$2,paid_at=NOW() WHERE form_id=$1",[coverFormId,external]);
   }
   await q(`UPDATE service_customer_orders SET subtotal=(SELECT coalesce(sum(line_total),0) FROM service_customer_order_items WHERE order_id=$1),updated_at=NOW() WHERE id=$1`,[order.id]);
   await logEvent(order.id,null,'store_order_received','Online store order '+orderNo+' entered Fulfillment.','online store');
