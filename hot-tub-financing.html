@@ -224,22 +224,32 @@ input,select{width:100%;padding:13px;border:1px solid #cdddeb;border-radius:11px
 
 <script>
 const q=new URLSearchParams(location.search);
-['utm_source','utm_campaign','utm_content'].forEach(k=>{const e=document.getElementById(k);if(e)e.value=q.get(k)||''});
-const f=document.getElementById('leadForm'),m=document.getElementById('msg');
+['utm_source','utm_campaign','utm_content'].forEach(k=>{
+  const e=document.getElementById(k);
+  if(e)e.value=q.get(k)||'';
+});
+const f=document.getElementById('leadForm');
+const m=document.getElementById('msg');
+
 f.addEventListener('submit',async e=>{
   e.preventDefault();
   const b=f.querySelector('button');
-  b.disabled=true;b.textContent='SUBMITTING...';
+  b.disabled=true;
+  b.textContent='SUBMITTING...';
+
   const d=Object.fromEntries(new FormData(f).entries());
   d.name=((d.firstName||'')+' '+(d.lastName||'')).trim();
-  d.note='Financing interest: '+(d.spaInterest||'Not selected')+'\\nDesired max payment: '+(d.desiredMonthlyPayment?'
+  d.note='Financing interest: '+(d.spaInterest||'Not selected')+
+    '\nDesired max payment: '+(d.desiredMonthlyPayment ? '$'+d.desiredMonthlyPayment+'/month' : 'Not specified');
+
   try{
     const r=await fetch('https://hot-tub-factory-outlet.onrender.com/lead',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify(d)
     });
-    if(!r.ok)throw 0;
+    if(!r.ok)throw new Error('submit failed');
+
     f.reset();
     m.style.display='block';
     m.innerHTML='<strong>Success!</strong> We received your request. An HTFO team member will follow up with financing options for the spa you selected.';
@@ -247,27 +257,8 @@ f.addEventListener('submit',async e=>{
     m.style.display='block';
     m.innerHTML='<strong>We could not submit the form.</strong> Please call 412-326-0361 and we will help you right away.';
   }finally{
-    b.disabled=false;b.textContent='SHOW ME MY OPTIONS';
-  }
-});
-</script>
-</body>
-</html>+d.desiredMonthlyPayment+'/month':'Not specified');
-  try{
-    const r=await fetch('https://hot-tub-factory-outlet.onrender.com/lead',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(d)
-    });
-    if(!r.ok)throw 0;
-    f.reset();
-    m.style.display='block';
-    m.innerHTML='<strong>Success!</strong> We received your request. An HTFO team member will follow up with financing options for the spa you selected.';
-  }catch(x){
-    m.style.display='block';
-    m.innerHTML='<strong>We could not submit the form.</strong> Please call 412-326-0361 and we will help you right away.';
-  }finally{
-    b.disabled=false;b.textContent='SHOW ME MY OPTIONS';
+    b.disabled=false;
+    b.textContent='SHOW ME MY OPTIONS';
   }
 });
 </script>
