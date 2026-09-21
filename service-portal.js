@@ -113,6 +113,17 @@ if(workApproveCashCheck)workApproveCashCheck.onclick=async()=>{
   }catch(e){alert(e.message)}
 };
 
+const cancelWork=$('#cancelWork');
+if(cancelWork)cancelWork.onclick=e=>{
+  e.preventDefault();
+  e.stopPropagation();
+  const dialog=$('#workDialog');
+  if(dialog?.open)dialog.close();
+  $('#workForm')?.reset();
+  workSelectedCustomerId='';
+  if(dialog)dialog.dataset.customerId='';
+  const status=$('#workSaveStatus');if(status)status.textContent='';
+};
 $('#workForm').onsubmit=e=>e.preventDefault();
 $('#saveWork').onclick=async e=>{e.preventDefault();e.stopPropagation();const status=$('#workSaveStatus');status.className='muted';status.textContent='Scheduling…';const save=$('#saveWork');save.disabled=true;try{const b=Object.fromEntries(new FormData($('#workForm')));b.customer_id=$('#workDialog').dataset.customerId||$('#workCustomer').value||workSelectedCustomerId||activeCustomerId||'';if(!b.customer_id)throw new Error('Select a customer before scheduling.');if(!b.scheduled_start)throw new Error('Choose a delivery/service date and time.');b.scheduled_start=htfoLocalToIso(b.scheduled_start);if(!String(b.complaint||'').trim())throw new Error(b.job_type==='delivery'?'Add delivery notes/items before scheduling.':'Add the customer complaint before scheduling.');if(!b.assigned_to)throw new Error('Choose an assigned tech / team before scheduling.');b.warranty=b.warranty==='true';b.equipment_id=b.equipment_id||null;if(b.job_type==='delivery'&&!b.assigned_to)b.assigned_to='Delivery';b.assigned_team=b.job_type==='delivery'?'Delivery':null;const created=await api('/work-orders',{method:'POST',body:JSON.stringify(b)});status.className='ok';status.textContent=(b.job_type==='delivery'?'Delivery':'Service call')+' scheduled successfully · '+(created.work_order_number||'work order created');await loadWorkOrders();setTimeout(()=>{if($('#workDialog').open)$('#workDialog').close();$('#workForm').reset();workSelectedCustomerId='';$('#workDialog').dataset.customerId='';status.textContent='';if(activeCustomerId&&String(b.customer_id)===activeCustomerId){showView('customers');loadCustomer(activeCustomerId)}else showView('schedule')},500)}catch(err){status.className='error';status.textContent=err.message||'Unable to schedule. Please try again.';alert(status.textContent)}finally{save.disabled=false}}
 let partsTimer;$('#partsSearch').oninput=()=>{clearTimeout(partsTimer);partsTimer=setTimeout(loadParts,250)};
