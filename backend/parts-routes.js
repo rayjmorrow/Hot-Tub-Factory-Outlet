@@ -29,7 +29,8 @@ async function sellPrice(part){
 router.get('/parts',auth,async(req,res)=>{
   const term=clean(req.query.q)||'';
   const r=await q(`SELECT * FROM service_parts WHERE active=true AND (supplier_part_number ILIKE $1 OR manufacturer_part_number ILIKE $1 OR description ILIKE $1 OR brand ILIKE $1 OR category ILIKE $1) ORDER BY description LIMIT 100`,[`%${term}%`]);
-  const rows=[];for(const p of r.rows)rows.push({...p,calculated_sell_price:await sellPrice(p)});res.json(rows);
+  const role=String(req.user?.role||'').toLowerCase(),canSeeCost=['admin','owner','manager','service_manager'].includes(role);
+  const rows=[];for(const p of r.rows){const row={...p,calculated_sell_price:await sellPrice(p)};if(!canSeeCost){delete row.cost;delete row.list_price;delete row.sell_price;}rows.push(row)}res.json(rows);
 });
 
 router.post('/parts/import',auth,manager,async(req,res)=>{
@@ -78,10 +79,21 @@ router.patch('/estimates/:id/status',auth,async(req,res)=>{
 
 router.post('/work-orders/:id/part-request',auth,async(req,res)=>{
   const b=req.body||{};const p=(await q('SELECT id FROM service_parts WHERE id=$1',[b.part_id])).rows[0];if(!p)return res.status(404).json({error:'Part not found'});
+  const role=String(req.user?.role||'').toLowerCase();
+  if(!['admin','owner','manager','service_manager'].includes(role)){
+    const who=String(req.user?.name||req.user?.username||'').trim();
+    const w=(await q('SELECT assigned_to,assigned_team FROM service_work_orders WHERE id=$1',[req.params.id])).rows[0];
+    if(!w||![w.assigned_to,w.assigned_team].some(v=>String(v||'').trim().toLowerCase()===who.toLowerCase()))return res.status(403).json({error:'You can only request parts for your assigned calls'});
+  }
   const r=await q(`INSERT INTO service_part_requests(work_order_id,estimate_id,part_id,requested_by,requested_quantity,status,notes) VALUES($1,$2,$3,$4,$5,'requested',$6) RETURNING *`,[req.params.id,b.estimate_id||null,b.part_id,req.user.name||req.user.username,Math.max(.01,num(b.quantity)||1),clean(b.notes)]);res.status(201).json(r.rows[0]);
 });
 router.get('/part-requests',auth,async(req,res)=>{
-  const r=await q(`SELECT pr.*,p.description,p.supplier,p.supplier_part_number,p.manufacturer_part_number,p.cost,w.work_order_number,concat_ws(' ',c.first_name,c.last_name) customer_name FROM service_part_requests pr JOIN service_parts p ON p.id=pr.part_id JOIN service_work_orders w ON w.id=pr.work_order_id JOIN service_customers c ON c.id=w.customer_id ORDER BY CASE pr.status WHEN 'requested' THEN 0 WHEN 'approved' THEN 1 WHEN 'ordered' THEN 2 ELSE 3 END,pr.created_at DESC`);res.json(r.rows);
+  const role=String(req.user?.role||'').toLowerCase(),managerRole=['admin','owner','manager','service_manager'].includes(role);
+  const actor=String(req.user?.name||req.user?.username||'').trim();
+  const r=managerRole
+    ? await q(`SELECT pr.*,p.description,p.supplier,p.supplier_part_number,p.manufacturer_part_number,p.cost,w.work_order_number,concat_ws(' ',c.first_name,c.last_name) customer_name FROM service_part_requests pr JOIN service_parts p ON p.id=pr.part_id JOIN service_work_orders w ON w.id=pr.work_order_id JOIN service_customers c ON c.id=w.customer_id ORDER BY CASE pr.status WHEN 'requested' THEN 0 WHEN 'approved' THEN 1 WHEN 'ordered' THEN 2 ELSE 3 END,pr.created_at DESC`)
+    : await q(`SELECT pr.id,pr.work_order_id,pr.part_id,pr.requested_by,pr.requested_quantity,pr.status,pr.notes,pr.created_at,p.description,p.supplier_part_number,p.manufacturer_part_number,w.work_order_number,concat_ws(' ',c.first_name,c.last_name) customer_name FROM service_part_requests pr JOIN service_parts p ON p.id=pr.part_id JOIN service_work_orders w ON w.id=pr.work_order_id JOIN service_customers c ON c.id=w.customer_id WHERE lower(coalesce(pr.requested_by,''))=lower($1) ORDER BY pr.created_at DESC`,[actor]);
+  res.json(r.rows);
 });
 router.patch('/part-requests/:id/approve',auth,manager,async(req,res)=>{
   const r=await q(`UPDATE service_part_requests SET status='approved',manager_approved_by=$2,manager_approved_at=NOW(),updated_at=NOW() WHERE id=$1 RETURNING *`,[req.params.id,req.user.name||req.user.username]);if(!r.rowCount)return res.status(404).json({error:'Part request not found'});res.json(r.rows[0]);
