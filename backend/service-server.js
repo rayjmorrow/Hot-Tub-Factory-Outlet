@@ -122,6 +122,7 @@ try{
   await initServiceCustomerImport();
   await initCustomerPrivacy();
   await ensureBootstrapAdmin();
+  await q("UPDATE service_users SET role='technician' WHERE active=true AND (lower(username)='bill' OR lower(display_name)='bill' OR lower(display_name) LIKE 'bill %')");
   await runFulfillmentAutomation();
   await promoteLatestStagedCustomers();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
