@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { randomUUID } from 'node:crypto';
 import {installVoucherRoutes} from './vouchers.js';
 import {ensureCustomerProfile,profileSummary,signToken,verifyToken,addMonthsISO,occurrencesFor} from './autoship-account.js';
 
@@ -60,7 +61,7 @@ function orderAttribution(body){const code=body?.employeeAttribution?.code;if(!c
 
 function cleanItems(items){
   if(!Array.isArray(items)||!items.length)throw new Error('Cart is empty');
-  return items.map((x,i)=>({id:String(x.id||x.sku||`item-${i+1}`).slice(0,31),name:String(x.name||'Item').slice(0,31),description:String(x.name||'Item').slice(0,255),quantity:Math.max(1,Number(x.qty)||1),original_price:money(x.originalPrice??x.price),autoship:Boolean(x.autoship),frequencyMonths:Number(x.frequencyMonths)||null}));
+  return items.map((x,i)=>({id:String(x.id||x.sku||`item-${i+1}`).slice(0,31),name:String(x.name||'Item').slice(0,31),description:String(x.name||'Item').slice(0,255),quantity:Math.max(1,Number(x.qty)||1),original_price:money(x.originalPrice??x.price),autoship:Boolean(x.autoship),frequencyMonths:Number(x.frequencyMonths)||null,cover_form_id:String(x.coverFormId||x.cover_form_id||'').trim().slice(0,40)}));
 }
 function priceItems(items,attribution){return items.map(x=>{const discountRate=attribution?0.10:(x.autoship?0.05:0);const autoshipLockedDiscount=x.autoship&&attribution?0.10:(x.autoship?0.05:0);return{...x,discountRate,autoshipLockedDiscount,unit_price:money(x.original_price*(1-discountRate))}})}
 function customer(b){const a=b.shippingAddress||{};return{first:String(b.first||'').trim(),last:String(b.last||'').trim(),email:String(b.email||'').trim(),phone:String(b.phone||'').trim(),street:String(a.street||'').trim(),street2:String(a.street2||'').trim(),city:String(a.city||'').trim(),state:String(a.state||'').trim().toUpperCase(),zip:String(a.zip||'').trim(),country:'US'}}
@@ -109,6 +110,15 @@ async function fulfillmentPost(path,body){
   if(!r.ok)throw new Error(j.error||('Fulfillment handoff returned '+r.status));
   return j;
 }
+async function fulfillmentGet(path){
+  const base=String(process.env.FULFILLMENT_SERVICE_URL||'').replace(/\/$/,'');
+  const secret=process.env.FULFILLMENT_WEBHOOK_SECRET||'';
+  if(!base||!secret)throw new Error('Cover form service is not configured');
+  const r=await fetch(base+'/api/service'+path,{headers:{'x-htfo-fulfillment-secret':secret}});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.error||('Cover form lookup returned '+r.status));
+  return j;
+}
 function transactionUserField(tx,name){
   const raw=tx?.userFields?.userField??tx?.userFields??[];
   const list=Array.isArray(raw)?raw:[raw];
@@ -118,7 +128,7 @@ async function handoffPaidTransaction(transId){
   const tx=await transactionDetails(transId);
   const rawItems=tx?.lineItems?.lineItem??tx?.lineItems??[];
   const itemList=(Array.isArray(rawItems)?rawItems:[rawItems]).filter(Boolean);
-  const items=itemList.map(x=>({product_id:x.itemId||'',sku:x.itemId||'',description:x.name||x.description||'Online item',quantity:Number(x.quantity)||1,unit_price:Number(x.unitPrice)||0}));
+  const items=itemList.map(x=>{const desc=String(x.description||'');const m=desc.match(/Cover Form\s+(COV-[A-Z0-9]+)/i);return{product_id:x.itemId||'',sku:x.itemId||'',description:x.name||x.description||'Online item',quantity:Number(x.quantity)||1,unit_price:Number(x.unitPrice)||0,cover_form_id:m?m[1].toUpperCase():null}});
   const hasAutoship=itemList.some(x=>/autoship/i.test(String(x.description||'')));
   const employeeCode=transactionUserField(tx,'Employee Code').trim().toUpperCase();
   if(hasAutoship&&employeeCode){
@@ -240,6 +250,28 @@ app.post('/customer/manage-token',async(req,res)=>{res.status(410).json({ok:fals
 app.post('/authorize/webhook',async(req,res)=>{res.sendStatus(200);try{const evt=req.body||{};console.log('AUTHORIZE_WEBHOOK',JSON.stringify(evt));const type=String(evt.eventType||'').toLowerCase(),transId=evt?.payload?.id||evt?.payload?.transId||'';if(transId&&type.includes('payment')&&type.includes('authcapture')){try{await handoffPaidTransaction(transId);console.log('FULFILLMENT_HANDOFF_OK',transId)}catch(e){console.error('Fulfillment handoff failed',e)}}}catch(e){console.error('Webhook processing error',e)}});
 
 
+app.post('/cover-order-form',async(req,res)=>{
+  try{
+    const b=req.body||{},data=b.formData&&typeof b.formData==='object'?b.formData:{};
+    const model=cleanText(b.coverModel,60),sku=cleanText(b.coverSku,40),price=money(b.coverPrice);
+    if(!model||!sku||price<=0)throw new Error('Choose a valid cover model before continuing.');
+    const id='COV-'+randomUUID().replace(/-/g,'').slice(0,16).toUpperCase();
+    await fulfillmentPost('/fulfillment/cover-form',{
+      form_id:id,customer_name:cleanText(data.name,150),customer_email:cleanText(data.email,254),customer_phone:cleanText(data.phone,60),
+      cover_model:model,cover_sku:sku,cover_price:price,form_data:data
+    });
+    res.status(201).json({ok:true,formId:id,coverModel:model,coverSku:sku,coverPrice:price,sheetUrl:'https://hottubfactoryoutlet.com/cover-order-sheet.html?id='+encodeURIComponent(id)});
+  }catch(e){res.status(400).json({ok:false,error:e.message})}
+});
+app.get('/cover-order-form/:id',async(req,res)=>{
+  try{
+    const id=String(req.params.id||'').trim().toUpperCase();
+    if(!/^COV-[A-Z0-9]{16}$/.test(id))throw new Error('Invalid cover form');
+    const row=await fulfillmentGet('/fulfillment/cover-form/'+encodeURIComponent(id));
+    res.json({ok:true,...row});
+  }catch(e){res.status(404).json({ok:false,error:e.message})}
+});
+
 app.post('/lead',async(req,res)=>{
   try{
     requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
@@ -286,7 +318,7 @@ app.post('/checkout/session',async(req,res)=>{
     const userField=[{name:'Purchase Discount',value:purchaseDiscount?`${purchaseDiscount}% employee code`:'None'},{name:'AutoShip Savings',value:hasAutoship?`${autoshipDiscount}%`:'None'},{name:'AutoShip Discount Policy',value:hasAutoship&&t.attribution?'10% of current price until canceled':hasAutoship?'5% standard AutoShip':'None'},{name:'Fulfillment',value:String(req.body.fulfillment||'ship')}];
     if(t.attribution)userField.push({name:'Employee Code',value:t.attribution.code},{name:'Employee Name',value:t.attribution.employeeName},{name:'Employee ID',value:t.attribution.employeeId});
     const d=t.destination;
-    const transactionRequest={transactionType:'authCaptureTransaction',amount:total,order:{invoiceNumber:invoice,description:(hasAutoship?'HTFO order with AutoShip enrollment':'HTFO online order')+attributionText},lineItems:{lineItem:t.items.map(x=>({itemId:x.id,name:x.name,description:x.autoship?`${x.description} | AutoShip ${Math.round(x.autoshipLockedDiscount*100)}% of current price until canceled | every ${x.frequencyMonths} months`:x.description,quantity:x.quantity,unitPrice:x.unit_price,taxable:true}))},tax:{amount:t.tax,name:'Sales Tax'},shipping:{amount:t.shipping,name:'Shipping'},billTo:{firstName:t.customer.first,lastName:t.customer.last,address:t.customer.street,city:t.customer.city,state:t.customer.state,zip:t.customer.zip,country:'US',email:t.customer.email},shipTo:{firstName:t.customer.first,lastName:t.customer.last,address:d.street,city:d.city,state:d.state,zip:d.zip,country:'US'},userFields:{userField}};
+    const transactionRequest={transactionType:'authCaptureTransaction',amount:total,order:{invoiceNumber:invoice,description:(hasAutoship?'HTFO order with AutoShip enrollment':'HTFO online order')+attributionText},lineItems:{lineItem:t.items.map(x=>({itemId:x.id,name:x.name,description:(x.autoship?`${x.description} | AutoShip ${Math.round(x.autoshipLockedDiscount*100)}% of current price until canceled | every ${x.frequencyMonths} months`:x.description)+(x.cover_form_id?` | Cover Form ${x.cover_form_id}`:''),quantity:x.quantity,unitPrice:x.unit_price,taxable:true}))},tax:{amount:t.tax,name:'Sales Tax'},shipping:{amount:t.shipping,name:'Shipping'},billTo:{firstName:t.customer.first,lastName:t.customer.last,address:t.customer.street,city:t.customer.city,state:t.customer.state,zip:t.customer.zip,country:'US',email:t.customer.email},shipTo:{firstName:t.customer.first,lastName:t.customer.last,address:d.street,city:d.city,state:d.state,zip:d.zip,country:'US'},userFields:{userField}};
     if(hasAutoship)transactionRequest.profile={customerProfileId};else transactionRequest.customer={email:t.customer.email};
     const request={getHostedPaymentPageRequest:{merchantAuthentication:auth(),transactionRequest,hostedPaymentSettings:{setting:[{settingName:'hostedPaymentReturnOptions',settingValue:JSON.stringify({showReceipt:true,url:returnUrl,urlText:hasAutoship?'Finish AutoShip & Open My Account':'Return to Hot Tub Factory Outlet',cancelUrl:process.env.STORE_CANCEL_URL||'https://hottubfactoryoutlet.com/cart.html',cancelUrlText:'Cancel'})},{settingName:'hostedPaymentCustomerOptions',settingValue:JSON.stringify({showEmail:true,requiredEmail:true,addPaymentProfile:hasAutoship})},{settingName:'hostedPaymentPaymentOptions',settingValue:JSON.stringify({cardCodeRequired:true,showCreditCard:true,showBankAccount:false})}]}}};
     const j=await anet(request);if(!j.token)throw new Error('Authorize.Net did not return a payment token');
