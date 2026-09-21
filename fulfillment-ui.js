@@ -10,6 +10,7 @@
     return j;
   }
   function canFulfill(){return Boolean(window.currentServiceUser)}
+  function canReport(){return ['admin','owner','manager','service_manager'].includes(String(window.currentServiceUser?.role||'').toLowerCase())}
   function money(v){return Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD'})}
   async function exportCsv(){
     const token=sessionStorage.getItem('htfoServiceToken')||'';
@@ -46,13 +47,38 @@
     if(list)list.innerHTML=rows.map(card).join('')||'<div class="card"><b>Fulfillment is clear.</b><p class="muted">No orders are waiting to ship.</p></div>';
     const alerts=$('#fulfillmentAlerts');
     if(alerts)alerts.innerHTML=(sum.alerts||[]).slice(0,12).map(a=>'<div class="item"><b>'+esc(String(a.event_type||'').replaceAll('_',' '))+'</b><span>'+esc(a.description)+'</span><span class="muted">'+fmtDate(a.created_at)+'</span></div>').join('')||'<p class="muted">No recent AutoShip alerts.</p>';
+    if(canReport())await loadAutoshipReport();else if($('#autoshipSalesReportPanel'))$('#autoshipSalesReportPanel').hidden=true;
     bind();
+  }
+  function reportMonth(){
+    const input=$('#autoshipReportMonth');
+    if(input?.value)return input.value;
+    const d=new Date(),m=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    if(input)input.value=m;
+    return m;
+  }
+  async function loadAutoshipReport(){
+    const panel=$('#autoshipSalesReportPanel');if(!panel||!canReport())return;
+    panel.hidden=false;
+    const month=reportMonth(),r=await api('/autoship-sales-report?month='+encodeURIComponent(month));
+    const totals=$('#autoshipReportTotals');
+    if(totals)totals.innerHTML='<div class="stat"><b>'+Number(r.totals?.signups||0)+'</b><span>AutoShip Signups</span></div><div class="stat"><b>'+money(r.totals?.first_order_sales||0)+'</b><span>First-Order Sales</span></div><div class="stat"><b>'+money(r.totals?.commission_due||0)+'</b><span>Commission Due</span></div>';
+    const summary=$('#autoshipReportSummary');
+    if(summary)summary.innerHTML='<h3>By Employee</h3>'+(r.summary||[]).map(x=>'<div class="item"><div class="row between wrap"><div><b>'+esc(x.employee_name)+' · '+esc(x.employee_code)+'</b><span>'+Number(x.signups||0)+' signup'+(Number(x.signups||0)===1?'':'s')+'</span></div><div style="text-align:right"><b>'+money(x.first_order_sales)+'</b><div class="muted">Commission '+money(x.commission_due)+'</div></div></div></div>').join('')||'<p class="muted">No employee-attributed AutoShip signups in this month.</p>';
+    const details=$('#autoshipReportDetails');
+    if(details)details.innerHTML='<h3>Signup Detail</h3>'+(r.details||[]).map(x=>'<div class="item"><div class="row between wrap"><div><b>'+esc(x.employee_name)+' · '+esc(x.customer_name||'Customer')+'</b><span>'+esc(x.employee_code)+' · '+fmtDate(x.paid_at)+'</span></div><div style="text-align:right"><b>'+money(x.merchandise_subtotal)+'</b><div class="muted">Commission '+money(x.commission_amount)+'</div></div></div><div class="muted">'+esc(x.customer_email||'')+' · '+esc(x.order_number||'')+' · Tx '+esc(x.transaction_id||'')+'</div></div>').join('')||'<p class="muted">No signup detail for this month.</p>';
+  }
+  async function downloadAutoshipReport(){
+    const token=sessionStorage.getItem('htfoServiceToken')||'',month=reportMonth();
+    const r=await fetch('/api/service/autoship-sales-report.csv?month='+encodeURIComponent(month),{headers:{Authorization:'Bearer '+token}});
+    if(!r.ok)throw new Error('Could not create AutoShip commission CSV');
+    const blob=await r.blob(),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='autoship-sales-'+month+'.csv';a.click();URL.revokeObjectURL(a.href);
   }
   function bind(){
     $$('[data-fulfill-status]').forEach(b=>b.onclick=async()=>{try{await api('/fulfillment/orders/'+b.dataset.fulfillStatus,{method:'PATCH',body:JSON.stringify({fulfillment_status:b.dataset.status})});await load()}catch(e){alert(e.message)}});
     $$('[data-ship]').forEach(b=>b.onclick=async()=>{const carrier=prompt('Carrier (UPS or USPS):','UPS');if(carrier===null)return;const service=prompt('Shipping service:','Ground');if(service===null)return;const tracking=prompt('Tracking number:','');if(!tracking)return;try{await api('/fulfillment/orders/'+b.dataset.ship+'/ship',{method:'POST',body:JSON.stringify({carrier,shipping_service:service,tracking_number:tracking})});await load()}catch(e){alert(e.message)}});
     $$('[data-local]').forEach(b=>b.onclick=async()=>{if(!confirm('Use HTFO staff for this local delivery? This option is internal only and is not shown on the website.'))return;try{await api('/fulfillment/orders/'+b.dataset.local+'/ship',{method:'POST',body:JSON.stringify({local_delivery:true})});await load()}catch(e){alert(e.message)}});
   }
-  document.addEventListener('click',e=>{if(e.target?.id==='pirateShipExport')exportCsv().catch(x=>alert(x.message));if(e.target?.id==='refreshFulfillment')load().catch(x=>alert(x.message))});
+  document.addEventListener('click',e=>{if(e.target?.id==='pirateShipExport')exportCsv().catch(x=>alert(x.message));if(e.target?.id==='refreshFulfillment')load().catch(x=>alert(x.message));if(e.target?.id==='refreshAutoshipReport')loadAutoshipReport().catch(x=>alert(x.message));if(e.target?.id==='downloadAutoshipReport')downloadAutoshipReport().catch(x=>alert(x.message))});
   window.loadFulfillment=load;
 })();
