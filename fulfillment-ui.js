@@ -20,7 +20,7 @@
   }
   function card(o){
     const overdue=o.scheduled_ship_date && new Date(o.scheduled_ship_date+'T12:00:00') < new Date(new Date().toDateString());
-    let items=(o.items||[]).map(i=>'<div>• '+Number(i.quantity)+' × '+esc(i.description)+(i.sku?' <span class="muted">('+esc(i.sku)+')</span>':'')+'</div>').join('');
+    let items=(o.items||[]).map(i=>'<div>• '+Number(i.quantity)+' × '+esc(i.description)+(i.sku?' <span class="muted">('+esc(i.sku)+')</span>':'')+(i.cover_form_id?' · <a href="https://hottubfactoryoutlet.com/cover-order-sheet.html?id='+encodeURIComponent(i.cover_form_id)+'" target="_blank" rel="noopener"><b>Open completed cover form</b></a>':'')+'</div>').join('');
     if(!items)items='<span class="muted">No line items</span>';
     let actions='';
     if(canFulfill())actions='<div class="row wrap" style="margin-top:12px">'+
