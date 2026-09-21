@@ -33,6 +33,24 @@ export async function initFulfillment(){
       actor TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS service_autoship_employee_attribution(
+      id BIGSERIAL PRIMARY KEY,
+      transaction_id TEXT UNIQUE NOT NULL,
+      order_number TEXT,
+      employee_code TEXT NOT NULL,
+      employee_id TEXT,
+      employee_name TEXT NOT NULL,
+      customer_name TEXT,
+      customer_email TEXT,
+      merchandise_subtotal NUMERIC(12,2) NOT NULL DEFAULT 0,
+      commission_rate NUMERIC(8,4) NOT NULL DEFAULT 0.10,
+      commission_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+      paid_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_autoship_attr_paid_at ON service_autoship_employee_attribution(paid_at);
+    CREATE INDEX IF NOT EXISTS idx_autoship_attr_employee_code ON service_autoship_employee_attribution(employee_code,paid_at);
+
     CREATE TABLE IF NOT EXISTS service_notification_outbox(
       id BIGSERIAL PRIMARY KEY,
       customer_id BIGINT REFERENCES service_customers(id) ON DELETE CASCADE,
@@ -99,6 +117,23 @@ async function queueRows(){
 }
 
 function storeSecretOk(req){const expected=process.env.FULFILLMENT_WEBHOOK_SECRET||'';const got=req.headers['x-htfo-fulfillment-secret']||'';return expected&&got===expected}
+router.post('/fulfillment/autoship-attribution',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized AutoShip attribution handoff'});
+  const b=req.body||{},transactionId=clean(b.transaction_id),code=clean(b.employee_code)?.toUpperCase(),employeeName=clean(b.employee_name);
+  if(!transactionId||!code||!employeeName)return res.status(400).json({error:'transaction_id, employee_code, and employee_name are required'});
+  const subtotal=Math.max(0,num(b.merchandise_subtotal)),rate=Math.max(0,num(b.commission_rate)||0.10),commission=Math.round(subtotal*rate*100)/100;
+  const paidAt=b.paid_at?new Date(b.paid_at):new Date();
+  if(Number.isNaN(paidAt.getTime()))return res.status(400).json({error:'Invalid paid_at date'});
+  const row=(await q(`INSERT INTO service_autoship_employee_attribution(transaction_id,order_number,employee_code,employee_id,employee_name,customer_name,customer_email,merchandise_subtotal,commission_rate,commission_amount,paid_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT(transaction_id) DO UPDATE SET
+      order_number=EXCLUDED.order_number,employee_code=EXCLUDED.employee_code,employee_id=EXCLUDED.employee_id,employee_name=EXCLUDED.employee_name,
+      customer_name=EXCLUDED.customer_name,customer_email=EXCLUDED.customer_email,merchandise_subtotal=EXCLUDED.merchandise_subtotal,
+      commission_rate=EXCLUDED.commission_rate,commission_amount=EXCLUDED.commission_amount,paid_at=EXCLUDED.paid_at
+    RETURNING *`,[transactionId,clean(b.order_number),code,clean(b.employee_id),employeeName,clean(b.customer_name),clean(b.customer_email)?.toLowerCase()||null,subtotal,rate,commission,paidAt.toISOString()])).rows[0];
+  res.status(201).json({ok:true,attribution:row});
+});
+
 router.post('/fulfillment/store-order',async(req,res)=>{
   if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized fulfillment handoff'});
   const b=req.body||{},cust=b.customer||{},items=Array.isArray(b.items)?b.items:[];
@@ -157,6 +192,35 @@ router.post('/fulfillment/store-autoship',async(req,res)=>{
   }
   await runFulfillmentAutomation();
   res.json({ok:true,recurring_orders:created.map(x=>x.id)});
+});
+
+function reportMonthBounds(month){
+  const m=/^\d{4}-\d{2}$/.test(String(month||''))?String(month):new Date().toISOString().slice(0,7);
+  const [y,mo]=m.split('-').map(Number),from=new Date(Date.UTC(y,mo-1,1)),to=new Date(Date.UTC(y,mo,1));
+  return {month:m,from:from.toISOString(),to:to.toISOString()};
+}
+router.get('/autoship-sales-report',auth,manager,async(req,res)=>{
+  const {month,from,to}=reportMonthBounds(req.query.month);
+  const details=(await q(`SELECT transaction_id,order_number,employee_code,employee_id,employee_name,customer_name,customer_email,merchandise_subtotal,commission_rate,commission_amount,paid_at
+    FROM service_autoship_employee_attribution WHERE paid_at >= $1 AND paid_at < $2 ORDER BY paid_at,employee_name,transaction_id`,[from,to])).rows;
+  const summary=(await q(`SELECT employee_code,employee_id,employee_name,count(*)::int signups,
+      coalesce(sum(merchandise_subtotal),0)::numeric first_order_sales,
+      coalesce(sum(commission_amount),0)::numeric commission_due
+    FROM service_autoship_employee_attribution WHERE paid_at >= $1 AND paid_at < $2
+    GROUP BY employee_code,employee_id,employee_name ORDER BY employee_name`,[from,to])).rows;
+  res.json({month,summary,details,totals:{
+    signups:summary.reduce((s,r)=>s+Number(r.signups||0),0),
+    first_order_sales:summary.reduce((s,r)=>s+Number(r.first_order_sales||0),0),
+    commission_due:summary.reduce((s,r)=>s+Number(r.commission_due||0),0)
+  }});
+});
+router.get('/autoship-sales-report.csv',auth,manager,async(req,res)=>{
+  const {month,from,to}=reportMonthBounds(req.query.month);
+  const rows=(await q(`SELECT employee_name,employee_code,customer_name,customer_email,order_number,transaction_id,merchandise_subtotal,commission_amount,paid_at
+    FROM service_autoship_employee_attribution WHERE paid_at >= $1 AND paid_at < $2 ORDER BY employee_name,paid_at`,[from,to])).rows;
+  const lines=['Employee,Code,Customer,Email,Order,Transaction,First Order Sales,Commission Due,Paid At'];
+  for(const r of rows)lines.push([r.employee_name,r.employee_code,r.customer_name,r.customer_email,r.order_number,r.transaction_id,Number(r.merchandise_subtotal||0).toFixed(2),Number(r.commission_amount||0).toFixed(2),new Date(r.paid_at).toISOString()].map(csv).join(','));
+  res.type('text/csv').setHeader('Content-Disposition','attachment; filename="autoship-sales-'+month+'.csv"').send(lines.join('\n'));
 });
 
 router.get('/fulfillment/queue',auth,async(req,res)=>{await runFulfillmentAutomation();res.json(await queueRows())});
