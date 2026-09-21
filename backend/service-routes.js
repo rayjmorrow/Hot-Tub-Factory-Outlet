@@ -14,6 +14,14 @@ const num = v => Number(v || 0);
 const tokenFor = user => jwt.sign({sub:user.id,username:user.username,name:user.display_name,role:user.role}, secret(), {expiresIn:'12h'});
 const canDispatch = req => ['admin','manager','service_manager','owner'].includes(req.user?.role);
 
+async function canonicalDispatchName(value){
+  const name=clean(value);
+  if(!name)return null;
+  const r=await q('SELECT name FROM service_dispatch_resources WHERE active=true AND lower(name)=lower($1) LIMIT 1',[name]);
+  if(!r.rowCount)throw new Error('Choose a valid assigned tech / team from the scheduling list.');
+  return r.rows[0].name;
+}
+
 export async function ensureBootstrapAdmin(){
   const username=clean(process.env.SERVICE_ADMIN_USER), password=process.env.SERVICE_ADMIN_PASSWORD, display=clean(process.env.SERVICE_ADMIN_NAME)||'HTFO Administrator';
   if(!username || !password) return;
@@ -144,6 +152,8 @@ router.post('/work-orders',auth,async(req,res)=>{
     if(equipmentId){const n=Number(equipmentId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid equipment selection.'});}
     if(customerOrderId){const n=Number(customerOrderId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid customer order selection.'});}
     const jobType=clean(b.job_type)||'service';
+    const assignedTo=await canonicalDispatchName(jobType==='delivery'?(clean(b.assigned_to)||'Delivery'):b.assigned_to);
+    if(!assignedTo)return res.status(400).json({error:'Choose an assigned tech / team before scheduling.'});
     if(jobType==='delivery' && !customerOrderId){
       const existing=(await q(`SELECT id FROM service_customer_orders
         WHERE customer_id=$1 AND status NOT IN ('shipped','cancelled')
@@ -175,7 +185,7 @@ router.post('/work-orders',auth,async(req,res)=>{
     const scheduledEnd=b.scheduled_end||defaultScheduledEnd(b.scheduled_start,b.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes);
     const appointmentMinutes=Math.max(15,Number(b.appointment_minutes)||SERVICE_RULES.defaultAppointmentMinutes);
     const r=await q(`INSERT INTO service_work_orders(work_order_number,customer_id,equipment_id,customer_order_id,assigned_to,assigned_team,job_type,status,priority,scheduled_start,scheduled_end,appointment_minutes,complaint,warranty,internal_notes,diagnostic_amount,labor_rate,parts_tax_rate)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,[number,customerId,equipmentId||null,customerOrderId||null,clean(b.assigned_to),clean(b.assigned_team),clean(b.job_type)||'service',clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,scheduledEnd,appointmentMinutes,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes),SERVICE_RULES.diagnosticCharge,SERVICE_RULES.laborRatePerHour,SERVICE_RULES.partsTaxRate]);
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,[number,customerId,equipmentId||null,customerOrderId||null,assignedTo,jobType==='delivery'?'Delivery':null,jobType,clean(b.status)||'scheduled',clean(b.priority)||'normal',b.scheduled_start||null,scheduledEnd,appointmentMinutes,clean(b.complaint),Boolean(b.warranty),clean(b.internal_notes),SERVICE_RULES.diagnosticCharge,SERVICE_RULES.laborRatePerHour,SERVICE_RULES.partsTaxRate]);
     res.status(201).json(r.rows[0]);
   }catch(e){
     console.error('Create work order failed:',e);
@@ -195,7 +205,11 @@ router.patch('/work-orders/:id',auth,async(req,res)=>{
   const tripOverride=override&&b.trip_charge_override!=null?Math.max(0,num(b.trip_charge_override)):current.trip_charge_override;
   const overrideReason=override&&b.charge_override_reason!=null?clean(b.charge_override_reason):current.charge_override_reason;
   const overrideBy=override&&(b.labor_amount!=null||b.parts_amount!=null||b.diagnostic_amount!=null||b.trip_charge_override!=null)?(req.user?.name||req.user?.username):current.charge_override_by;
-  const assigned=dispatch?clean(b.assigned_to):null,assignedTeam=dispatch?clean(b.assigned_team):null,jobType=dispatch?clean(b.job_type):null,priority=dispatch?clean(b.priority):null,scheduledStart=dispatch?(b.scheduled_start||null):null;
+  const jobType=dispatch?clean(b.job_type):null;
+  const requestedJobType=jobType||current.job_type||'service';
+  const assigned=dispatch&&b.assigned_to!==undefined?await canonicalDispatchName(requestedJobType==='delivery'?(clean(b.assigned_to)||'Delivery'):b.assigned_to):null;
+  const assignedTeam=dispatch&&requestedJobType==='delivery'?'Delivery':(dispatch?clean(b.assigned_team):null);
+  const priority=dispatch?clean(b.priority):null,scheduledStart=dispatch?(b.scheduled_start||null):null;
   const appointmentMinutes=dispatch&&b.appointment_minutes!=null?Math.max(15,Number(b.appointment_minutes)||SERVICE_RULES.defaultAppointmentMinutes):null;
   const scheduledEnd=dispatch?(b.scheduled_end||((b.scheduled_start||current.scheduled_start)?defaultScheduledEnd(b.scheduled_start||current.scheduled_start,appointmentMinutes||current.appointment_minutes||SERVICE_RULES.defaultAppointmentMinutes):null)):null;
   const updated=await q(`UPDATE service_work_orders SET assigned_to=coalesce($2,assigned_to),assigned_team=coalesce($3,assigned_team),job_type=coalesce($4,job_type),status=coalesce($5,status),priority=coalesce($6,priority),scheduled_start=coalesce($7,scheduled_start),scheduled_end=coalesce($8,scheduled_end),appointment_minutes=coalesce($9,appointment_minutes),complaint=coalesce($10,complaint),diagnosis=coalesce($11,diagnosis),work_performed=coalesce($12,work_performed),parts_used=coalesce($13,parts_used),labor_hours=$14,labor_amount=$15,parts_amount=$16,diagnostic_amount=$17,tax_amount=$18,parts_tax_rate=$19,trip_charge_override=$20,charge_override_reason=$21,charge_override_by=$22,warranty=coalesce($23,warranty),internal_notes=coalesce($24,internal_notes),customer_signature=coalesce($25,customer_signature),travel_minutes=coalesce($26,travel_minutes),completed_at=CASE WHEN $5='completed' THEN coalesce(completed_at,NOW()) ELSE completed_at END,updated_at=NOW() WHERE id=$1 RETURNING *`,
