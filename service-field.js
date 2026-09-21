@@ -10,10 +10,11 @@ function wazeUrl(w){const a=addr(w);return a?`https://waze.com/ul?q=${encodeURIC
 function wazeLink(w,label='Open in Waze'){const u=wazeUrl(w);return u?`<a class=\"waze-link\" href=\"${u}\" target=\"_blank\" rel=\"noopener\">${esc(label)}</a>`:''}
 function mine(rows){if(!user?.name&&!user?.username)return rows;const who=String(user?.name||user?.username||'').trim().toLowerCase(),role=String(user?.role||'').toLowerCase();return rows.filter(w=>role==='delivery'?String(w.job_type||'').toLowerCase()==='delivery':[w.assigned_to,w.assigned_team].some(v=>String(v||'').trim().toLowerCase()===who))}
 function canManageCalendar(){return ['admin','owner','manager','service_manager'].includes(String(user?.role||'').toLowerCase())}
+function isTechnician(){return String(user?.role||'').toLowerCase()==='technician'}
 function visibleRows(rows){return canManageCalendar()?rows:mine(rows)}
 async function boot(){if(!token)return;try{const x=await api('/me');user=x.user;showApp()}catch{logout()}}
-function showApp(){$('#login').hidden=true;$('#app').hidden=false;$('#who').textContent=user?.name||user?.username||'';const deliveryUser=String(user?.role||'').toLowerCase()==='delivery'||/delivery/i.test(String(user?.name||user?.username||''));if(deliveryUser){const h=$('#jobsView h1');if(h)h.textContent='Delivery Loop';const w=$('#weekView h1');if(w)w.textContent='Upcoming Deliveries';}$('#todayLabel').textContent=new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});$('#showAll').checked=canManageCalendar();const showAllWrap=$('#showAll')?.closest?.('label');if(showAllWrap)showAllWrap.hidden=!canManageCalendar();$('#showAll').disabled=!canManageCalendar();$('#weekSubtitle').textContent=canManageCalendar()?'Full dispatch view. Tap a job to open it.':'Read-only look ahead at your assigned work.';$('#calendarSubtitle').textContent=canManageCalendar()?'Full dispatch calendar — tap a day to schedule, edit, or reassign.':'Tap a day to see your assigned jobs.';showFieldView('jobsView')}
-function showFieldView(id){$$('.fieldview').forEach(v=>v.hidden=v.id!==id);$$('[data-field-view]').forEach(b=>b.classList.toggle('active',b.dataset.fieldView===id));if(id==='jobsView')loadJobs();if(id==='weekView')loadWeek();if(id==='calendarView')loadFieldCalendar()}
+function showApp(){$('#login').hidden=true;$('#app').hidden=false;$('#who').textContent=user?.name||user?.username||'';const deliveryUser=String(user?.role||'').toLowerCase()==='delivery'||/delivery/i.test(String(user?.name||user?.username||''));if(deliveryUser){const h=$('#jobsView h1');if(h)h.textContent='Delivery Loop';const w=$('#weekView h1');if(w)w.textContent='Upcoming Deliveries';}$('[data-manager-only]').forEach(x=>x.hidden=!canManageCalendar());$('#todayLabel').textContent=new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});$('#showAll').checked=canManageCalendar();const showAllWrap=$('#showAll')?.closest?.('label');if(showAllWrap)showAllWrap.hidden=!canManageCalendar();$('#showAll').disabled=!canManageCalendar();$('#weekSubtitle').textContent=canManageCalendar()?'Full dispatch view. Tap a job to open it.':'Your assigned calls for the next 7 days.';$('#calendarSubtitle').textContent=canManageCalendar()?'Full dispatch calendar — tap a day to schedule, edit, or reassign.':'Read only.';showFieldView('jobsView')}
+function showFieldView(id){if(id==='calendarView'&&!canManageCalendar())id='jobsView';$('.fieldview').forEach(v=>v.hidden=v.id!==id);$('[data-field-view]').forEach(b=>b.classList.toggle('active',b.dataset.fieldView===id));if(id==='jobsView')loadJobs();if(id==='weekView')loadWeek();if(id==='partsView')loadFieldParts();if(id==='calendarView')loadFieldCalendar()}
 $$('[data-field-view]').forEach(b=>b.onclick=()=>showFieldView(b.dataset.fieldView));
 async function fieldLogin(e){if(e)e.preventDefault();const errBox=$('#loginError');const btn=$('#fieldSignIn');errBox.textContent='Signing in…';if(btn){btn.disabled=true;btn.textContent='Signing in…'}try{const username=$('#username').value.trim(),password=$('#password').value;if(!username||!password)throw new Error('Enter username and password.');const x=await api('/auth/login',{method:'POST',body:JSON.stringify({username,password})});token=x.token;user=x.user;sessionStorage.setItem('htfoServiceToken',token);errBox.textContent='';showApp()}catch(err){const msg=err?.message||'Unable to sign in.';errBox.textContent=msg;alert(msg)}finally{if(btn){btn.disabled=false;btn.textContent='Sign in'}}}
 $('#loginForm').onsubmit=fieldLogin;
@@ -281,4 +282,30 @@ async function createInvoice(){try{const i=await api(`/work-orders/${currentJob.
 function openPayment(i){currentInvoice=i;const balance=Number(i.balance??(Number(i.total_amount)-Number(i.amount_paid)));$('#paymentInvoice').innerHTML=`<div class="money">${money(balance)}</div><div class="muted">${esc(i.invoice_number)} remaining balance</div>`;$('#payAmount').value=balance.toFixed(2);$('#payMethod').value='card';$('#checkNo').value='';$('#payNote').value='';toggleCheck();$('#paymentDialog').showModal()}
 function toggleCheck(){$('#checkWrap').hidden=$('#payMethod').value!=='check';$('#submitPayment').textContent=$('#payMethod').value==='card'?'Open Secure Card Payment':'Record Payment'}$('#payMethod').onchange=toggleCheck;
 $('#submitPayment').onclick=async e=>{e.preventDefault();const method=$('#payMethod').value,amount=Number($('#payAmount').value||0);if(amount<=0)return alert('Enter a payment amount.');try{if(method==='cash'||method==='check'){await api(`/invoices/${currentInvoice.id}/payments`,{method:'POST',body:JSON.stringify({payment_method:method,amount,reference_number:$('#checkNo').value,notes:$('#payNote').value})});$('#paymentDialog').close();await openJob(currentJob.id);return}const c=await api(`/invoices/${currentInvoice.id}/card-checkout`,{method:'POST',body:JSON.stringify({amount})});const f=document.createElement('form');f.method='POST';f.action=c.form_url;f.innerHTML=`<input type="hidden" name="token" value="${esc(c.token)}">`;document.body.appendChild(f);f.submit()}catch(err){alert(err.message)}};
+
+let fieldPartTimer=null;
+async function loadFieldParts(){
+  clearTimeout(fieldPartTimer);
+  const qv=$('#fieldPartSearch')?.value||'';
+  const [parts,requests,workOrders]=await Promise.all([
+    api('/parts?q='+encodeURIComponent(qv)),
+    api('/part-requests'),
+    api('/work-orders')
+  ]);
+  const mineOpen=visibleRows(workOrders).filter(w=>!['completed','cancelled'].includes(String(w.status||'').toLowerCase()));
+  const options=mineOpen.map(w=>'<option value="'+w.id+'">'+esc(w.work_order_number+' · '+(w.customer_name||'Customer'))+'</option>').join('');
+  const result=$('#fieldPartResults');
+  if(result)result.innerHTML=parts.slice(0,40).map(p=>'<div class="item"><b>'+esc(p.description)+'</b><span class="muted">'+esc([p.manufacturer_part_number,p.supplier_part_number,p.brand].filter(Boolean).join(' · '))+'</span><div class="row wrap"><select data-part-work="'+p.id+'"><option value="">Choose assigned call</option>'+options+'</select><input data-part-qty="'+p.id+'" type="number" min="1" step="1" value="1" style="max-width:80px"><button class="secondary" data-part-request="'+p.id+'">Send to Rick</button></div></div>').join('')||'<p class="muted">No matching parts.</p>';
+  const mineName=String(user?.name||user?.username||'').toLowerCase();
+  const req=$('#fieldPartRequests');
+  if(req)req.innerHTML=requests.filter(r=>String(r.requested_by||'').toLowerCase()===mineName).map(r=>'<div class="item"><b>'+esc(r.description)+'</b><span>'+esc(r.work_order_number||'')+' · '+esc(r.status||'requested')+'</span><span class="muted">Qty '+Number(r.requested_quantity||1)+'</span></div>').join('')||'<p class="muted">No part requests yet.</p>';
+  $('[data-part-request]').forEach(b=>b.onclick=async()=>{
+    const partId=b.dataset.partRequest,workId=$('[data-part-work="'+partId+'"]').value,qty=Number($('[data-part-qty="'+partId+'"]').value||1);
+    if(!workId)return alert('Choose the service call this part is for.');
+    const notes=prompt('Anything Rick should know about this part?','')||'';
+    try{await api('/work-orders/'+workId+'/part-request',{method:'POST',body:JSON.stringify({part_id:partId,quantity:qty,notes})});alert('Part request sent to Rick.');await loadFieldParts()}catch(e){alert(e.message)}
+  });
+}
+if($('#fieldPartSearch'))$('#fieldPartSearch').oninput=()=>{clearTimeout(fieldPartTimer);fieldPartTimer=setTimeout(loadFieldParts,250)};
+
 boot();
