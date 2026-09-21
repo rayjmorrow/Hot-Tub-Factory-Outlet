@@ -116,9 +116,19 @@ router.post('/equipment',auth,async(req,res)=>{
 
 router.get('/work-orders',auth,async(req,res)=>{
   const from=req.query.from||new Date(Date.now()-7*86400000).toISOString(), to=req.query.to||new Date(Date.now()+30*86400000).toISOString();
-  const r=await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.city,c.state,e.brand,e.model,e.equipment_type,e.serial_number
-    FROM service_work_orders w JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
-    WHERE (w.scheduled_start BETWEEN $1 AND $2) OR (w.scheduled_start IS NULL AND w.status NOT IN ('completed','cancelled')) ORDER BY w.scheduled_start NULLS LAST`,[from,to]);
+  const manager=canDispatch(req),who=String(req.user?.name||req.user?.username||'').trim();
+  const role=String(req.user?.role||'').toLowerCase();
+  const r=manager
+    ? await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.city,c.state,e.brand,e.model,e.equipment_type,e.serial_number
+      FROM service_work_orders w JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
+      WHERE (w.scheduled_start BETWEEN $1 AND $2) OR (w.scheduled_start IS NULL AND w.status NOT IN ('completed','cancelled')) ORDER BY w.scheduled_start NULLS LAST`,[from,to])
+    : role==='delivery'
+      ? await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.city,c.state,e.brand,e.model,e.equipment_type,e.serial_number
+        FROM service_work_orders w JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
+        WHERE (((w.scheduled_start BETWEEN $1 AND $2) OR (w.scheduled_start IS NULL AND w.status NOT IN ('completed','cancelled'))) AND lower(coalesce(w.job_type,''))='delivery') ORDER BY w.scheduled_start NULLS LAST`,[from,to])
+      : await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.city,c.state,e.brand,e.model,e.equipment_type,e.serial_number
+        FROM service_work_orders w JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
+        WHERE (((w.scheduled_start BETWEEN $1 AND $2) OR (w.scheduled_start IS NULL AND w.status NOT IN ('completed','cancelled'))) AND (lower(coalesce(w.assigned_to,''))=lower($3) OR lower(coalesce(w.assigned_team,''))=lower($3))) ORDER BY w.scheduled_start NULLS LAST`,[from,to,who]);
   res.json(r.rows);
 });
 router.post('/work-orders',auth,async(req,res)=>{
