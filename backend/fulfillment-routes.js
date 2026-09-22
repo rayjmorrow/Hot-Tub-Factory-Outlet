@@ -81,6 +81,32 @@ export async function initFulfillment(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       sent_at TIMESTAMPTZ
     );
+
+    CREATE TABLE IF NOT EXISTS crm_website_leads(
+      submission_id TEXT PRIMARY KEY,
+      first_name TEXT NOT NULL,
+      last_name TEXT,
+      email TEXT,
+      phone TEXT,
+      source TEXT NOT NULL DEFAULT 'HTFO Website',
+      tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      note TEXT,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      lifecycle_stage TEXT NOT NULL DEFAULT 'Prospect',
+      pipeline_stage TEXT NOT NULL DEFAULT 'New Lead',
+      ghl_contact_status TEXT NOT NULL DEFAULT 'pending',
+      ghl_contact_id TEXT,
+      ghl_contact_error TEXT,
+      ghl_opportunity_status TEXT NOT NULL DEFAULT 'pending',
+      ghl_opportunity_id TEXT,
+      ghl_opportunity_error TEXT,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_crm_website_leads_received ON crm_website_leads(received_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_crm_website_leads_email ON crm_website_leads(lower(email));
+    CREATE INDEX IF NOT EXISTS idx_crm_website_leads_phone ON crm_website_leads(phone);
+    CREATE INDEX IF NOT EXISTS idx_crm_website_leads_delivery ON crm_website_leads(ghl_contact_status,ghl_opportunity_status);
   `);
 }
 async function logEvent(orderId,recurringOrderId,eventType,description,actor='system'){
@@ -134,6 +160,43 @@ async function queueRows(){
 }
 
 function storeSecretOk(req){const expected=process.env.FULFILLMENT_WEBHOOK_SECRET||'';const got=req.headers['x-htfo-fulfillment-secret']||'';return expected&&got===expected}
+router.post('/fulfillment/website-lead',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized website lead handoff'});
+  const b=req.body||{},submissionId=clean(b.submission_id),firstName=clean(b.first_name),email=clean(b.email)?.toLowerCase()||null,phone=clean(b.phone);
+  if(!submissionId||!firstName||(!email&&!phone))return res.status(400).json({error:'submission_id, first_name, and email or phone are required'});
+  const tags=Array.isArray(b.tags)?b.tags.map(clean).filter(Boolean).slice(0,30):[];
+  const payload=b.payload&&typeof b.payload==='object'?b.payload:{};
+  const receivedAt=b.received_at?new Date(b.received_at):new Date();
+  if(Number.isNaN(receivedAt.getTime()))return res.status(400).json({error:'Invalid received_at date'});
+  const row=(await q(`INSERT INTO crm_website_leads(submission_id,first_name,last_name,email,phone,source,tags,note,payload,received_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10)
+    ON CONFLICT(submission_id) DO UPDATE SET
+      first_name=EXCLUDED.first_name,last_name=EXCLUDED.last_name,email=EXCLUDED.email,phone=EXCLUDED.phone,source=EXCLUDED.source,
+      tags=EXCLUDED.tags,note=EXCLUDED.note,payload=EXCLUDED.payload,updated_at=NOW()
+    RETURNING submission_id,first_name,last_name,email,phone,source,lifecycle_stage,pipeline_stage,ghl_contact_status,ghl_opportunity_status,received_at`,[
+      submissionId,firstName,clean(b.last_name),email,phone,clean(b.source)||'HTFO Website',JSON.stringify(tags),clean(b.note),JSON.stringify(payload),receivedAt.toISOString()
+    ])).rows[0];
+  console.log('CRM_WEBSITE_LEAD_SAVED',JSON.stringify({submissionId,source:row.source}));
+  res.status(201).json({ok:true,...row});
+});
+router.post('/fulfillment/website-lead-status',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized website lead status handoff'});
+  const b=req.body||{},submissionId=clean(b.submission_id);
+  if(!submissionId)return res.status(400).json({error:'submission_id is required'});
+  const allowed=new Set(['pending','sent','failed']);
+  const contactStatus=clean(b.ghl_contact_status),opportunityStatus=clean(b.ghl_opportunity_status);
+  if(contactStatus&&!allowed.has(contactStatus))return res.status(400).json({error:'Invalid ghl_contact_status'});
+  if(opportunityStatus&&!allowed.has(opportunityStatus))return res.status(400).json({error:'Invalid ghl_opportunity_status'});
+  const row=(await q(`UPDATE crm_website_leads SET
+      ghl_contact_status=coalesce($2,ghl_contact_status),ghl_contact_id=coalesce($3,ghl_contact_id),ghl_contact_error=$4,
+      ghl_opportunity_status=coalesce($5,ghl_opportunity_status),ghl_opportunity_id=coalesce($6,ghl_opportunity_id),ghl_opportunity_error=$7,updated_at=NOW()
+    WHERE submission_id=$1
+    RETURNING submission_id,ghl_contact_status,ghl_contact_id,ghl_contact_error,ghl_opportunity_status,ghl_opportunity_id,ghl_opportunity_error,updated_at`,[
+      submissionId,contactStatus||null,clean(b.ghl_contact_id),clean(b.ghl_contact_error),opportunityStatus||null,clean(b.ghl_opportunity_id),clean(b.ghl_opportunity_error)
+    ])).rows[0];
+  if(!row)return res.status(404).json({error:'Website lead not found'});
+  res.json({ok:true,...row});
+});
 router.post('/fulfillment/autoship-attribution',async(req,res)=>{
   if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized AutoShip attribution handoff'});
   const b=req.body||{},transactionId=clean(b.transaction_id),code=clean(b.employee_code)?.toUpperCase(),employeeName=clean(b.employee_name);
