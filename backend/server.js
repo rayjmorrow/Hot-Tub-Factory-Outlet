@@ -135,6 +135,41 @@ async function fulfillmentGet(path){
   if(!r.ok)throw new Error(j.error||('Cover form lookup returned '+r.status));
   return j;
 }
+
+async function persistWebsiteLead(body){
+  const saved=await fulfillmentPost('/fulfillment/website-lead',body);
+  if(!saved?.ok||!saved?.submission_id)throw new Error('HTFO CRM did not confirm the lead was saved');
+  return saved;
+}
+async function updateWebsiteLeadDelivery(submissionId,delivery){
+  try{return await fulfillmentPost('/fulfillment/website-lead-status',{submission_id:submissionId,...delivery})}
+  catch(e){console.error('Website lead delivery status update failed',submissionId,e.message);return null}
+}
+async function highLevelPipeline(){
+  const locationId=process.env.GHL_LOCATION_ID;
+  const r=await fetch(`${ghlBase}/opportunities/pipelines?locationId=${encodeURIComponent(locationId)}`,{headers:ghlHeaders()});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j?.message||j?.error||`HighLevel pipeline lookup returned ${r.status}`);
+  const pipelines=Array.isArray(j?.pipelines)?j.pipelines:[];
+  const wantedId=cleanText(process.env.GHL_PIPELINE_ID,100),wantedName=cleanText(process.env.GHL_PIPELINE_NAME||'Sales',100).toLowerCase();
+  const pipeline=pipelines.find(x=>wantedId&&String(x.id)===wantedId)||pipelines.find(x=>String(x.name||'').toLowerCase().includes(wantedName))||pipelines[0];
+  if(!pipeline)throw new Error('No HighLevel opportunity pipeline is available');
+  const stages=Array.isArray(pipeline.stages)?pipeline.stages:[];
+  const wantedStageId=cleanText(process.env.GHL_PIPELINE_STAGE_ID,100),wantedStageName=cleanText(process.env.GHL_PIPELINE_STAGE_NAME||'New Lead',100).toLowerCase();
+  const stage=stages.find(x=>wantedStageId&&String(x.id)===wantedStageId)||stages.find(x=>String(x.name||'').toLowerCase().includes(wantedStageName))||stages[0];
+  if(!stage)throw new Error(`HighLevel pipeline ${pipeline.name||pipeline.id} has no stages`);
+  return{pipelineId:String(pipeline.id),pipelineStageId:String(stage.id),pipelineName:pipeline.name||'',stageName:stage.name||''};
+}
+async function createHighLevelOpportunity({contactId,firstName,lastName,source}){
+  const p=await highLevelPipeline();
+  const payload={pipelineId:p.pipelineId,locationId:process.env.GHL_LOCATION_ID,name:`${firstName} ${lastName}`.trim()+` — ${source}`,pipelineStageId:p.pipelineStageId,status:'open',contactId};
+  const r=await fetch(`${ghlBase}/opportunities/upsert`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify(payload)});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j?.message||j?.error||`HighLevel opportunity creation returned ${r.status}`);
+  const opportunityId=j?.opportunity?.id||j?.id;
+  if(!opportunityId)throw new Error('HighLevel did not return an opportunity ID');
+  return{id:String(opportunityId),...p};
+}
 function transactionUserField(tx,name){
   const raw=tx?.userFields?.userField??tx?.userFields??[];
   const list=Array.isArray(raw)?raw:[raw];
@@ -290,8 +325,8 @@ app.get('/cover-order-form/:id',async(req,res)=>{
 });
 
 app.post('/lead',async(req,res)=>{
+  const submissionId=cleanText(req.body?.submissionId,100)||randomUUID();
   try{
-    requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
     const firstName=cleanText(req.body.firstName||req.body.first,100);
     const lastName=cleanText(req.body.lastName||req.body.last,100);
     const email=cleanText(req.body.email,254).toLowerCase();
@@ -301,23 +336,38 @@ app.post('/lead',async(req,res)=>{
     if(email&&!validEmail(email))throw new Error('Please enter a valid email address');
     const source=cleanText(req.body.source||'HTFO Website',100);
     const customFields=Array.isArray(req.body.customFields)?req.body.customFields.slice(0,25):undefined;
+    const incoming=Array.isArray(req.body.tags)?req.body.tags:[];
+    const tags=['website-lead','duck-bucks-lead',...incoming.map(x=>cleanText(x,100)).filter(Boolean)];
+    const uniqueTags=[...new Set(tags)].slice(0,20);
+    const details=[req.body.note,req.body.offer&&`Offer: ${cleanText(req.body.offer,300)}`,req.body.campaign&&`Campaign: ${cleanText(req.body.campaign,300)}`,req.body.location&&`Preferred showroom: ${cleanText(req.body.location,100)}`,req.body.utm_source&&`UTM source: ${cleanText(req.body.utm_source,200)}`,req.body.utm_campaign&&`UTM campaign: ${cleanText(req.body.utm_campaign,200)}`,req.body.utm_content&&`UTM content: ${cleanText(req.body.utm_content,200)}`].filter(Boolean).join('\n');
+    await persistWebsiteLead({submission_id:submissionId,first_name:firstName,last_name:lastName,email:email||null,phone:phone||null,source,tags:uniqueTags,note:details||null,payload:req.body,received_at:new Date().toISOString()});
+    if(!process.env.GHL_API_TOKEN||!process.env.GHL_LOCATION_ID){
+      const error='HighLevel is not configured';
+      await updateWebsiteLeadDelivery(submissionId,{ghl_contact_status:'failed',ghl_contact_error:error,ghl_opportunity_status:'failed',ghl_opportunity_error:error});
+      console.error('Lead saved to HTFO CRM but HighLevel is not configured',submissionId);
+      return res.status(201).json({ok:true,submissionId,saved:true,highLevel:false,warning:error});
+    }
     const payload={firstName,lastName,email:email||undefined,phone:phone||undefined,locationId:process.env.GHL_LOCATION_ID,source,country:'US',createNewIfDuplicateAllowed:false,customFields};
     Object.keys(payload).forEach(k=>payload[k]===undefined&&delete payload[k]);
     const r=await fetch(`${ghlBase}/contacts/upsert`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify(payload)});
     const json=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(json?.message||json?.error||`HighLevel contact upsert returned ${r.status}`);
+    if(!r.ok){
+      const error=json?.message||json?.error||`HighLevel contact upsert returned ${r.status}`;
+      await updateWebsiteLeadDelivery(submissionId,{ghl_contact_status:'failed',ghl_contact_error:error,ghl_opportunity_status:'pending'});
+      console.error('Lead saved to HTFO CRM; HighLevel contact failed',submissionId,error);
+      return res.status(201).json({ok:true,submissionId,saved:true,highLevel:false,warning:error});
+    }
     const contactId=json?.contact?.id;if(!contactId)throw new Error('HighLevel did not return a contact ID');
-    const incoming=Array.isArray(req.body.tags)?req.body.tags:[];
-    const tags=['website-lead','duck-bucks-lead',...incoming.map(x=>cleanText(x,100)).filter(Boolean)];
-    const uniqueTags=[...new Set(tags)].slice(0,20);
     const tr=await fetch(`${ghlBase}/contacts/${encodeURIComponent(contactId)}/tags`,{method:'POST',headers:ghlHeaders(),body:JSON.stringify({tags:uniqueTags})});
     const tagJson=await tr.json().catch(()=>({}));
-    if(!tr.ok)throw new Error(tagJson?.message||tagJson?.error||`HighLevel tag update returned ${tr.status}`);
-    const details=[req.body.note,req.body.offer&&`Offer: ${cleanText(req.body.offer,300)}`,req.body.campaign&&`Campaign: ${cleanText(req.body.campaign,300)}`,req.body.location&&`Preferred showroom: ${cleanText(req.body.location,100)}`,req.body.utm_source&&`UTM source: ${cleanText(req.body.utm_source,200)}`,req.body.utm_campaign&&`UTM campaign: ${cleanText(req.body.utm_campaign,200)}`,req.body.utm_content&&`UTM content: ${cleanText(req.body.utm_content,200)}`].filter(Boolean).join('\n');
+    if(!tr.ok)console.warn('HighLevel tag update failed',submissionId,tagJson?.message||tagJson?.error||tr.status);
     const noteSaved=await addContactNote(contactId,details);
-    console.log('LEAD_CAPTURE_OK',JSON.stringify({contactId,source,new:Boolean(json?.new),tags:uniqueTags}));
-    res.status(json?.new?201:200).json({ok:true,new:Boolean(json?.new),contactId,source,tags:tagJson?.tags||uniqueTags,noteSaved});
-  }catch(e){console.error('Lead capture error:',e);res.status(400).json({ok:false,error:e.message});}
+    let opportunity=null,opportunityError='';
+    try{opportunity=await createHighLevelOpportunity({contactId,firstName,lastName,source})}catch(e){opportunityError=e.message;console.error('HighLevel opportunity creation failed',submissionId,e.message)}
+    await updateWebsiteLeadDelivery(submissionId,{ghl_contact_status:'sent',ghl_contact_id:contactId,ghl_contact_error:null,ghl_opportunity_status:opportunity?'sent':'failed',ghl_opportunity_id:opportunity?.id||null,ghl_opportunity_error:opportunityError||null});
+    console.log('LEAD_CAPTURE_OK',JSON.stringify({submissionId,contactId,opportunityId:opportunity?.id||null,source,new:Boolean(json?.new),tags:uniqueTags}));
+    res.status(201).json({ok:true,submissionId,saved:true,new:Boolean(json?.new),contactId,opportunityId:opportunity?.id||null,source,tags:tagJson?.tags||uniqueTags,noteSaved,warning:opportunityError||undefined});
+  }catch(e){console.error('Lead capture error:',submissionId,e);res.status(400).json({ok:false,submissionId,error:e.message});}
 });
 
 app.post('/tax',async(req,res)=>{try{const t=await taxForOrder(req.body);res.json({tax:t.tax,shipping:t.shipping,rate:t.rate,hasNexus:t.hasNexus,taxableAmount:t.taxableAmount,employeeAttribution:t.attribution})}catch(e){res.status(400).json({error:e.message})}});
