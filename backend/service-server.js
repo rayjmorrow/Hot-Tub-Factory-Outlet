@@ -29,6 +29,7 @@ import {initServiceScheduling} from './service-scheduling.js';
 import {initServiceTenancy} from './service-tenancy.js';
 import {initServiceAudit} from './service-audit.js';
 import {initServicePaymentGuard} from './service-payment-guard.js';
+import crmRoutes from './crm-routes.js';
 
 const app=express();
 const port=Number(process.env.PORT||process.env.SERVICE_PORT||8790);
@@ -69,7 +70,7 @@ app.use('/api/service/auth/login',(req,res,next)=>{
 });
 setInterval(()=>{const cutoff=Date.now()-15*60*1000;for(const [k,v] of loginAttempts){const recent=v.filter(t=>t>cutoff);if(recent.length)loginAttempts.set(k,recent);else loginAttempts.delete(k)}},15*60*1000).unref();
 
-app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,parts:true,quickSpaParts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true,equipmentProfileEditing:true,workOrderDetailAndDelete:true,fulfillment:true,autoshipFulfillment:true,pirateShipExport:true}));
+app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,crm:true,liveWebsiteLeads:true,parts:true,quickSpaParts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true,equipmentProfileEditing:true,workOrderDetailAndDelete:true,fulfillment:true,autoshipFulfillment:true,pirateShipExport:true}));
 app.get('/ready',async(req,res)=>{try{await q('SELECT 1');res.json({ok:true,database:true})}catch(e){res.status(503).json({ok:false,database:false,error:'Database unavailable'})}});
 
 app.use('/api/service',publicServiceRoutes);
@@ -91,6 +92,7 @@ app.use('/api/service',customerOrderControls);
 app.use('/api/service',customerOrderRoutes);
 app.use('/api/service',fulfillmentRoutes);
 app.use('/api/service',customerImportRoutes);
+app.use('/api/service',crmRoutes);
 
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
