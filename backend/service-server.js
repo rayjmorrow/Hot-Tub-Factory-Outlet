@@ -49,7 +49,11 @@ app.use((req,res,next)=>{
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accept.authorize.net https://test.authorize.net");
   next();
 });
-app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
+app.use(cors((req,cb)=>{
+  const origin=req.get('Origin');
+  const ownOrigin=origin&&(()=>{try{return new URL(origin).host===req.get('host')}catch{return false}})();
+  cb(null,{origin:!origin||ownOrigin||allowed.includes(origin)});
+}));
 app.use(express.json({limit:'2mb',verify:(req,res,buf)=>{req.rawBody=buf}}));
 
 const loginAttempts=new Map();
