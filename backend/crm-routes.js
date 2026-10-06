@@ -1,10 +1,53 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from 'node:crypto';
 import { q } from './service-db.js';
 
 const router=express.Router();
 const clean=v=>v==null?null:String(v).trim();
 function secret(){if(!process.env.SERVICE_JWT_SECRET)throw new Error('SERVICE_JWT_SECRET is required');return process.env.SERVICE_JWT_SECRET}
+const twilioNumber=()=>String(process.env.TWILIO_PHONE_NUMBER||'').trim();
+const twilioSid=()=>String(process.env.TWILIO_ACCOUNT_SID||'').trim();
+const twilioToken=()=>String(process.env.TWILIO_AUTH_TOKEN||'').trim();
+
+async function ensureSmsTable(){
+  await q(`CREATE TABLE IF NOT EXISTS crm_sms_messages (
+    id BIGSERIAL PRIMARY KEY,
+    twilio_sid TEXT UNIQUE,
+    direction TEXT NOT NULL,
+    from_number TEXT,
+    to_number TEXT,
+    body TEXT,
+    status TEXT,
+    lead_submission_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+}
+function twilioSignatureOk(req){
+  const token=twilioToken();
+  if(!token)return false;
+  const supplied=String(req.get('X-Twilio-Signature')||'');
+  const proto=String(req.get('X-Forwarded-Proto')||req.protocol||'https').split(',')[0].trim();
+  const host=req.get('host');
+  const url=proto+'://'+host+req.originalUrl;
+  const params=req.body&&typeof req.body==='object'?req.body:{};
+  const payload=Object.keys(params).sort().reduce((s,k)=>s+k+String(params[k]??''),url);
+  const expected=crypto.createHmac('sha1',token).update(payload).digest('base64');
+  try{return crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(expected))}catch{return false}
+}
+async function sendTwilioSms(to,body){
+  const sid=twilioSid(),token=twilioToken(),from=twilioNumber();
+  if(!sid||!token||!from)throw new Error('Twilio is not fully configured');
+  const form=new URLSearchParams({To:String(to),From:from,Body:String(body)});
+  const r=await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`,{
+    method:'POST',
+    headers:{Authorization:'Basic '+Buffer.from(sid+':'+token).toString('base64'),'Content-Type':'application/x-www-form-urlencoded'},
+    body:form
+  });
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.message||`Twilio returned ${r.status}`);
+  return j;
+}
 function auth(req,res,next){
   try{
     const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
@@ -12,6 +55,53 @@ function auth(req,res,next){
     req.user=jwt.verify(raw,secret());next();
   }catch{res.status(401).json({error:'Session expired or invalid'})}
 }
+
+
+router.get('/crm/telephony',auth,async(req,res)=>{
+  res.json({
+    provider:'Twilio',
+    phone_number:twilioNumber()||null,
+    account_configured:Boolean(twilioSid()),
+    sms_ready:Boolean(twilioNumber()&&twilioSid()&&twilioToken())
+  });
+});
+
+router.post('/crm/sms/send',auth,async(req,res)=>{
+  try{
+    const to=clean(req.body?.to),body=clean(req.body?.body),leadSubmissionId=clean(req.body?.lead_submission_id);
+    if(!to||!body)return res.status(400).json({error:'to and body are required'});
+    await ensureSmsTable();
+    const msg=await sendTwilioSms(to,body);
+    await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id)
+      VALUES($1,'outbound',$2,$3,$4,$5,$6)
+      ON CONFLICT (twilio_sid) DO NOTHING`,[msg.sid,twilioNumber(),to,body,msg.status||'queued',leadSubmissionId]);
+    res.json({ok:true,sid:msg.sid,status:msg.status||'queued'});
+  }catch(e){res.status(502).json({error:e.message})}
+});
+
+router.post('/crm/twilio/incoming',async(req,res)=>{
+  try{
+    if(!twilioSignatureOk(req))return res.status(403).send('Invalid Twilio signature');
+    await ensureSmsTable();
+    const b=req.body||{};
+    await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status)
+      VALUES($1,'inbound',$2,$3,$4,$5)
+      ON CONFLICT (twilio_sid) DO NOTHING`,[clean(b.MessageSid),clean(b.From),clean(b.To),clean(b.Body),clean(b.SmsStatus)||'received']);
+    res.type('text/xml').send('<Response></Response>');
+  }catch(e){res.status(500).send('SMS ingest failed')}
+});
+
+router.get('/crm/sms',auth,async(req,res)=>{
+  try{
+    await ensureSmsTable();
+    const phone=clean(req.query.phone);
+    const params=[];let where='';
+    if(phone){params.push(phone);where='WHERE from_number=$1 OR to_number=$1'}
+    const rows=(await q(`SELECT id,twilio_sid,direction,from_number,to_number,body,status,lead_submission_id,created_at
+      FROM crm_sms_messages ${where} ORDER BY created_at DESC LIMIT 250`,params)).rows;
+    res.json(rows);
+  }catch(e){res.status(500).json({error:e.message})}
+});
 
 router.get('/crm/dashboard',auth,async(req,res)=>{
   const [totals,stages,sources,delivery]=await Promise.all([
