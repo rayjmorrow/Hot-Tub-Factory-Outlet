@@ -103,6 +103,28 @@ router.get('/crm/sms',auth,async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 
+
+router.post('/crm/shadow/inbound',async(req,res)=>{
+  try{
+    const secret=String(process.env.CRM_SHADOW_WEBHOOK_SECRET||'').trim();
+    const supplied=String(req.get('x-htfo-shadow-secret')||req.query?.secret||'').trim();
+    if(!secret||supplied!==secret)return res.status(403).json({error:'Forbidden'});
+    await ensureSmsTable();
+    const b=req.body||{};
+    const from=clean(b.from||b.phone||b.contact_phone||b.contact?.phone);
+    const to=clean(b.to||twilioNumber());
+    const body=clean(b.body||b.message||b.text||b.message_body);
+    const externalId=clean(b.message_id||b.id||b.external_id||b.conversation_message_id);
+    const status=clean(b.status)||'shadow';
+    if(!from||!body)return res.status(400).json({error:'from and body are required'});
+    const shadowSid=externalId?('shadow:'+externalId):('shadow:'+crypto.createHash('sha256').update([from,to,body].join('|')).digest('hex').slice(0,48));
+    await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status)
+      VALUES($1,'inbound-shadow',$2,$3,$4,$5)
+      ON CONFLICT (twilio_sid) DO NOTHING`,[shadowSid,from,to,body,status]);
+    res.json({ok:true,id:shadowSid});
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
 router.get('/crm/dashboard',auth,async(req,res)=>{
   const [totals,stages,sources,delivery]=await Promise.all([
     q(`SELECT count(*)::int total,
