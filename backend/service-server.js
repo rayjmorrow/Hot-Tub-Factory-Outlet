@@ -55,6 +55,7 @@ app.use(cors((req,cb)=>{
   cb(null,{origin:!origin||ownOrigin||allowed.includes(origin)});
 }));
 app.use(express.json({limit:'2mb',verify:(req,res,buf)=>{req.rawBody=buf}}));
+app.use(express.urlencoded({extended:false,limit:'256kb'}));
 
 const loginAttempts=new Map();
 app.use('/api/service/auth/login',(req,res,next)=>{
