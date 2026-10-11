@@ -31,6 +31,7 @@ import {initServiceAudit} from './service-audit.js';
 import {initServicePaymentGuard} from './service-payment-guard.js';
 import crmRoutes from './crm-routes.js';
 import crmV1Routes from './crm-v1-routes.js';
+import crmHistoryRoutes from './crm-history-routes.js';
 
 const app=express();
 const port=Number(process.env.PORT||process.env.SERVICE_PORT||8790);
@@ -100,6 +101,7 @@ app.use('/api/service',fulfillmentRoutes);
 app.use('/api/service',customerImportRoutes);
 app.use('/api/service',crmRoutes);
 app.use('/api/service',crmV1Routes);
+app.use('/api/service',crmHistoryRoutes);
 
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
