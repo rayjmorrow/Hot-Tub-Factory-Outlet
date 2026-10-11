@@ -374,6 +374,20 @@ app.get('/internal/crm/highlevel-users',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 
+app.get('/internal/crm/highlevel-pipelines',async(req,res)=>{
+  try{
+    const expected=String(process.env.CRM_IMPORT_SECRET||'').trim();
+    if(!expected||String(req.get('x-htfo-import-secret')||'').trim()!==expected)return res.status(403).json({error:'Forbidden'});
+    requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
+    const u=new URL(ghlBase+'/opportunities/pipelines');
+    u.searchParams.set('locationId',process.env.GHL_LOCATION_ID);
+    const r=await fetch(u,{headers:ghlHeaders()});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)return res.status(r.status).json({error:j?.message||j?.error||'HighLevel pipeline export failed'});
+    res.json(j);
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
 app.post('/lead',async(req,res)=>{
   const submissionId=cleanText(req.body?.submissionId,100)||randomUUID();
   try{
