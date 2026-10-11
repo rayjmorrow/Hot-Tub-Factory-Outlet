@@ -23,6 +23,15 @@ async function ensureSmsTable(){
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 }
+async function ensureLeadInterestFields(){
+  await q(`ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS product_interest TEXT;
+    ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS brand_interest TEXT;
+    ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS model_interest TEXT;
+    CREATE INDEX IF NOT EXISTS idx_crm_lead_product_interest ON crm_website_leads(product_interest);
+    CREATE INDEX IF NOT EXISTS idx_crm_lead_brand_interest ON crm_website_leads(brand_interest);
+    CREATE INDEX IF NOT EXISTS idx_crm_lead_model_interest ON crm_website_leads(model_interest);`);
+}
+
 async function ensureCrmWorkspaceTables(){
   await q(`CREATE TABLE IF NOT EXISTS crm_lead_notes(
     id BIGSERIAL PRIMARY KEY,
@@ -196,6 +205,7 @@ router.get('/crm/audit/recent-leads',async(req,res)=>{
 });
 
 router.get('/crm/dashboard',auth,async(req,res)=>{
+  await ensureLeadInterestFields();
   const [totals,stages,sources,delivery]=await Promise.all([
     q(`SELECT count(*)::int total,
       count(*) FILTER (WHERE received_at>=NOW()-INTERVAL '24 hours')::int last_24_hours,
@@ -215,11 +225,12 @@ router.get('/crm/dashboard',auth,async(req,res)=>{
 });
 
 router.get('/crm/leads',auth,async(req,res)=>{
+  await ensureLeadInterestFields();
   const term=clean(req.query.q)||'',stage=clean(req.query.stage),limit=Math.min(500,Math.max(1,Number(req.query.limit)||250));
-  const params=[`%${term}%`];let where=`WHERE concat_ws(' ',first_name,last_name,email,phone,source,note,tags::text,payload::text) ILIKE $1`;
+  const params=[`%${term}%`];let where=`WHERE concat_ws(' ',first_name,last_name,email,phone,source,note,product_interest,brand_interest,model_interest,tags::text,payload::text) ILIKE $1`;
   if(stage){params.push(stage);where+=` AND pipeline_stage=$${params.length}`}
   params.push(limit);
-  const rows=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,lifecycle_stage,pipeline_stage,
+  const rows=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,lifecycle_stage,pipeline_stage,
       ghl_contact_status,ghl_contact_id,ghl_contact_error,ghl_opportunity_status,ghl_opportunity_id,ghl_opportunity_error,received_at,updated_at
     FROM crm_website_leads ${where} ORDER BY received_at DESC LIMIT $${params.length}`,params)).rows;
   res.json(rows);
@@ -227,8 +238,8 @@ router.get('/crm/leads',auth,async(req,res)=>{
 
 router.get('/crm/leads/:submissionId/detail',auth,async(req,res)=>{
   try{
-    await Promise.all([ensureSmsTable(),ensureCrmWorkspaceTables()]);
-    const lead=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,lifecycle_stage,pipeline_stage,
+    await Promise.all([ensureSmsTable(),ensureCrmWorkspaceTables(),ensureLeadInterestFields()]);
+    const lead=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,lifecycle_stage,pipeline_stage,
       ghl_contact_status,ghl_contact_id,ghl_contact_error,ghl_opportunity_status,ghl_opportunity_id,ghl_opportunity_error,received_at,updated_at
       FROM crm_website_leads WHERE submission_id=$1`,[req.params.submissionId])).rows[0];
     if(!lead)return res.status(404).json({error:'Lead not found'});
@@ -252,6 +263,22 @@ router.post('/crm/leads/:submissionId/notes',auth,async(req,res)=>{
       VALUES($1,$2,$3) RETURNING id,body,created_by,created_at`,
       [req.params.submissionId,body,req.user?.name||req.user?.username||'staff'])).rows[0];
     res.status(201).json(row);
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
+router.patch('/crm/leads/:submissionId/interest',auth,async(req,res)=>{
+  try{
+    await ensureLeadInterestFields();
+    const allowedProducts=new Set(['Hot Tub','Swim Spa','Pool','Sauna','Outdoor Kitchen']);
+    const product=clean(req.body?.product_interest),brand=clean(req.body?.brand_interest),model=clean(req.body?.model_interest);
+    if(product&&!allowedProducts.has(product))return res.status(400).json({error:'Invalid product interest'});
+    const row=(await q(`UPDATE crm_website_leads
+      SET product_interest=$2,brand_interest=$3,model_interest=$4,updated_at=NOW()
+      WHERE submission_id=$1
+      RETURNING submission_id,product_interest,brand_interest,model_interest,updated_at`,
+      [req.params.submissionId,product||null,brand||null,model||null])).rows[0];
+    if(!row)return res.status(404).json({error:'Lead not found'});
+    res.json(row);
   }catch(e){res.status(500).json({error:e.message})}
 });
 
