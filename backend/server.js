@@ -334,6 +334,7 @@ app.get('/internal/crm/highlevel-contacts',async(req,res)=>{
     u.searchParams.set('limit','100');
     if(req.query.startAfterId)u.searchParams.set('startAfterId',String(req.query.startAfterId));
     if(req.query.startAfter)u.searchParams.set('startAfter',String(req.query.startAfter));
+    if(req.query.contactId)u.searchParams.set('contactId',String(req.query.contactId));
     const r=await fetch(u,{headers:ghlHeaders()}),j=await r.json().catch(()=>({}));
     if(!r.ok)return res.status(r.status).json({error:j?.message||j?.error||'HighLevel export failed'});
     res.json({contacts:j.contacts||[],meta:j.meta||{}});
