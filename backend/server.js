@@ -357,6 +357,23 @@ app.get('/internal/crm/highlevel-opportunities',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 
+app.get('/internal/crm/highlevel-users',async(req,res)=>{
+  try{
+    const expected=String(process.env.CRM_IMPORT_SECRET||'').trim();
+    if(!expected||String(req.get('x-htfo-import-secret')||'').trim()!==expected)return res.status(403).json({error:'Forbidden'});
+    requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
+    const locationId=process.env.GHL_LOCATION_ID;
+    const lr=await fetch(ghlBase+'/locations/'+encodeURIComponent(locationId),{headers:ghlHeaders()});
+    const lj=await lr.json().catch(()=>({}));
+    if(!lr.ok||!lj?.location?.companyId)return res.status(502).json({error:'Could not resolve HighLevel company'});
+    const qs=new URLSearchParams({companyId:lj.location.companyId,locationId,limit:'100'});
+    const ur=await fetch(ghlBase+'/users/search?'+qs,{headers:ghlHeaders()});
+    const uj=await ur.json().catch(()=>({}));
+    if(!ur.ok)return res.status(ur.status).json({error:uj?.message||uj?.error||'HighLevel user export failed'});
+    res.json({users:(uj.users||[]).map(x=>({id:x.id,name:x.name||[x.firstName,x.lastName].filter(Boolean).join(' '),email:x.email||null,role:x.roles?.type||x.role||null}))});
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
 app.post('/lead',async(req,res)=>{
   const submissionId=cleanText(req.body?.submissionId,100)||randomUUID();
   try{
