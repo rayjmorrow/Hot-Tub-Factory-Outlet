@@ -232,9 +232,12 @@ router.get('/crm/dashboard',auth,async(req,res)=>{
 
 router.get('/crm/leads',auth,async(req,res)=>{
   await ensureLeadInterestFields();
-  const term=clean(req.query.q)||'',stage=clean(req.query.stage),limit=Math.min(500,Math.max(1,Number(req.query.limit)||250));
+  const term=clean(req.query.q)||'',stage=clean(req.query.stage),product=clean(req.query.product),brand=clean(req.query.brand),model=clean(req.query.model),limit=Math.min(1000,Math.max(1,Number(req.query.limit)||250));
   const params=[`%${term}%`];let where=`WHERE concat_ws(' ',first_name,last_name,email,phone,source,note,product_interest,brand_interest,model_interest,tags::text,payload::text) ILIKE $1`;
-  if(stage){params.push(stage);where+=` AND pipeline_stage=$${params.length}`}
+  if(stage){params.push(stage);where+=` AND pipeline_stage=${params.length}`}
+  if(product){params.push(product);where+=` AND lower(coalesce(product_interest,''))=lower(${params.length})`}
+  if(brand){params.push(`%${brand}%`);where+=` AND coalesce(brand_interest,'') ILIKE ${params.length}`}
+  if(model){params.push(`%${model}%`);where+=` AND coalesce(model_interest,'') ILIKE ${params.length}`}
   params.push(limit);
   const rows=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,lifecycle_stage,pipeline_stage,
       ghl_contact_status,ghl_contact_id,ghl_contact_error,ghl_opportunity_status,ghl_opportunity_id,ghl_opportunity_error,received_at,updated_at
@@ -271,6 +274,39 @@ router.post('/crm/leads/:submissionId/notes',auth,async(req,res)=>{
       VALUES($1,$2,$3,$4,$5,$6) RETURNING id,note_type,body,quoted_price,financing_interest,created_by,created_at`,
       [req.params.submissionId,noteType,body,quotedPrice,financingInterest,req.user?.name||req.user?.username||'staff'])).rows[0];
     res.status(201).json(row);
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
+router.post('/crm/campaigns/sms/preview',auth,async(req,res)=>{
+  try{
+    await Promise.all([ensureLeadInterestFields(),ensureSmsTable()]);
+    const ids=Array.isArray(req.body?.submission_ids)?req.body.submission_ids.map(clean).filter(Boolean).slice(0,500):[];
+    const template=String(req.body?.template||'').trim();
+    if(!ids.length||!template)return res.status(400).json({error:'Recipients and template are required'});
+    const rows=(await q(`SELECT submission_id,first_name,last_name,phone,product_interest,brand_interest,model_interest
+      FROM crm_website_leads WHERE submission_id=ANY($1::text[])`,[ids])).rows;
+    const normalized=p=>String(p||'').replace(/\D/g,'');
+    const out=[];
+    for(const r of rows){
+      const phone=clean(r.phone),digits=normalized(phone);
+      let suppressed=false;
+      if(phone){
+        const stop=(await q(`SELECT 1 FROM crm_sms_messages
+          WHERE regexp_replace(from_number,'\\D','','g')=$1
+            AND direction IN ('inbound','inbound-shadow')
+            AND upper(trim(body)) IN ('STOP','STOPALL','UNSUBSCRIBE','CANCEL','END','QUIT')
+          LIMIT 1`,[digits])).rowCount>0;
+        suppressed=stop;
+      }
+      const body=template
+        .replaceAll('{Name}',clean(r.first_name)||'there')
+        .replaceAll('{FirstName}',clean(r.first_name)||'there')
+        .replaceAll('{Brand}',clean(r.brand_interest)||'')
+        .replaceAll('{Model}',clean(r.model_interest)||'')
+        .replaceAll('{Product}',clean(r.product_interest)||'');
+      out.push({submission_id:r.submission_id,name:[r.first_name,r.last_name].filter(Boolean).join(' '),phone,body,suppressed,reason:suppressed?'Previously opted out by SMS':(!phone?'No phone number':null)});
+    }
+    res.json({total:out.length,sendable:out.filter(x=>x.phone&&!x.suppressed).length,suppressed:out.filter(x=>x.suppressed||!x.phone).length,recipients:out});
   }catch(e){res.status(500).json({error:e.message})}
 });
 
