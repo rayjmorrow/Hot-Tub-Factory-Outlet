@@ -324,6 +324,22 @@ app.get('/cover-order-form/:id',async(req,res)=>{
   }catch(e){res.status(404).json({ok:false,error:e.message})}
 });
 
+app.get('/internal/crm/highlevel-contacts',async(req,res)=>{
+  try{
+    const expected=String(process.env.CRM_IMPORT_SECRET||'').trim(),supplied=String(req.get('x-htfo-import-secret')||'').trim();
+    if(!expected||supplied!==expected)return res.status(403).json({error:'Forbidden'});
+    requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
+    const u=new URL(ghlBase+'/contacts/');
+    u.searchParams.set('locationId',process.env.GHL_LOCATION_ID);
+    u.searchParams.set('limit','100');
+    if(req.query.startAfterId)u.searchParams.set('startAfterId',String(req.query.startAfterId));
+    if(req.query.startAfter)u.searchParams.set('startAfter',String(req.query.startAfter));
+    const r=await fetch(u,{headers:ghlHeaders()}),j=await r.json().catch(()=>({}));
+    if(!r.ok)return res.status(r.status).json({error:j?.message||j?.error||'HighLevel export failed'});
+    res.json({contacts:j.contacts||[],meta:j.meta||{}});
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
 app.post('/lead',async(req,res)=>{
   const submissionId=cleanText(req.body?.submissionId,100)||randomUUID();
   try{
