@@ -23,6 +23,17 @@ async function ensureSmsTable(){
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 }
+async function ensureCrmWorkspaceTables(){
+  await q(`CREATE TABLE IF NOT EXISTS crm_lead_notes(
+    id BIGSERIAL PRIMARY KEY,
+    submission_id TEXT NOT NULL REFERENCES crm_website_leads(submission_id) ON DELETE CASCADE,
+    body TEXT NOT NULL,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_crm_lead_notes_submission ON crm_lead_notes(submission_id,created_at DESC);`);
+}
+
 function twilioSignatureOk(req){
   const token=twilioToken();
   if(!token)return false;
@@ -205,13 +216,43 @@ router.get('/crm/dashboard',auth,async(req,res)=>{
 
 router.get('/crm/leads',auth,async(req,res)=>{
   const term=clean(req.query.q)||'',stage=clean(req.query.stage),limit=Math.min(500,Math.max(1,Number(req.query.limit)||250));
-  const params=[`%${term}%`];let where=`WHERE concat_ws(' ',first_name,last_name,email,phone,source,note) ILIKE $1`;
+  const params=[`%${term}%`];let where=`WHERE concat_ws(' ',first_name,last_name,email,phone,source,note,tags::text,payload::text) ILIKE $1`;
   if(stage){params.push(stage);where+=` AND pipeline_stage=$${params.length}`}
   params.push(limit);
-  const rows=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,lifecycle_stage,pipeline_stage,
+  const rows=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,lifecycle_stage,pipeline_stage,
       ghl_contact_status,ghl_contact_id,ghl_contact_error,ghl_opportunity_status,ghl_opportunity_id,ghl_opportunity_error,received_at,updated_at
     FROM crm_website_leads ${where} ORDER BY received_at DESC LIMIT $${params.length}`,params)).rows;
   res.json(rows);
+});
+
+router.get('/crm/leads/:submissionId/detail',auth,async(req,res)=>{
+  try{
+    await Promise.all([ensureSmsTable(),ensureCrmWorkspaceTables()]);
+    const lead=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,lifecycle_stage,pipeline_stage,
+      ghl_contact_status,ghl_contact_id,ghl_contact_error,ghl_opportunity_status,ghl_opportunity_id,ghl_opportunity_error,received_at,updated_at
+      FROM crm_website_leads WHERE submission_id=$1`,[req.params.submissionId])).rows[0];
+    if(!lead)return res.status(404).json({error:'Lead not found'});
+    const [notes,sms]=await Promise.all([
+      q('SELECT id,body,created_by,created_at FROM crm_lead_notes WHERE submission_id=$1 ORDER BY created_at DESC',[req.params.submissionId]),
+      lead.phone?q(`SELECT id,twilio_sid,direction,from_number,to_number,body,status,created_at FROM crm_sms_messages
+        WHERE from_number=$1 OR to_number=$1 OR lead_submission_id=$2 ORDER BY created_at DESC LIMIT 500`,[lead.phone,req.params.submissionId]):Promise.resolve({rows:[]})
+    ]);
+    res.json({lead,notes:notes.rows,sms:sms.rows});
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
+router.post('/crm/leads/:submissionId/notes',auth,async(req,res)=>{
+  try{
+    await ensureCrmWorkspaceTables();
+    const body=clean(req.body?.body);
+    if(!body)return res.status(400).json({error:'Note is required'});
+    const exists=(await q('SELECT 1 FROM crm_website_leads WHERE submission_id=$1',[req.params.submissionId])).rowCount;
+    if(!exists)return res.status(404).json({error:'Lead not found'});
+    const row=(await q(`INSERT INTO crm_lead_notes(submission_id,body,created_by)
+      VALUES($1,$2,$3) RETURNING id,body,created_by,created_at`,
+      [req.params.submissionId,body,req.user?.name||req.user?.username||'staff'])).rows[0];
+    res.status(201).json(row);
+  }catch(e){res.status(500).json({error:e.message})}
 });
 
 router.patch('/crm/leads/:submissionId',auth,async(req,res)=>{
