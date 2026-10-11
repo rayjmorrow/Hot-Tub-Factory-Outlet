@@ -42,6 +42,20 @@ async function sms(to,body){const a=sid(),b=token(),from=salesNumber();if(!a||!b
 async function opted(phone){if(!phone)return true;const d=String(phone).replace(/\D/g,'');return (await q(`SELECT 1 FROM crm_sms_messages WHERE regexp_replace(from_number,'\\D','','g')=$1 AND direction IN ('inbound','inbound-shadow') AND upper(trim(body)) IN ('STOP','STOPALL','UNSUBSCRIBE','CANCEL','END','QUIT') LIMIT 1`,[d])).rowCount>0}
 async function email(to,subject,body,name){const key=String(process.env.BREVO_API_KEY||'').trim(),from=String(process.env.CRM_FROM_EMAIL||process.env.FULFILLMENT_FROM_EMAIL||'').trim();if(!key||!from)throw new Error('CRM email sender is not configured');const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify({sender:{email:from,name:String(process.env.CRM_FROM_NAME||'Hot Tub Factory Outlet')},to:[{email:to,name:name||to}],subject,textContent:body})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('Brevo returned '+r.status));return j}
 
+function normalizePipelineStage(name,status){
+  const s=String(status||'').toLowerCase(),n=String(name||'').trim().toLowerCase();
+  if(s==='won')return 'Sold';
+  if(s==='lost'||s==='abandoned')return 'Lost';
+  if(!n)return null;
+  if(n.includes('new'))return 'New Lead';
+  if(n.includes('contact'))return 'Contacted';
+  if(n.includes('appoint'))return 'Appointment';
+  if(n.includes('visit')||n.includes('showroom'))return 'Visited Showroom';
+  if(n.includes('quot')||n.includes('proposal')||n.includes('price'))return 'Quoted';
+  if(n.includes('sold')||n.includes('won'))return 'Sold';
+  if(n.includes('lost')||n.includes('dead')||n.includes('closed'))return 'Lost';
+  return null;
+}
 function stageFromHighLevel(status,probability){
   const s=String(status||'').toLowerCase(),p=Number(probability)||0;
   if(s==='won')return 'Sold';
@@ -115,11 +129,15 @@ router.get('/crm/v1/reports/summary',...guard,async(req,res)=>{try{await ensure(
 router.post('/crm/v1/reconcile/highlevel',...guard,async(req,res)=>{try{
   if(!isManager(req))return res.status(403).json({error:'Manager access required'});
   await ensure();
-  let users={};
+  let users={},stageNames={};
   try{
     const uj=await importSource('/internal/crm/highlevel-users');
     for(const u of (uj.users||[]))if(u?.id)users[String(u.id)]=clean(u.name)||clean(u.email)||String(u.id);
   }catch(e){console.warn('HighLevel user mapping unavailable:',e.message)}
+  try{
+    const pj=await importSource('/internal/crm/highlevel-pipelines');
+    for(const p of (pj.pipelines||[]))for(const s of (p.stages||[]))if(s?.id)stageNames[String(s.id)]=clean(s.name);
+  }catch(e){console.warn('HighLevel pipeline mapping unavailable:',e.message)}
   await q("UPDATE crm_website_leads SET has_opportunity=false WHERE note='Imported from HighLevel'");
   let afterId='',after='',pages=0,matched=0,unmatched=0,open=0,won=0,lost=0;
   do{
@@ -128,7 +146,8 @@ router.post('/crm/v1/reconcile/highlevel',...guard,async(req,res)=>{try{
     for(const x of opportunities){
       const contactId=contactIdFromOpportunity(x);
       if(!contactId){unmatched++;continue}
-      const stage=stageFromHighLevel(x.status,x.effectiveProbability),assignedId=clean(x.assignedTo),assignedName=users[assignedId]||null;
+      const exactStageName=stageNames[String(x.pipelineStageId||'')]||null;
+      const stage=normalizePipelineStage(exactStageName,x.status)||stageFromHighLevel(x.status,x.effectiveProbability),assignedId=clean(x.assignedTo),assignedName=users[assignedId]||null;
       const r=await q(`UPDATE crm_website_leads SET
         has_opportunity=true,
         ghl_opportunity_id=$2,
