@@ -36,10 +36,16 @@ async function ensureCrmWorkspaceTables(){
   await q(`CREATE TABLE IF NOT EXISTS crm_lead_notes(
     id BIGSERIAL PRIMARY KEY,
     submission_id TEXT NOT NULL REFERENCES crm_website_leads(submission_id) ON DELETE CASCADE,
+    note_type TEXT NOT NULL DEFAULT 'General',
     body TEXT NOT NULL,
+    quoted_price NUMERIC(12,2),
+    financing_interest TEXT,
     created_by TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  ALTER TABLE crm_lead_notes ADD COLUMN IF NOT EXISTS note_type TEXT NOT NULL DEFAULT 'General';
+  ALTER TABLE crm_lead_notes ADD COLUMN IF NOT EXISTS quoted_price NUMERIC(12,2);
+  ALTER TABLE crm_lead_notes ADD COLUMN IF NOT EXISTS financing_interest TEXT;
   CREATE INDEX IF NOT EXISTS idx_crm_lead_notes_submission ON crm_lead_notes(submission_id,created_at DESC);`);
 }
 
@@ -244,7 +250,7 @@ router.get('/crm/leads/:submissionId/detail',auth,async(req,res)=>{
       FROM crm_website_leads WHERE submission_id=$1`,[req.params.submissionId])).rows[0];
     if(!lead)return res.status(404).json({error:'Lead not found'});
     const [notes,sms]=await Promise.all([
-      q('SELECT id,body,created_by,created_at FROM crm_lead_notes WHERE submission_id=$1 ORDER BY created_at DESC',[req.params.submissionId]),
+      q('SELECT id,note_type,body,quoted_price,financing_interest,created_by,created_at FROM crm_lead_notes WHERE submission_id=$1 ORDER BY created_at DESC',[req.params.submissionId]),
       lead.phone?q(`SELECT id,twilio_sid,direction,from_number,to_number,body,status,created_at FROM crm_sms_messages
         WHERE from_number=$1 OR to_number=$1 OR lead_submission_id=$2 ORDER BY created_at DESC LIMIT 500`,[lead.phone,req.params.submissionId]):Promise.resolve({rows:[]})
     ]);
@@ -255,13 +261,15 @@ router.get('/crm/leads/:submissionId/detail',auth,async(req,res)=>{
 router.post('/crm/leads/:submissionId/notes',auth,async(req,res)=>{
   try{
     await ensureCrmWorkspaceTables();
-    const body=clean(req.body?.body);
+    const body=clean(req.body?.body),noteType=clean(req.body?.note_type)||'General',financingInterest=clean(req.body?.financing_interest);
+    const quotedPrice=req.body?.quoted_price==null||req.body?.quoted_price===''?null:Number(req.body.quoted_price);
     if(!body)return res.status(400).json({error:'Note is required'});
+    if(quotedPrice!=null&&(!Number.isFinite(quotedPrice)||quotedPrice<0))return res.status(400).json({error:'Quoted price must be a valid positive amount'});
     const exists=(await q('SELECT 1 FROM crm_website_leads WHERE submission_id=$1',[req.params.submissionId])).rowCount;
     if(!exists)return res.status(404).json({error:'Lead not found'});
-    const row=(await q(`INSERT INTO crm_lead_notes(submission_id,body,created_by)
-      VALUES($1,$2,$3) RETURNING id,body,created_by,created_at`,
-      [req.params.submissionId,body,req.user?.name||req.user?.username||'staff'])).rows[0];
+    const row=(await q(`INSERT INTO crm_lead_notes(submission_id,note_type,body,quoted_price,financing_interest,created_by)
+      VALUES($1,$2,$3,$4,$5,$6) RETURNING id,note_type,body,quoted_price,financing_interest,created_by,created_at`,
+      [req.params.submissionId,noteType,body,quotedPrice,financingInterest,req.user?.name||req.user?.username||'staff'])).rows[0];
     res.status(201).json(row);
   }catch(e){res.status(500).json({error:e.message})}
 });
