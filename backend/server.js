@@ -346,7 +346,7 @@ app.get('/internal/crm/highlevel-opportunities',async(req,res)=>{
     if(!expected||String(req.get('x-htfo-import-secret')||'').trim()!==expected)return res.status(403).json({error:'Forbidden'});
     requireEnv(['GHL_API_TOKEN','GHL_LOCATION_ID']);
     const u=new URL(ghlBase+'/opportunities/search');
-    u.searchParams.set('location_id',process.env.GHL_LOCATION_ID);
+    u.searchParams.set('locationId',process.env.GHL_LOCATION_ID);
     u.searchParams.set('limit','100');
     if(req.query.startAfterId)u.searchParams.set('startAfterId',String(req.query.startAfterId));
     if(req.query.startAfter)u.searchParams.set('startAfter',String(req.query.startAfter));
