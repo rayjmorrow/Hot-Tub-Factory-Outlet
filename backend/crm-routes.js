@@ -35,6 +35,33 @@ function twilioSignatureOk(req){
   const expected=crypto.createHmac('sha1',token).update(payload).digest('base64');
   try{return crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(expected))}catch{return false}
 }
+async function syncTwilioMessages(days=14,limit=1000){
+  const sid=twilioSid(),token=twilioToken(),owned=twilioNumber();
+  if(!sid||!token||!owned)throw new Error('Twilio is not fully configured');
+  await ensureSmsTable();
+  const after=new Date(Date.now()-Math.max(1,Number(days)||14)*86400000).toISOString().slice(0,10);
+  let url=`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json?PageSize=1000&DateSent%3E=${encodeURIComponent(after)}`;
+  let seen=0,inserted=0;
+  while(url && seen<limit){
+    const r=await fetch(url,{headers:{Authorization:'Basic '+Buffer.from(sid+':'+token).toString('base64')}});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(j.message||`Twilio returned ${r.status}`);
+    for(const m of (j.messages||[])){
+      if(seen++>=limit)break;
+      const from=String(m.from||''),to=String(m.to||'');
+      const direction=from===owned?'outbound':(to===owned?'inbound':String(m.direction||'unknown'));
+      const rs=await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,created_at)
+        VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::timestamptz,NOW()))
+        ON CONFLICT (twilio_sid) DO NOTHING RETURNING id`,
+        [String(m.sid||''),direction,from,to,String(m.body||''),String(m.status||''),m.date_sent||m.date_created||null]);
+      if(rs.rowCount)inserted++;
+    }
+    const next=j.next_page_uri;
+    url=next?('https://api.twilio.com'+next):'';
+  }
+  return{seen,inserted,days};
+}
+
 async function sendTwilioSms(to,body){
   const sid=twilioSid(),token=twilioToken(),from=twilioNumber();
   if(!sid||!token||!from)throw new Error('Twilio is not fully configured');
@@ -56,6 +83,24 @@ function auth(req,res,next){
   }catch{res.status(401).json({error:'Session expired or invalid'})}
 }
 
+
+
+router.post('/crm/twilio/sync',auth,async(req,res)=>{
+  try{res.json({ok:true,...await syncTwilioMessages(req.body?.days||14,req.body?.limit||1000)})}
+  catch(e){res.status(502).json({error:e.message})}
+});
+
+router.get('/crm/twilio/campaign-count',auth,async(req,res)=>{
+  try{
+    await syncTwilioMessages(req.query?.days||14,1000);
+    const phrase=clean(req.query?.phrase)||'Take our hot tub quiz and earn $500 or $1000 off your hot tub purchase!';
+    const rows=(await q(`SELECT count(*)::int count, min(created_at) first_sent, max(created_at) last_sent
+      FROM crm_sms_messages WHERE direction='outbound' AND body ILIKE $1`,['%'+phrase+'%'])).rows[0];
+    const samples=(await q(`SELECT to_number,body,status,created_at FROM crm_sms_messages
+      WHERE direction='outbound' AND body ILIKE $1 ORDER BY created_at DESC LIMIT 10`,['%'+phrase+'%'])).rows;
+    res.json({phrase,...rows,samples});
+  }catch(e){res.status(500).json({error:e.message})}
+});
 
 router.get('/crm/telephony',auth,async(req,res)=>{
   res.json({
