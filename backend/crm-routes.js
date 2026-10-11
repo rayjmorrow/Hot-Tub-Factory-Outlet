@@ -125,6 +125,20 @@ router.post('/crm/shadow/inbound',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 
+
+router.get('/crm/audit/recent-leads',async(req,res)=>{
+  try{
+    const secret=String(process.env.CRM_SHADOW_WEBHOOK_SECRET||'').trim();
+    const supplied=String(req.get('x-htfo-shadow-secret')||req.query?.secret||'').trim();
+    if(!secret||supplied!==secret)return res.status(403).json({error:'Forbidden'});
+    const limit=Math.min(100,Math.max(1,Number(req.query?.limit)||50));
+    const rows=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,pipeline_stage,
+      ghl_contact_status,ghl_contact_id,ghl_opportunity_status,ghl_opportunity_id,received_at,updated_at
+      FROM crm_website_leads ORDER BY received_at DESC LIMIT $1`,[limit])).rows;
+    res.json(rows);
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
 router.get('/crm/dashboard',auth,async(req,res)=>{
   const [totals,stages,sources,delivery]=await Promise.all([
     q(`SELECT count(*)::int total,
