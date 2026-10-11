@@ -65,37 +65,119 @@ async function dashboard(){const d=await api('/crm/dashboard');$('#open').textCo
 async function load(){try{$('#status').textContent='Loading…';const [r]=await Promise.all([api('/crm/leads?limit=500'),dashboard()]);leads=r;render()}catch(e){if(/login|session/i.test(e.message))showLogin(e.message);else $('#status').textContent=e.message}}
 function flatten(obj,prefix='',out=[]){if(!obj||typeof obj!=='object')return out;for(const [k,v] of Object.entries(obj)){const key=prefix?prefix+' · '+k:k;if(v&&typeof v==='object'&&!Array.isArray(v))flatten(v,key,out);else if(v!==''&&v!=null)out.push([key,Array.isArray(v)?v.join(', '):String(v)])}return out}
 function interestRows(lead){const all=flatten(lead.payload||{}).filter(([k,v])=>/brand|model|interest|goal|timing|showroom|location|product|spa|pool|sauna|grill|kitchen/i.test(k+' '+v));const tags=(Array.isArray(lead.tags)?lead.tags:[]).filter(t=>/brand|model|interest|goal|timing|showroom|spa|pool|sauna|grill|kitchen/i.test(String(t))).map(t=>['Tag',t]);return [...all,...tags].slice(0,18)}
-function renderDetail(){const l=currentDetail.lead;$('#detailName').textContent=[l.first_name,l.last_name].filter(Boolean).join(' ')||'Lead';$('#detailSub').textContent=l.source+' · '+l.pipeline_stage;
-$('#contactBox').innerHTML=`<b>Contact</b><br>${esc(l.phone||'No phone')}<br>${esc(l.email||'No email')}<br><span class="small">Received ${new Date(l.received_at).toLocaleString()}</span>`;
-const ir=interestRows(l);$('#productInterest').value=l.product_interest||'';$('#brandInterest').value=l.brand_interest||'';$('#modelInterest').value=l.model_interest||'';$('#interestBox').innerHTML=ir.length?ir.map(([k,v])=>`<div><strong>${esc(k)}:</strong> ${esc(v)}</div>`).join(''):'No additional qualification detail captured on this submission.';
-const rows=flatten(l.payload||{}).slice(0,60);$('#payloadBox').innerHTML=rows.length?rows.map(([k,v])=>`<span>${esc(k)}</span><span>${esc(v)}</span>`).join(''):'<span>No additional fields</span><span>—</span>';
-const events=[];(currentDetail.notes||[]).forEach(n=>{const extras=[];if(n.quoted_price!=null)extras.push('Quoted (currentDetail.sms||[]).forEach(m=>events.push({type:m.direction==='inbound'||m.direction==='inbound-shadow'?'sms-in':'sms-out',at:m.created_at,title:(m.direction==='inbound'||m.direction==='inbound-shadow'?'Inbound SMS':'Outbound SMS')+' · '+(m.status||''),body:m.body}));
-events.sort((a,b)=>new Date(b.at)-new Date(a.at));$('#timeline').innerHTML=events.length?events.map(e=>`<div class="event ${e.type}"><div class="when">${esc(e.title)} · ${new Date(e.at).toLocaleString()}</div><pre>${esc(e.body)}</pre></div>`).join(''):'<div class="empty">No notes or SMS history stored yet.</div>';
-$('#callBtn').disabled=!l.phone;$('#sendSms').disabled=!l.phone;$('#composeEmail').disabled=!l.email}
-async function openLead(id){current=id;$('#drawerWrap').classList.add('show');$('#detailName').textContent='Loading…';$('#timeline').innerHTML='<div class="empty">Loading history…</div>';try{currentDetail=await api('/crm/leads/'+encodeURIComponent(id)+'/detail');renderDetail()}catch(e){$('#timeline').innerHTML=`<div class="notice err">${esc(e.message)}</div>`}}
-$('#closeDrawer').onclick=()=>$('#drawerWrap').classList.remove('show');$('#drawerWrap').onclick=e=>{if(e.target===$('#drawerWrap'))$('#drawerWrap').classList.remove('show')};
-$('#callBtn').onclick=()=>{const p=currentDetail?.lead?.phone;if(p)location.href='tel:'+p};$('#smsJump').onclick=()=>$('#smsBody').focus();$('#emailJump').onclick=()=>$('#emailSubject').focus();
-$('#saveInterest').onclick=async()=>{const body={product_interest:$('#productInterest').value||null,brand_interest:$('#brandInterest').value.trim()||null,model_interest:$('#modelInterest').value.trim()||null};$('#interestStatus').textContent='Saving…';try{await api('/crm/leads/'+encodeURIComponent(current)+'/interest',{method:'PATCH',body:JSON.stringify(body)});const x=leads.find(v=>v.submission_id===current);if(x)Object.assign(x,body);currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');renderDetail();render();$('#interestStatus').textContent='Saved'}catch(e){$('#interestStatus').textContent=e.message}};
-$('#saveNote').onclick=async()=>{const body=$('#noteBody').value.trim();if(!body)return;const payload={body,note_type:$('#noteType').value,quoted_price:$('#quotedPrice').value||null,financing_interest:$('#financingInterest').value||null};$('#noteStatus').textContent='Saving…';try{await api('/crm/leads/'+encodeURIComponent(current)+'/notes',{method:'POST',body:JSON.stringify(payload)});$('#noteBody').value='';$('#quotedPrice').value='';$('#financingInterest').value='';$('#noteType').value='General';$('#noteStatus').textContent='Saved';currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');renderDetail()}catch(e){$('#noteStatus').textContent=e.message}};
-$('#sendSms').onclick=async()=>{const body=$('#smsBody').value.trim(),to=currentDetail?.lead?.phone;if(!body||!to)return;$('#smsStatus').textContent='Sending…';try{await api('/crm/sms/send',{method:'POST',body:JSON.stringify({to,body,lead_submission_id:current})});$('#smsBody').value='';$('#smsStatus').textContent='Sent';currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');renderDetail()}catch(e){$('#smsStatus').textContent=e.message}};
-$('#composeEmail').onclick=()=>{const l=currentDetail?.lead;if(!l?.email)return;const subject=encodeURIComponent($('#emailSubject').value||''),body=encodeURIComponent($('#emailBody').value||'');location.href=`mailto:${encodeURIComponent(l.email)}?subject=${subject}&body=${body}`};
+function renderDetail(){
+  const l=currentDetail.lead;
+  $('#detailName').textContent=[l.first_name,l.last_name].filter(Boolean).join(' ')||'Lead';
+  $('#detailSub').textContent=l.source+' · '+l.pipeline_stage;
+  $('#contactBox').innerHTML=`<b>Contact</b><br>${esc(l.phone||'No phone')}<br>${esc(l.email||'No email')}<br><span class="small">Received ${new Date(l.received_at).toLocaleString()}</span>`;
+  const ir=interestRows(l);
+  $('#productInterest').value=l.product_interest||'';
+  $('#brandInterest').value=l.brand_interest||'';
+  $('#modelInterest').value=l.model_interest||'';
+  $('#interestBox').innerHTML=ir.length?ir.map(([k,v])=>`<div><strong>${esc(k)}:</strong> ${esc(v)}</div>`).join(''):'No additional qualification detail captured on this submission.';
+  const rows=flatten(l.payload||{}).slice(0,60);
+  $('#payloadBox').innerHTML=rows.length?rows.map(([k,v])=>`<span>${esc(k)}</span><span>${esc(v)}</span>`).join(''):'<span>No additional fields</span><span>—</span>';
+  const events=[];
+  (currentDetail.notes||[]).forEach(n=>{
+    const extras=[];
+    if(n.quoted_price!=null)extras.push('Quoted $'+Number(n.quoted_price).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}));
+    if(n.financing_interest)extras.push('Financing: '+n.financing_interest);
+    events.push({type:'note',at:n.created_at,title:(n.note_type||'Note')+' · '+(n.created_by||'Staff')+(extras.length?' · '+extras.join(' · '):''),body:n.body});
+  });
+  (currentDetail.sms||[]).forEach(m=>events.push({
+    type:m.direction==='inbound'||m.direction==='inbound-shadow'?'sms-in':'sms-out',
+    at:m.created_at,
+    title:(m.direction==='inbound'||m.direction==='inbound-shadow'?'Inbound SMS':'Outbound SMS')+' · '+(m.status||''),
+    body:m.body
+  }));
+  events.sort((a,b)=>new Date(b.at)-new Date(a.at));
+  $('#timeline').innerHTML=events.length?events.map(e=>`<div class="event ${e.type}"><div class="when">${esc(e.title)} · ${new Date(e.at).toLocaleString()}</div><pre>${esc(e.body)}</pre></div>`).join(''):'<div class="empty">No notes or SMS history stored yet.</div>';
+  $('#callBtn').disabled=!l.phone;
+  $('#sendSms').disabled=!l.phone;
+  $('#composeEmail').disabled=!l.email;
+}
+async function openLead(id){
+  current=id;
+  $('#drawerWrap').classList.add('show');
+  $('#detailName').textContent='Loading…';
+  $('#timeline').innerHTML='<div class="empty">Loading history…</div>';
+  try{
+    currentDetail=await api('/crm/leads/'+encodeURIComponent(id)+'/detail');
+    renderDetail();
+  }catch(e){
+    $('#timeline').innerHTML=`<div class="notice err">${esc(e.message)}</div>`;
+  }
+}
+$('#closeDrawer').onclick=()=>$('#drawerWrap').classList.remove('show');
+$('#drawerWrap').onclick=e=>{if(e.target===$('#drawerWrap'))$('#drawerWrap').classList.remove('show')};
+$('#callBtn').onclick=()=>{const p=currentDetail?.lead?.phone;if(p)location.href='tel:'+p};
+$('#smsJump').onclick=()=>$('#smsBody').focus();
+$('#emailJump').onclick=()=>$('#emailSubject').focus();
+$('#saveInterest').onclick=async()=>{
+  const body={product_interest:$('#productInterest').value||null,brand_interest:$('#brandInterest').value.trim()||null,model_interest:$('#modelInterest').value.trim()||null};
+  $('#interestStatus').textContent='Saving…';
+  try{
+    await api('/crm/leads/'+encodeURIComponent(current)+'/interest',{method:'PATCH',body:JSON.stringify(body)});
+    const x=leads.find(v=>v.submission_id===current);
+    if(x)Object.assign(x,body);
+    currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');
+    renderDetail();render();
+    $('#interestStatus').textContent='Saved';
+  }catch(e){$('#interestStatus').textContent=e.message}
+};
+$('#saveNote').onclick=async()=>{
+  const body=$('#noteBody').value.trim();
+  if(!body)return;
+  const payload={body,note_type:$('#noteType').value,quoted_price:$('#quotedPrice').value||null,financing_interest:$('#financingInterest').value||null};
+  $('#noteStatus').textContent='Saving…';
+  try{
+    await api('/crm/leads/'+encodeURIComponent(current)+'/notes',{method:'POST',body:JSON.stringify(payload)});
+    $('#noteBody').value='';$('#quotedPrice').value='';$('#financingInterest').value='';$('#noteType').value='General';
+    $('#noteStatus').textContent='Saved';
+    currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');
+    renderDetail();
+  }catch(e){$('#noteStatus').textContent=e.message}
+};
+$('#sendSms').onclick=async()=>{
+  const body=$('#smsBody').value.trim(),to=currentDetail?.lead?.phone;
+  if(!body||!to)return;
+  $('#smsStatus').textContent='Sending…';
+  try{
+    await api('/crm/sms/send',{method:'POST',body:JSON.stringify({to,body,lead_submission_id:current})});
+    $('#smsBody').value='';
+    $('#smsStatus').textContent='Sent';
+    currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');
+    renderDetail();
+  }catch(e){$('#smsStatus').textContent=e.message}
+};
+$('#composeEmail').onclick=()=>{
+  const l=currentDetail?.lead;if(!l?.email)return;
+  const subject=encodeURIComponent($('#emailSubject').value||''),body=encodeURIComponent($('#emailBody').value||'');
+  location.href=`mailto:${encodeURIComponent(l.email)}?subject=${subject}&body=${body}`;
+};
 
 function campaignAudience(){return filtered().filter(x=>x.phone)}
-$('#campaignBtn').onclick=()=>{const rows=campaignAudience();$('#campaignWrap').classList.add('show');$('#campaignSub').textContent=rows.length+' filtered contacts with phone numbers';$('#campaignAudience').innerHTML=rows.length?`${rows.length} contacts selected from the current filters.<br><span class="small">Product: ${esc($('#productFilter').value||'Any')} · Brand: ${esc($('#brandFilter').value||'Any')} · Model: ${esc($('#modelFilter').value||'Any')}</span>`:'No contacts match the current filters.';$('#campaignPreview').innerHTML='<div class="empty">Preview the campaign to see each personalized message.</div>'};
-$('#closeCampaign').onclick=()=>$('#campaignWrap').classList.remove('show');$('#campaignWrap').onclick=e=>{if(e.target===$('#campaignWrap'))$('#campaignWrap').classList.remove('show')};
-$('#previewCampaign').onclick=async()=>{const rows=campaignAudience(),template=$('#campaignTemplate').value.trim();if(!rows.length||!template)return;$('#campaignStatus').textContent='Building preview…';try{const p=await api('/crm/campaigns/sms/preview',{method:'POST',body:JSON.stringify({submission_ids:rows.map(x=>x.submission_id),template})});$('#campaignStatus').textContent=`${p.sendable} sendable · ${p.suppressed} suppressed`;$('#campaignPreview').innerHTML=p.recipients.map(r=>`<div class="event ${r.suppressed?'note':'sms-out'}"><div class="when">${esc(r.name||r.phone)} · ${r.suppressed?esc(r.reason||'Suppressed'):'Ready'}</div><pre>${esc(r.body)}</pre></div>`).join('')||'<div class="empty">No recipients.</div>'}catch(e){$('#campaignStatus').textContent=e.message}};
-stages.forEach(s=>$('#stage').insertAdjacentHTML('beforeend',`<option>${s}</option>`));start();
+$('#campaignBtn').onclick=()=>{
+  const rows=campaignAudience();
+  $('#campaignWrap').classList.add('show');
+  $('#campaignSub').textContent=rows.length+' filtered contacts with phone numbers';
+  $('#campaignAudience').innerHTML=rows.length?`${rows.length} contacts selected from the current filters.<br><span class="small">Product: ${esc($('#productFilter').value||'Any')} · Brand: ${esc($('#brandFilter').value||'Any')} · Model: ${esc($('#modelFilter').value||'Any')}</span>`:'No contacts match the current filters.';
+  $('#campaignPreview').innerHTML='<div class="empty">Preview the campaign to see each personalized message.</div>';
+};
+$('#closeCampaign').onclick=()=>$('#campaignWrap').classList.remove('show');
+$('#campaignWrap').onclick=e=>{if(e.target===$('#campaignWrap'))$('#campaignWrap').classList.remove('show')};
+$('#previewCampaign').onclick=async()=>{
+  const rows=campaignAudience(),template=$('#campaignTemplate').value.trim();
+  if(!rows.length||!template)return;
+  $('#campaignStatus').textContent='Building preview…';
+  try{
+    const p=await api('/crm/campaigns/sms/preview',{method:'POST',body:JSON.stringify({submission_ids:rows.map(x=>x.submission_id),template})});
+    $('#campaignStatus').textContent=`${p.sendable} sendable · ${p.suppressed} suppressed`;
+    $('#campaignPreview').innerHTML=p.recipients.map(r=>`<div class="event ${r.suppressed?'note':'sms-out'}"><div class="when">${esc(r.name||r.phone)} · ${r.suppressed?esc(r.reason||'Suppressed'):'Ready'}</div><pre>${esc(r.body)}</pre></div>`).join('')||'<div class="empty">No recipients.</div>';
+  }catch(e){$('#campaignStatus').textContent=e.message}
+};
+stages.forEach(s=>$('#stage').insertAdjacentHTML('beforeend',`<option>${s}</option>`));
+start();
 </script>
-</body></html>+Number(n.quoted_price).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}));if(n.financing_interest)extras.push('Financing: '+n.financing_interest);events.push({type:'note',at:n.created_at,title:(n.note_type||'Note')+' · '+(n.created_by||'Staff')+(extras.length?' · '+extras.join(' · '):''),body:n.body})});(currentDetail.sms||[]).forEach(m=>events.push({type:m.direction==='inbound'||m.direction==='inbound-shadow'?'sms-in':'sms-out',at:m.created_at,title:(m.direction==='inbound'||m.direction==='inbound-shadow'?'Inbound SMS':'Outbound SMS')+' · '+(m.status||''),body:m.body}));
-events.sort((a,b)=>new Date(b.at)-new Date(a.at));$('#timeline').innerHTML=events.length?events.map(e=>`<div class="event ${e.type}"><div class="when">${esc(e.title)} · ${new Date(e.at).toLocaleString()}</div><pre>${esc(e.body)}</pre></div>`).join(''):'<div class="empty">No notes or SMS history stored yet.</div>';
-$('#callBtn').disabled=!l.phone;$('#sendSms').disabled=!l.phone;$('#composeEmail').disabled=!l.email}
-async function openLead(id){current=id;$('#drawerWrap').classList.add('show');$('#detailName').textContent='Loading…';$('#timeline').innerHTML='<div class="empty">Loading history…</div>';try{currentDetail=await api('/crm/leads/'+encodeURIComponent(id)+'/detail');renderDetail()}catch(e){$('#timeline').innerHTML=`<div class="notice err">${esc(e.message)}</div>`}}
-$('#closeDrawer').onclick=()=>$('#drawerWrap').classList.remove('show');$('#drawerWrap').onclick=e=>{if(e.target===$('#drawerWrap'))$('#drawerWrap').classList.remove('show')};
-$('#callBtn').onclick=()=>{const p=currentDetail?.lead?.phone;if(p)location.href='tel:'+p};$('#smsJump').onclick=()=>$('#smsBody').focus();$('#emailJump').onclick=()=>$('#emailSubject').focus();
-$('#saveInterest').onclick=async()=>{const body={product_interest:$('#productInterest').value||null,brand_interest:$('#brandInterest').value.trim()||null,model_interest:$('#modelInterest').value.trim()||null};$('#interestStatus').textContent='Saving…';try{await api('/crm/leads/'+encodeURIComponent(current)+'/interest',{method:'PATCH',body:JSON.stringify(body)});const x=leads.find(v=>v.submission_id===current);if(x)Object.assign(x,body);currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');renderDetail();render();$('#interestStatus').textContent='Saved'}catch(e){$('#interestStatus').textContent=e.message}};
-$('#saveNote').onclick=async()=>{const body=$('#noteBody').value.trim();if(!body)return;$('#noteStatus').textContent='Saving…';try{await api('/crm/leads/'+encodeURIComponent(current)+'/notes',{method:'POST',body:JSON.stringify({body})});$('#noteBody').value='';$('#noteStatus').textContent='Saved';currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');renderDetail()}catch(e){$('#noteStatus').textContent=e.message}};
-$('#sendSms').onclick=async()=>{const body=$('#smsBody').value.trim(),to=currentDetail?.lead?.phone;if(!body||!to)return;$('#smsStatus').textContent='Sending…';try{await api('/crm/sms/send',{method:'POST',body:JSON.stringify({to,body,lead_submission_id:current})});$('#smsBody').value='';$('#smsStatus').textContent='Sent';currentDetail=await api('/crm/leads/'+encodeURIComponent(current)+'/detail');renderDetail()}catch(e){$('#smsStatus').textContent=e.message}};
-$('#composeEmail').onclick=()=>{const l=currentDetail?.lead;if(!l?.email)return;const subject=encodeURIComponent($('#emailSubject').value||''),body=encodeURIComponent($('#emailBody').value||'');location.href=`mailto:${encodeURIComponent(l.email)}?subject=${subject}&body=${body}`};
-stages.forEach(s=>$('#stage').insertAdjacentHTML('beforeend',`<option>${s}</option>`));start();
-</script>
-</body></html>
+</body>
+</html>
