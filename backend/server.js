@@ -405,6 +405,41 @@ app.get('/internal/crm/highlevel-conversations',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 
+app.get('/internal/crm/highlevel-conversation-messages',async(req,res)=>{
+  try{
+    const expected=String(process.env.CRM_IMPORT_SECRET||'').trim();
+    if(!expected||String(req.get('x-htfo-import-secret')||'').trim()!==expected)return res.status(403).json({error:'Forbidden'});
+    requireEnv(['GHL_API_TOKEN']);
+    const conversationId=cleanText(req.query.conversationId,100);
+    if(!conversationId)return res.status(400).json({error:'conversationId is required'});
+    const u=new URL(ghlBase+'/conversations/'+encodeURIComponent(conversationId)+'/messages');
+    u.searchParams.set('limit','100');
+    if(req.query.lastMessageId)u.searchParams.set('lastMessageId',String(req.query.lastMessageId));
+    const r=await fetch(u,{headers:ghlHeaders()});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)return res.status(r.status).json({error:j?.message||j?.error||'HighLevel message export failed'});
+    const raw=j.messages?.messages||j.messages||j.data||[];
+    res.json({messages:Array.isArray(raw)?raw:[],meta:j.meta||j.messages?.meta||{}});
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
+app.get('/internal/crm/highlevel-contact-notes',async(req,res)=>{
+  try{
+    const expected=String(process.env.CRM_IMPORT_SECRET||'').trim();
+    if(!expected||String(req.get('x-htfo-import-secret')||'').trim()!==expected)return res.status(403).json({error:'Forbidden'});
+    requireEnv(['GHL_API_TOKEN']);
+    const contactId=cleanText(req.query.contactId,100);
+    if(!contactId)return res.status(400).json({error:'contactId is required'});
+    const u=new URL(ghlBase+'/contacts/'+encodeURIComponent(contactId)+'/notes');
+    u.searchParams.set('limit','100');
+    if(req.query.offset)u.searchParams.set('offset',String(req.query.offset));
+    const r=await fetch(u,{headers:ghlHeaders()});
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok)return res.status(r.status).json({error:j?.message||j?.error||'HighLevel notes export failed'});
+    res.json({notes:Array.isArray(j.notes)?j.notes:(Array.isArray(j.data)?j.data:[]),meta:j.meta||{}});
+  }catch(e){res.status(500).json({error:e.message})}
+});
+
 app.post('/lead',async(req,res)=>{
   const submissionId=cleanText(req.body?.submissionId,100)||randomUUID();
   try{
