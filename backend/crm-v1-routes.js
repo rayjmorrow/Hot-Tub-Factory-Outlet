@@ -21,6 +21,7 @@ async function ensure(){
     ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS showroom TEXT;
     ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS next_follow_up_at TIMESTAMPTZ;
     ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS last_contacted_at TIMESTAMPTZ;
+    ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ;
     ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS has_opportunity BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS ghl_pipeline_id TEXT;
     ALTER TABLE crm_website_leads ADD COLUMN IF NOT EXISTS ghl_pipeline_stage_id TEXT;
