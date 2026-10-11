@@ -32,6 +32,7 @@ import {initServicePaymentGuard} from './service-payment-guard.js';
 import crmRoutes from './crm-routes.js';
 import crmV1Routes from './crm-v1-routes.js';
 import crmHistoryRoutes from './crm-history-routes.js';
+import crmSchedulingRoutes,{runCrmScheduledMessages} from './crm-scheduling-routes.js';
 
 const app=express();
 const port=Number(process.env.PORT||process.env.SERVICE_PORT||8790);
@@ -102,6 +103,7 @@ app.use('/api/service',customerImportRoutes);
 app.use('/api/service',crmRoutes);
 app.use('/api/service',crmV1Routes);
 app.use('/api/service',crmHistoryRoutes);
+app.use('/api/service',crmSchedulingRoutes);
 
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
@@ -135,9 +137,11 @@ try{
   await ensureBootstrapAdmin();
   await q("UPDATE service_users SET role='technician' WHERE active=true AND (lower(username)='bill' OR lower(display_name)='bill' OR lower(display_name) LIKE 'bill %')");
   await runFulfillmentAutomation();
+  await runCrmScheduledMessages();
   await promoteLatestStagedCustomers();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
   setInterval(()=>runFulfillmentAutomation().catch(e=>console.error('Fulfillment automation error:',e)),60*60*1000).unref();
+  setInterval(()=>runCrmScheduledMessages().catch(e=>console.error('CRM scheduled-message error:',e)),60*1000).unref();
 }catch(err){
   console.error('Unable to start HTFO service backend:',err);
   process.exit(1);
