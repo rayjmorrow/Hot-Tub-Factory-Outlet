@@ -40,7 +40,56 @@ function workCard(w){const isDelivery=String(w.job_type||'').toLowerCase()==='de
 let searchTimer;$('#customerSearch').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadCustomers,250)};
 async function loadCustomers(){const rows=await api('/customers?q='+encodeURIComponent($('#customerSearch').value||''));$('#customerList').innerHTML=rows.map(c=>`<button class="item customer-row" data-id="${c.id}" style="text-align:left;color:inherit;background:white"><b>${esc(customerName(c))}</b><span>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</span><span class="muted">${esc([c.street,c.city,c.state,c.zip].filter(Boolean).join(', '))}</span></button>`).join('')||'<p class="muted">No customers found.</p>';$$('.customer-row').forEach(b=>b.onclick=()=>loadCustomer(b.dataset.id))}
 function productCard(e,history){return `<div class="equipment-card"><div class="row between wrap"><div><h3>${esc(e.equipment_type)} · ${esc([e.brand,e.model].filter(Boolean).join(' ')||'Model not recorded')}</h3><div class="muted">Serial: <b>${esc(e.serial_number||'—')}</b></div></div><button data-service-equipment="${e.id}">Create Service Call</button></div><div class="equipment-meta"><span>Installed/Purchased: ${esc(e.install_date||'—')}</span><span>Warranty through: ${esc(e.warranty_expires||'—')}</span>${e.location_notes?`<span>Location: ${esc(e.location_notes)}</span>`:''}</div>${e.notes?`<p>${esc(e.notes)}</p>`:''}<details><summary>Service history for this product (${history.length})</summary>${history.length?history.map(workCard).join(''):'<p class="muted">No service history for this product yet.</p>'}</details></div>`}
-async function loadCustomer(id){activeCustomerId=String(id);const x=await api('/customers/'+id),c=x.customer;const unassigned=x.workOrders.filter(w=>!w.equipment_id);$('#customerDetail').innerHTML=`<div class="customer-toolbar row between wrap"><div><h2>${esc(customerName(c))}</h2><div>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</div></div><div class="row wrap"><button class="secondary" id="addEquipmentBtn">+ Add Product</button><button class="secondary" id="customerDeliveryBtn">+ Schedule Delivery</button><button id="customerServiceBtn">+ Create Service Call</button></div></div><div class="detail-grid"><div class="card"><h3>Customer Information</h3><p>${esc([c.street,c.street2,c.city,c.state,c.zip].filter(Boolean).join(', '))}</p>${c.notes?`<p>${esc(c.notes)}</p>`:''}<h3>Products / Equipment Owned</h3>${x.equipment.length?x.equipment.map(e=>productCard(e,x.workOrders.filter(w=>String(w.equipment_id)===String(e.id)))).join(''):'<p class="muted">No equipment recorded yet. Add the product once and its model, serial number and service history stay with this customer.</p>'}</div><div class="card"><h3>Complete Service History</h3>${x.workOrders.length?x.workOrders.map(workCard).join(''):'<p class="muted">No service calls yet.</p>'}${unassigned.length?`<p class="muted">${unassigned.length} service call(s) are not tied to a specific product.</p>`:''}<h3>Invoices</h3>${x.invoices.map(i=>`<div class="item"><b>${esc(i.invoice_number)}</b><span>${money(i.total_amount)} · ${esc(i.status)}</span><span class="muted">Paid ${money(i.amount_paid)} · Balance ${money(Number(i.total_amount)-Number(i.amount_paid))}</span></div>`).join('')||'<p class="muted">No invoices yet.</p>'}</div></div>`;$('#addEquipmentBtn').onclick=()=>openEquipmentDialog(id);$('#customerDeliveryBtn').onclick=()=>openWorkDialog(id,'','delivery');$('#customerServiceBtn').onclick=()=>openWorkDialog(id,'','service');$$('[data-service-equipment]').forEach(b=>b.onclick=()=>openWorkDialog(id,b.dataset.serviceEquipment,'service'));applyRoleUi()}
+async function loadServiceConversation(id){
+  const box=$('#serviceConversation'),status=$('#serviceMessageStatus'),number=$('#serviceMessageNumber');
+  if(!box)return;
+  try{
+    const data=await api('/customers/'+id+'/messages');
+    if(number)number.textContent=data.service_number?('Service number: '+data.service_number):'Service number pending activation';
+    const rows=data.messages||[];
+    box.innerHTML=rows.length?rows.map(m=>{
+      const inbound=m.direction==='inbound',media=Array.isArray(m.media)?m.media:[];
+      return `<div class="service-message ${inbound?'in':'out'}"><div>${esc(m.body||'')}</div>${media.map(x=>`<div data-service-media data-customer="${id}" data-message="${esc(m.twilio_sid)}" data-media="${esc(x.sid)}" data-type="${esc(x.content_type||'')}"><span class="muted">Loading attachment…</span></div>`).join('')}<div class="meta">${inbound?'Customer':'HTFO Service'} · ${dt(m.created_at)}${m.status?' · '+esc(m.status):''}</div></div>`;
+    }).join(''):'<p class="muted">No service text messages yet.</p>';
+    box.scrollTop=box.scrollHeight;
+    for(const holder of document.querySelectorAll('[data-service-media]')){
+      try{
+        const r=await fetch(API+'/customers/'+encodeURIComponent(holder.dataset.customer)+'/messages/media/'+encodeURIComponent(holder.dataset.message)+'/'+encodeURIComponent(holder.dataset.media),{headers:{Authorization:'Bearer '+token}});
+        if(!r.ok)throw new Error('Unable to load attachment');
+        const blob=await r.blob(),url=URL.createObjectURL(blob),type=holder.dataset.type||blob.type||'';
+        holder.innerHTML=type.startsWith('image/')?`<img src="${url}" alt="Customer service photo">`:`<a href="${url}" target="_blank" rel="noopener">Open attachment</a>`;
+      }catch{holder.innerHTML='<span class="muted">Attachment unavailable</span>'}
+    }
+    if(status)status.textContent='';
+  }catch(e){box.innerHTML='<p class="error">'+esc(e.message)+'</p>'}
+}
+async function sendServiceMessage(id){
+  const input=$('#serviceMessageBody'),status=$('#serviceMessageStatus');
+  if(!input)return;
+  const body=input.value.trim();
+  if(!body)return;
+  status.textContent='Sending…';
+  try{
+    await api('/customers/'+id+'/messages',{method:'POST',body:JSON.stringify({body})});
+    input.value='';
+    status.textContent='Sent';
+    await loadServiceConversation(id);
+  }catch(e){status.textContent=e.message}
+}
+async function loadCustomer(id){
+  activeCustomerId=String(id);
+  const x=await api('/customers/'+id),c=x.customer;
+  const unassigned=x.workOrders.filter(w=>!w.equipment_id);
+  $('#customerDetail').innerHTML=`<div class="customer-toolbar row between wrap"><div><h2>${esc(customerName(c))}</h2><div>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</div></div><div class="row wrap"><button class="secondary" id="addEquipmentBtn">+ Add Product</button><button class="secondary" id="customerDeliveryBtn">+ Schedule Delivery</button><button id="customerServiceBtn">+ Create Service Call</button></div></div><div class="detail-grid"><div class="card"><h3>Customer Information</h3><p>${esc([c.street,c.street2,c.city,c.state,c.zip].filter(Boolean).join(', '))}</p>${c.notes?`<p>${esc(c.notes)}</p>`:''}<h3>Products / Equipment Owned</h3>${x.equipment.length?x.equipment.map(e=>productCard(e,x.workOrders.filter(w=>String(w.equipment_id)===String(e.id)))).join(''):'<p class="muted">No equipment recorded yet. Add the product once and its model, serial number and service history stay with this customer.</p>'}</div><div class="card"><h3>Complete Service History</h3>${x.workOrders.length?x.workOrders.map(workCard).join(''):'<p class="muted">No service calls yet.</p>'}${unassigned.length?`<p class="muted">${unassigned.length} service call(s) are not tied to a specific product.</p>`:''}<h3>Invoices</h3>${x.invoices.map(i=>`<div class="item"><b>${esc(i.invoice_number)}</b><span>${money(i.total_amount)} · ${esc(i.status)}</span><span class="muted">Paid ${money(i.amount_paid)} · Balance ${money(Number(i.total_amount)-Number(i.amount_paid))}</span></div>`).join('')||'<p class="muted">No invoices yet.</p>'}</div></div><div class="card" style="margin-top:16px"><div class="service-message-head"><div><h3 style="margin:0">Service Text Conversation</h3><p class="muted" id="serviceMessageNumber" style="margin:.3rem 0 0">Service number pending activation</p></div><button type="button" class="secondary" id="refreshServiceMessages">Refresh Messages</button></div><div class="service-conversation" id="serviceConversation"><p class="muted">Loading messages…</p></div><div class="service-message-compose"><textarea id="serviceMessageBody" placeholder="Type a service text to this customer…"></textarea><button type="button" id="sendServiceMessageBtn">Send Text</button></div><div class="muted" id="serviceMessageStatus"></div></div>`;
+  $('#addEquipmentBtn').onclick=()=>openEquipmentDialog(id);
+  $('#customerDeliveryBtn').onclick=()=>openWorkDialog(id,'','delivery');
+  $('#customerServiceBtn').onclick=()=>openWorkDialog(id,'','service');
+  $$('[data-service-equipment]').forEach(b=>b.onclick=()=>openWorkDialog(id,b.dataset.serviceEquipment,'service'));
+  $('#refreshServiceMessages').onclick=()=>loadServiceConversation(id);
+  $('#sendServiceMessageBtn').onclick=()=>sendServiceMessage(id);
+  loadServiceConversation(id);
+  applyRoleUi();
+}
 $('#newCustomerBtn').onclick=()=>$('#customerDialog').showModal();$('#saveCustomer').onclick=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData($('#customerForm')));const c=await api('/customers',{method:'POST',body:JSON.stringify(b)});$('#customerDialog').close();$('#customerForm').reset();await loadCustomers();await loadCustomer(c.id)};
 function openEquipmentDialog(customerId){$('#equipmentForm').reset();$('#equipmentCustomerId').value=customerId;$('#equipmentDialog').showModal()}
 $('#saveEquipment').onclick=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData($('#equipmentForm')));if(!b.customer_id)return;await api('/equipment',{method:'POST',body:JSON.stringify(b)});$('#equipmentDialog').close();await loadCustomer(b.customer_id)};
