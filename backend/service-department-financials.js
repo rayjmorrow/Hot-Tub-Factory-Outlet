@@ -7,7 +7,13 @@ const clean=v=>v==null?null:String(v).trim();
 const num=v=>Math.round((Number(v||0)+Number.EPSILON)*100)/100;
 function secret(){if(!process.env.SERVICE_JWT_SECRET)throw new Error('SERVICE_JWT_SECRET is required');return process.env.SERVICE_JWT_SECRET}
 function auth(req,res,next){try{const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!raw)return res.status(401).json({error:'Login required'});req.user=jwt.verify(raw,secret());next()}catch{return res.status(401).json({error:'Session expired or invalid'})}}
-function manager(req,res,next){if(!['admin','owner','manager','service_manager'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Service manager permission required'});next()}
+function financeOwner(req,res,next){
+  const allowed=String(process.env.SERVICE_FINANCIALS_OWNER_USERS||'ray,ray morrow,raymond morrow').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+  const ids=[req.user?.username,req.user?.name].map(x=>String(x||'').trim().toLowerCase()).filter(Boolean);
+  const isOwner=String(req.user?.role||'').toLowerCase()==='owner'||ids.some(x=>allowed.includes(x));
+  if(!isOwner)return res.status(403).json({error:'Owner-only financial access'});
+  next();
+}
 
 async function ensure(){
   await q(`CREATE TABLE IF NOT EXISTS service_department_expenses(
@@ -32,7 +38,7 @@ function period(req){
   return{from,to};
 }
 
-router.get('/financials/summary',auth,async(req,res)=>{try{
+router.get('/financials/summary',auth,financeOwner,async(req,res)=>{try{
   await ensure();const {from,to}=period(req);
   const [ar,warranty,collections,delivery,expenses,parts,wo]=await Promise.all([
     q(`SELECT coalesce(sum(greatest(total_amount-amount_paid,0)),0)::numeric outstanding,
@@ -66,7 +72,7 @@ router.get('/financials/summary',auth,async(req,res)=>{try{
   res.json({period:{from,to},collections:{customer_collected:customerCollected,warranty_credits_received:warrantyPaid,delivery_internal_revenue:deliveryRevenue,delivery_rate:400,total_revenue:revenue},receivables:{customer_ar:num(ar.rows[0].outstanding),customer_open_invoices:ar.rows[0].open_invoices,customer_over_30:num(ar.rows[0].over_30),warranty_receivable:num(warranty.rows[0].outstanding),warranty_open_claims:warranty.rows[0].open_claims,total_open:num(num(ar.rows[0].outstanding)+num(warranty.rows[0].outstanding))},costs:{payroll,parts_cost:partsCost,other,total:costs},profit_loss:{net:profit,self_sustaining:profit>=0},activity:{completed_service:wo.rows[0].completed_service,completed_deliveries:wo.rows[0].completed_delivery}});
 }catch(e){res.status(500).json({error:e.message})}});
 
-router.get('/financials/open-balances',auth,async(req,res)=>{try{
+router.get('/financials/open-balances',auth,financeOwner,async(req,res)=>{try{
   const rows=(await q(`SELECT i.id invoice_id,i.invoice_number,i.total_amount,i.amount_paid,(i.total_amount-i.amount_paid) balance,i.created_at,
     greatest(0,(CURRENT_DATE-i.created_at::date))::int age_days,w.id work_order_id,w.work_order_number,w.status work_order_status,
     concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.email,
@@ -79,7 +85,7 @@ router.get('/financials/open-balances',auth,async(req,res)=>{try{
   res.json(rows);
 }catch(e){res.status(500).json({error:e.message})}});
 
-router.get('/financials/work-order-history',auth,async(req,res)=>{try{
+router.get('/financials/work-order-history',auth,financeOwner,async(req,res)=>{try{
   const {from,to}=period(req);
   const rows=(await q(`SELECT w.id,w.work_order_number,w.job_type,w.status,w.warranty,w.scheduled_start,w.completed_at,w.assigned_to,
     concat_ws(' ',c.first_name,c.last_name) customer_name,e.brand,e.model,e.serial_number,
@@ -97,7 +103,7 @@ router.get('/financials/work-order-history',auth,async(req,res)=>{try{
   res.json(rows);
 }catch(e){res.status(500).json({error:e.message})}});
 
-router.get('/financials/warranty-receivables',auth,async(req,res)=>{try{
+router.get('/financials/warranty-receivables',auth,financeOwner,async(req,res)=>{try{
   const rows=(await q(`SELECT wc.*,w.work_order_number,concat_ws(' ',c.first_name,c.last_name) customer_name,
     (wc.total_claimed-wc.total_paid) outstanding,
     greatest(0,(CURRENT_DATE-coalesce(wc.submitted_at,wc.created_at)::date))::int age_days
@@ -106,8 +112,8 @@ router.get('/financials/warranty-receivables',auth,async(req,res)=>{try{
   res.json(rows);
 }catch(e){res.status(500).json({error:e.message})}});
 
-router.get('/financials/expenses',auth,manager,async(req,res)=>{try{await ensure();const {from,to}=period(req);res.json((await q('SELECT * FROM service_department_expenses WHERE expense_date BETWEEN $1::date AND $2::date ORDER BY expense_date DESC,id DESC',[from,to])).rows)}catch(e){res.status(500).json({error:e.message})}});
-router.post('/financials/expenses',auth,manager,async(req,res)=>{try{
+router.get('/financials/expenses',auth,financeOwner,async(req,res)=>{try{await ensure();const {from,to}=period(req);res.json((await q('SELECT * FROM service_department_expenses WHERE expense_date BETWEEN $1::date AND $2::date ORDER BY expense_date DESC,id DESC',[from,to])).rows)}catch(e){res.status(500).json({error:e.message})}});
+router.post('/financials/expenses',auth,financeOwner,async(req,res)=>{try{
   await ensure();const b=req.body||{},amount=num(b.amount),description=clean(b.description);
   if(amount<=0||!description)return res.status(400).json({error:'Description and amount are required'});
   const r=await q(`INSERT INTO service_department_expenses(expense_date,expense_type,employee_name,description,amount,source,reference,notes,created_by)
@@ -115,7 +121,7 @@ router.post('/financials/expenses',auth,manager,async(req,res)=>{try{
   res.status(201).json(r.rows[0]);
 }catch(e){res.status(500).json({error:e.message})}});
 
-router.post('/financials/expenses/import',auth,manager,async(req,res)=>{try{
+router.post('/financials/expenses/import',auth,financeOwner,async(req,res)=>{try{
   await ensure();const rows=Array.isArray(req.body?.rows)?req.body.rows:[];let inserted=0,skipped=0;
   for(const b of rows){const amount=num(b.amount),description=clean(b.description)||clean(b.memo)||'Payroll / service expense';if(amount<=0){skipped++;continue}
     await q(`INSERT INTO service_department_expenses(expense_date,expense_type,employee_name,description,amount,source,reference,notes,created_by)
