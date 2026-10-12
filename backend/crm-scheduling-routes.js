@@ -24,11 +24,14 @@ function salespersonEmail(name){
   if(n.startsWith('ray'))return 'ray@hottubfactoryoutlet.com';
   return String(process.env.CRM_FROM_EMAIL||process.env.FULFILLMENT_FROM_EMAIL||'').trim();
 }
-async function sendEmail(to,subject,body,name,salesperson){
+async function sendEmail(to,subject,body,name,salesperson,submissionId){
   const key=String(process.env.BREVO_API_KEY||'').trim(),from=salespersonEmail(salesperson);
   if(!key||!from)throw new Error('CRM email sender is not configured');
   const senderName=String(salesperson||process.env.CRM_FROM_NAME||'Hot Tub Factory Outlet');
-  const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify({sender:{email:from,name:senderName},replyTo:{email:from,name:senderName},to:[{email:to,name:name||to}],subject,textContent:body})});
+  const replyDomain=String(process.env.CRM_REPLY_DOMAIN||'reply.hottubfactoryoutlet.com').trim();
+  const safeUser=String(salesperson||'sales').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,20)||'sales';
+  const replyAddress=submissionId?`crm+${submissionId}+${safeUser}@${replyDomain}`:from;
+  const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify({sender:{email:from,name:senderName},replyTo:{email:replyAddress,name:senderName},to:[{email:to,name:name||to}],subject,textContent:body,tags:submissionId?[`htfo-crm-${submissionId}`]:undefined})});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.message||('Brevo returned '+r.status));
   return {...j,from};
@@ -47,8 +50,8 @@ export async function runCrmScheduledMessages(){
         await q("UPDATE crm_scheduled_messages SET status='sent',provider_id=$2,sent_at=NOW(),updated_at=NOW() WHERE id=$1",[m.id,x.sid]);
       }else{
         if(!m.email)throw new Error('Lead has no email address');
-        const x=await sendEmail(m.email,m.subject||'Hot Tub Factory Outlet',m.body,[m.first_name,m.last_name].filter(Boolean).join(' '),m.assigned_to||m.created_by);
-        await q("INSERT INTO crm_email_messages(submission_id,to_email,subject,body,provider_id,status,created_by) VALUES($1,$2,$3,$4,$5,'sent',$6)",[m.submission_id,m.email,m.subject||'Hot Tub Factory Outlet',m.body,clean(x.messageId),m.created_by]);
+        const x=await sendEmail(m.email,m.subject||'Hot Tub Factory Outlet',m.body,[m.first_name,m.last_name].filter(Boolean).join(' '),m.assigned_to||m.created_by,m.submission_id);
+        await q("INSERT INTO crm_email_messages(submission_id,to_email,subject,body,provider_id,status,created_by,direction,from_email) VALUES($1,$2,$3,$4,$5,'sent',$6,'outbound',$7)",[m.submission_id,m.email,m.subject||'Hot Tub Factory Outlet',m.body,clean(x.messageId),m.created_by,clean(x.from)]);
         await q("UPDATE crm_scheduled_messages SET status='sent',provider_id=$2,sent_at=NOW(),updated_at=NOW() WHERE id=$1",[m.id,clean(x.messageId)]);
       }
       await q("UPDATE crm_website_leads SET last_contacted_at=NOW(),last_activity_at=NOW(),updated_at=NOW() WHERE submission_id=$1",[m.submission_id]);sent++;
