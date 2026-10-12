@@ -120,6 +120,7 @@ $('#drawerWrap').onclick=e=>{if(e.target===$('#drawerWrap'))$('#drawerWrap').cla
 $('#callBtn').onclick=()=>{const p=currentDetail?.lead?.phone;if(p)location.href='tel:'+p};
 $('#smsJump').onclick=()=>$('#smsBody').focus();
 $('#emailJump').onclick=()=>$('#emailSubject').focus();
+$('#deleteLead').onclick=async()=>{const l=currentDetail&&currentDetail.lead;if(!l)return;const name=[l.first_name,l.last_name].filter(Boolean).join(' ')||'this lead';if(!confirm('Delete '+name+' from the active CRM? This hides the lead and cancels open tasks, while keeping an audit record.'))return;try{await api('/crm/v1/leads/'+encodeURIComponent(current),{method:'DELETE'});$('#drawerWrap').classList.remove('show');current=null;currentDetail=null;await load()}catch(e){alert(e.message)}};
 $('#saveInterest').onclick=async()=>{
   const body={product_interest:$('#productInterest').value||null,brand_interest:$('#brandInterest').value.trim()||null,model_interest:$('#modelInterest').value.trim()||null};
   $('#interestStatus').textContent='Saving…';
