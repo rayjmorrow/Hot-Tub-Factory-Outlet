@@ -9,6 +9,7 @@ const digits=v=>String(v||'').replace(/\D/g,'');
 const sid=()=>String(process.env.TWILIO_ACCOUNT_SID||'').trim();
 const token=()=>String(process.env.TWILIO_AUTH_TOKEN||'').trim();
 const serviceNumber=()=>String(process.env.TWILIO_SERVICE_PHONE_NUMBER||'').trim();
+const managerPhone=()=>String(process.env.SERVICE_MANAGER_SMS_TO||process.env.SERVICE_MANAGER_PHONE||'').trim();
 const jwtSecret=()=>{if(!process.env.SERVICE_JWT_SECRET)throw new Error('SERVICE_JWT_SECRET is required');return process.env.SERVICE_JWT_SECRET};
 function auth(req,res,next){try{const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!raw)return res.status(401).json({error:'Login required'});req.user=jwt.verify(raw,jwtSecret());next()}catch{return res.status(401).json({error:'Session expired or invalid'})}}
 async function ensure(){
@@ -25,8 +26,27 @@ async function ensure(){
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  await q('ALTER TABLE service_customer_messages ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ');
   await q('CREATE INDEX IF NOT EXISTS idx_service_customer_messages_customer ON service_customer_messages(customer_id,created_at)');
 }
+async function sendManagerNotification(messageRow){
+  const to=managerPhone();if(!to||!serviceNumber()||!sid()||!token())return false;
+  const customer=messageRow.customer_id?(await q("SELECT concat_ws(' ',first_name,last_name) name,phone FROM service_customers WHERE id=$1",[messageRow.customer_id])).rows[0]:null;
+  const media=Array.isArray(messageRow.media)?messageRow.media:[];
+  const who=customer?.name||messageRow.from_number||'Unknown customer';
+  const body=String(messageRow.body||'').trim();
+  const note=`New HTFO Service text from ${who} (${customer?.phone||messageRow.from_number||'unknown'}): ${body||'[no text]'}${media.length?` · ${media.length} attachment(s) in customer file`:''}`;
+  const form=new URLSearchParams({To:to,From:serviceNumber(),Body:note.slice(0,1500)});
+  try{await twilioJson(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid())}/Messages.json`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});return true}catch{return false}
+}
+async function notifyUnnotifiedInbound(){
+  if(!managerPhone())return 0;
+  await ensure();
+  const rows=(await q("SELECT * FROM service_customer_messages WHERE direction='inbound' AND notified_at IS NULL ORDER BY created_at ASC LIMIT 50")).rows;
+  let n=0;for(const row of rows){if(await sendManagerNotification(row)){await q('UPDATE service_customer_messages SET notified_at=NOW(),updated_at=NOW() WHERE id=$1',[row.id]);n++}}
+  return n;
+}
+
 async function twilioJson(url,opts={}){
   const r=await fetch(url,{...opts,headers:{Authorization:'Basic '+Buffer.from(sid()+':'+token()).toString('base64'),...(opts.headers||{})}});
   const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('Twilio returned '+r.status));return j;
@@ -41,11 +61,12 @@ export async function syncServiceTwilioMessages(days=7,limit=500){
   while(url&&seen<limit){const j=await twilioJson(url);for(const m of (j.messages||[])){if(seen++>=limit)break;const from=String(m.from||''),to=String(m.to||''),owned=serviceNumber();if(from!==owned&&to!==owned)continue;const direction=to===owned?'inbound':'outbound',peer=direction==='inbound'?from:to,cust=await customerForPhone(peer),media=Number(m.num_media||0)>0?await mediaForMessage(String(m.sid||'')):[];
     await q(`INSERT INTO service_customer_messages(customer_id,twilio_sid,direction,from_number,to_number,body,status,media,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,COALESCE($9::timestamptz,NOW())) ON CONFLICT(twilio_sid) DO UPDATE SET customer_id=COALESCE(service_customer_messages.customer_id,EXCLUDED.customer_id),status=EXCLUDED.status,body=EXCLUDED.body,media=CASE WHEN EXCLUDED.media='[]'::jsonb THEN service_customer_messages.media ELSE EXCLUDED.media END,updated_at=NOW()`,[cust?.id||null,String(m.sid||''),direction,from,to,String(m.body||''),String(m.status||''),JSON.stringify(media),m.date_sent||m.date_created||null]);upserted++;
   }url=j.next_page_uri?('https://api.twilio.com'+j.next_page_uri):''}
+  await notifyUnnotifiedInbound().catch(()=>{});
   return{seen,upserted,days};
 }
 function signatureOk(req){const t=token();if(!t)return false;const supplied=String(req.get('X-Twilio-Signature')||'');const proto=String(req.get('X-Forwarded-Proto')||req.protocol||'https').split(',')[0].trim(),host=req.get('host'),url=proto+'://'+host+req.originalUrl,params=req.body&&typeof req.body==='object'?req.body:{};const payload=Object.keys(params).sort().reduce((s,k)=>s+k+String(params[k]??''),url),expected=crypto.createHmac('sha1',t).update(payload).digest('base64');try{return crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(expected))}catch{return false}}
 
-router.post('/service-messaging/twilio/incoming',async(req,res)=>{try{if(!signatureOk(req))return res.status(403).send('Invalid Twilio signature');await ensure();const b=req.body||{},from=clean(b.From),to=clean(b.To),messageSid=clean(b.MessageSid),cust=await customerForPhone(from);const media=[];for(let i=0;i<Number(b.NumMedia||0);i++){const url=clean(b['MediaUrl'+i]),ct=clean(b['MediaContentType'+i]),ms=url?url.split('/').pop():null;if(ms)media.push({sid:ms,content_type:ct})}await q(`INSERT INTO service_customer_messages(customer_id,twilio_sid,direction,from_number,to_number,body,status,media) VALUES($1,$2,'inbound',$3,$4,$5,$6,$7::jsonb) ON CONFLICT(twilio_sid) DO UPDATE SET customer_id=COALESCE(service_customer_messages.customer_id,EXCLUDED.customer_id),body=EXCLUDED.body,media=EXCLUDED.media,status=EXCLUDED.status,updated_at=NOW()`,[cust?.id||null,messageSid,from,to,clean(b.Body),clean(b.SmsStatus)||'received',JSON.stringify(media)]);res.type('text/xml').send('<Response></Response>')}catch(e){res.status(500).send('Service message ingest failed')}});
+router.post('/service-messaging/twilio/incoming',async(req,res)=>{try{if(!signatureOk(req))return res.status(403).send('Invalid Twilio signature');await ensure();const b=req.body||{},from=clean(b.From),to=clean(b.To),messageSid=clean(b.MessageSid),cust=await customerForPhone(from);const media=[];for(let i=0;i<Number(b.NumMedia||0);i++){const url=clean(b['MediaUrl'+i]),ct=clean(b['MediaContentType'+i]),ms=url?url.split('/').pop():null;if(ms)media.push({sid:ms,content_type:ct})}const saved=(await q(`INSERT INTO service_customer_messages(customer_id,twilio_sid,direction,from_number,to_number,body,status,media) VALUES($1,$2,'inbound',$3,$4,$5,$6,$7::jsonb) ON CONFLICT(twilio_sid) DO UPDATE SET customer_id=COALESCE(service_customer_messages.customer_id,EXCLUDED.customer_id),body=EXCLUDED.body,media=EXCLUDED.media,status=EXCLUDED.status,updated_at=NOW() RETURNING *`,[cust?.id||null,messageSid,from,to,clean(b.Body),clean(b.SmsStatus)||'received',JSON.stringify(media)])).rows[0];if(saved&&await sendManagerNotification(saved)){await q('UPDATE service_customer_messages SET notified_at=NOW(),updated_at=NOW() WHERE id=$1',[saved.id])}res.type('text/xml').send('<Response></Response>')}catch(e){res.status(500).send('Service message ingest failed')}});
 
 router.get('/customers/:id/messages',auth,async(req,res)=>{try{await ensure();await syncServiceTwilioMessages(14,500).catch(()=>{});const rows=(await q('SELECT id,twilio_sid,direction,from_number,to_number,body,status,media,created_at FROM service_customer_messages WHERE customer_id=$1 ORDER BY created_at ASC LIMIT 1000',[req.params.id])).rows;res.json({service_number:serviceNumber()||null,messages:rows})}catch(e){res.status(500).json({error:e.message})}});
 
