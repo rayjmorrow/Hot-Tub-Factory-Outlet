@@ -123,6 +123,28 @@ router.get('/crm/v1/dashboard',...guard,async(req,res)=>{try{
 
 router.get('/crm/v1/staff',...guard,async(req,res)=>{try{await ensure();res.json((await q(`SELECT id,username,display_name,role FROM service_users WHERE active=true AND role IN ('admin','owner','manager','service_manager','sales') ORDER BY display_name`)).rows)}catch(e){res.status(500).json({error:e.message})}});
 
+router.post('/crm/v1/leads',...guard,async(req,res)=>{try{
+  await ensure();
+  const b=req.body||{},first=clean(b.first_name),last=clean(b.last_name),phone=clean(b.phone),emailAddr=clean(b.email);
+  if(!first&&!last)return res.status(400).json({error:'First or last name is required'});
+  if(!phone&&!emailAddr)return res.status(400).json({error:'Phone or email is required'});
+  const source=clean(b.source)||'Walk-In';
+  if(!['Walk-In','Phone','Referral','Other'].includes(source))return res.status(400).json({error:'Choose a valid lead source'});
+  let existing=null;
+  if(emailAddr)existing=(await q("SELECT submission_id,first_name,last_name,email,phone FROM crm_website_leads WHERE deleted_at IS NULL AND lower(coalesce(email,''))=lower($1) ORDER BY received_at DESC LIMIT 1",[emailAddr])).rows[0]||null;
+  if(!existing&&phone)existing=(await q("SELECT submission_id,first_name,last_name,email,phone FROM crm_website_leads WHERE deleted_at IS NULL AND regexp_replace(coalesce(phone,''),'\\D','','g')=regexp_replace($1,'\\D','','g') ORDER BY received_at DESC LIMIT 1",[phone])).rows[0]||null;
+  if(existing)return res.status(409).json({error:'A lead with this phone or email already exists',existing});
+  const who=clean(req.user?.name)||clean(req.user?.username)||null;
+  const id='manual-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);
+  const assigned=clean(b.assigned_to)||who,showroom=clean(b.showroom),product=clean(b.product_interest),brand=clean(b.brand_interest),model=clean(b.model_interest),note=clean(b.note),follow=b.next_follow_up_at||null;
+  const payload={manual_entry:true,entry_method:source,created_by:who};
+  const r=await q(`INSERT INTO crm_website_leads(submission_id,first_name,last_name,email,phone,source,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,next_follow_up_at,lifecycle_stage,pipeline_stage,has_opportunity,received_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,'Prospect','New Lead',true,NOW(),NOW()) RETURNING *`,
+    [id,first,last,emailAddr,phone,source,note,JSON.stringify(payload),product,brand,model,assigned,showroom,follow]);
+  if(follow)await q(`INSERT INTO crm_tasks(submission_id,title,due_at,assigned_to,created_by) VALUES($1,$2,$3,$4,$5)`,[id,'Follow up with '+[first,last].filter(Boolean).join(' '),follow,assigned,who]).catch(()=>{});
+  res.status(201).json(r.rows[0]);
+}catch(e){res.status(500).json({error:e.message})}});
+
 router.get('/crm/v1/leads',...guard,async(req,res)=>{try{
   await ensure();const term=clean(req.query.q)||'',stage=clean(req.query.stage),product=clean(req.query.product),brand=clean(req.query.brand),model=clean(req.query.model),assigned=clean(req.query.assigned_to),showroom=clean(req.query.showroom);
   const p=['%'+term+'%'];let w=`WHERE deleted_at IS NULL AND concat_ws(' ',first_name,last_name,email,phone,source,note,product_interest,brand_interest,model_interest,tags::text,payload::text) ILIKE $1`;
