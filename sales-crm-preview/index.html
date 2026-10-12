@@ -30,7 +30,7 @@ textarea{min-height:100px;resize:vertical}.btn{border:0;border-radius:9px;paddin
 <section class="card table-card" id="todayPanel" hidden><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div><h2 id="todayTitle">My Day</h2><div class="small" id="todayOwner"></div></div><button class="btn secondary" id="closeToday">Close</button></div><div class="kpis"><div class="kpi"><span>New leads</span><b id="todayNew">0</b></div><div class="kpi"><span>Follow-ups due</span><b id="todayFollowups">0</b></div><div class="kpi"><span>Tasks due</span><b id="todayTasks">0</b></div><div class="kpi"><span>Scheduled messages</span><b id="todayScheduled">0</b></div></div><div id="todayList"></div></section>
 <section class="pipeline" id="pipeline"></section><section class="card table-card"><h2>Recent website submissions</h2><div id="table"></div></section></div></main>
 
-<div class="drawer-wrap" id="campaignWrap"><aside class="drawer"><div class="drawer-head"><div><h2>Personalized Message Campaign</h2><div class="small" id="campaignSub"></div></div><button class="close" id="closeCampaign" aria-label="Close">×</button></div><div class="drawer-body"><div class="section" style="border-top:0;margin-top:0;padding-top:0"><h3>Recipients</h3><div class="contactbox" id="campaignAudience"></div></div><div class="section"><h3>SMS template</h3><div class="compose"><textarea id="campaignTemplate" placeholder="Hi {FirstName}, our {Model} floor model is being discounted for quick sale as the 2027s are arriving. Contact me for a new low price."></textarea><div class="small" style="margin-top:7px">Available merge fields: {Name}, {FirstName}, {Product}, {Brand}, {Model}</div><div class="row"><button class="btn primary" id="previewCampaign">Preview Messages</button><span class="small" id="campaignStatus"></span></div></div></div><div class="section"><h3>Preview</h3><div class="timeline" id="campaignPreview"></div><div class="row" style="margin-top:12px"><button class="btn danger" id="sendCampaign" disabled>Send to Filtered Leads</button></div></div></div></aside></div>
+<div class="drawer-wrap" id="campaignWrap"><aside class="drawer"><div class="drawer-head"><div><h2>Personalized Message Campaign</h2><div class="small" id="campaignSub"></div></div><button class="close" id="closeCampaign" aria-label="Close">×</button></div><div class="drawer-body"><div class="section" style="border-top:0;margin-top:0;padding-top:0"><h3>Recipients</h3><div class="contactbox" id="campaignAudience"></div></div><div class="section"><h3>Message type</h3><select id="campaignChannel"><option value="sms">Text Message (SMS)</option><option value="email">Email</option></select></div><div class="section"><h3 id="campaignTemplateTitle">SMS template</h3><div class="compose"><input id="campaignSubject" placeholder="Email subject" hidden><textarea id="campaignTemplate" placeholder="Hi {FirstName}, our {Model} floor model is being discounted for quick sale as the 2027s are arriving. Contact me for a new low price."></textarea><div class="small" style="margin-top:7px">Available merge fields: {Name}, {FirstName}, {Product}, {Brand}, {Model}</div><div class="row"><button class="btn primary" id="previewCampaign">Preview Messages</button><span class="small" id="campaignStatus"></span></div></div></div><div class="section"><h3>Preview</h3><div class="timeline" id="campaignPreview"></div><div class="row" style="margin-top:12px"><button class="btn danger" id="sendCampaign" disabled>Send to Filtered Leads</button></div></div></div></aside></div>
 
 <div class="drawer-wrap" id="drawerWrap"><aside class="drawer"><div class="drawer-head"><div><h2 id="detailName">Lead</h2><div class="small" id="detailSub"></div></div><button class="close" id="closeDrawer" aria-label="Close">×</button></div>
 <div class="drawer-body"><div class="grid2"><div class="contactbox" id="contactBox"></div><div class="interest"><b>Product / brand / model interest</b><div class="interest-editor"><select id="productInterest"><option value="">Choose product…</option><option>Hot Tub</option><option>Swim Spa</option><option>Pool</option><option>Sauna</option><option>Outdoor Kitchen</option></select><input id="brandInterest" placeholder="Brand"><input class="full" id="modelInterest" placeholder="Model of interest"><button class="btn secondary" id="saveInterest">Save Product Interest</button><span class="small full" id="interestStatus"></span></div><div class="small" id="interestBox" style="margin-top:10px"></div></div></div>
@@ -174,27 +174,54 @@ $('#todayBtn').onclick=()=>showMyDay(false);$('#teamDayBtn').onclick=()=>showMyD
 $('#reportsBtn').onclick=async()=>{try{const r=await api('/crm/v1/reports/summary?days=30'),o=r.overall;alert(`Last 30 days\nLeads: ${o.leads}\nAppointments: ${o.appointments}\nShowroom visits: ${o.showroom_visits}\nQuoted: ${o.quoted}\nSold: ${o.sold}\nLost: ${o.lost}`)}catch(e){alert(e.message)}};
 $('#importBtn').onclick=async()=>{if(!confirm('Sync HighLevel contacts and reconcile opportunity status, stage, value and ownership now? Existing CRM records will be updated, not duplicated.'))return;$('#status').textContent='Syncing HighLevel contacts…';try{const r=await api('/crm/v1/import/highlevel',{method:'POST',body:'{}'});$('#status').textContent='Reconciling HighLevel opportunities…';const x=await api('/crm/v1/reconcile/highlevel',{method:'POST',body:'{}'});$('#status').textContent='Syncing communication activity…';const a=await api('/crm/v1/sync/highlevel-activity',{method:'POST',body:'{}'});alert(`HighLevel reconciliation complete. Contacts imported: ${r.imported}, contacts updated: ${r.updated}. Opportunities matched: ${x.matched}. Open: ${x.open}, Won: ${x.won}, Lost: ${x.lost}. Unmatched: ${x.unmatched}. Communication activity matched: ${a.matched}.`);await load()}catch(e){alert(e.message);$('#status').textContent=e.message}};
 
-function campaignAudience(){return filtered().filter(x=>x.phone)}
-$('#campaignBtn').onclick=()=>{
-  const rows=campaignAudience();
-  $('#campaignWrap').classList.add('show');
-  $('#campaignSub').textContent=rows.length+' filtered contacts with phone numbers';
+function campaignAudience(){
+  const channel=$('#campaignChannel')?.value||'sms';
+  return filtered().filter(x=>channel==='email'?x.email:x.phone)
+}
+function refreshCampaignAudience(){
+  const channel=$('#campaignChannel').value,rows=campaignAudience(),kind=channel==='email'?'email addresses':'phone numbers';
+  $('#campaignSub').textContent=rows.length+' filtered contacts with '+kind;
   $('#campaignAudience').innerHTML=rows.length?`${rows.length} contacts selected from the current filters.<br><span class="small">Product: ${esc($('#productFilter').value||'Any')} · Brand: ${esc($('#brandFilter').value||'Any')} · Model: ${esc($('#modelFilter').value||'Any')} · Activity: ${esc($('#activityFilter').selectedOptions[0]?.text||'Any')}</span>`:'No contacts match the current filters.';
+  $('#campaignTemplateTitle').textContent=channel==='email'?'Email template':'SMS template';
+  $('#campaignSubject').hidden=channel!=='email';
+  $('#campaignTemplate').placeholder=channel==='email'?'Hi {FirstName},\n\nI wanted to follow up about your {Product} interest...':'Hi {FirstName}, our {Model} floor model is being discounted for quick sale as the 2027s are arriving. Contact me for a new low price.';
   $('#campaignPreview').innerHTML='<div class="empty">Preview the campaign to see each personalized message.</div>';
-};
+  $('#campaignStatus').textContent='';
+  campaignReady=[];$('#sendCampaign').disabled=true;
+}
+$('#campaignBtn').onclick=()=>{$('#campaignWrap').classList.add('show');refreshCampaignAudience()};
+$('#campaignChannel').onchange=refreshCampaignAudience;
 $('#closeCampaign').onclick=()=>$('#campaignWrap').classList.remove('show');
 $('#campaignWrap').onclick=e=>{if(e.target===$('#campaignWrap'))$('#campaignWrap').classList.remove('show')};
 $('#previewCampaign').onclick=async()=>{
-  const rows=campaignAudience(),template=$('#campaignTemplate').value.trim();
-  if(!rows.length||!template)return;
+  const channel=$('#campaignChannel').value,rows=campaignAudience(),template=$('#campaignTemplate').value.trim(),subject=$('#campaignSubject').value.trim();
+  if(!rows.length||!template||(channel==='email'&&!subject))return;
   $('#campaignStatus').textContent='Building preview…';
   try{
-    const p=await api('/crm/campaigns/sms/preview',{method:'POST',body:JSON.stringify({submission_ids:rows.map(x=>x.submission_id),template})});
-    campaignReady=p.recipients.filter(r=>r.phone&&!r.suppressed).map(r=>r.submission_id);$('#sendCampaign').disabled=!campaignReady.length;$('#campaignStatus').textContent=`${p.sendable} sendable · ${p.suppressed} suppressed`;
-    $('#campaignPreview').innerHTML=p.recipients.map(r=>`<div class="event ${r.suppressed?'note':'sms-out'}"><div class="when">${esc(r.name||r.phone)} · ${r.suppressed?esc(r.reason||'Suppressed'):'Ready'}</div><pre>${esc(r.body)}</pre></div>`).join('')||'<div class="empty">No recipients.</div>';
+    if(channel==='sms'){
+      const p=await api('/crm/campaigns/sms/preview',{method:'POST',body:JSON.stringify({submission_ids:rows.map(x=>x.submission_id),template})});
+      campaignReady=p.recipients.filter(r=>r.phone&&!r.suppressed).map(r=>r.submission_id);$('#sendCampaign').disabled=!campaignReady.length;$('#campaignStatus').textContent=`${p.sendable} sendable · ${p.suppressed} suppressed`;
+      $('#campaignPreview').innerHTML=p.recipients.map(r=>`<div class="event ${r.suppressed?'note':'sms-out'}"><div class="when">${esc(r.name||r.phone)} · ${r.suppressed?esc(r.reason||'Suppressed'):'Ready'}</div><pre>${esc(r.body)}</pre></div>`).join('')||'<div class="empty">No recipients.</div>';
+    }else{
+      const p=await api('/crm/v1/campaigns/email/preview',{method:'POST',body:JSON.stringify({submission_ids:rows.map(x=>x.submission_id),subject,template})});
+      campaignReady=p.recipients.filter(r=>r.sendable).map(r=>r.submission_id);$('#sendCampaign').disabled=!campaignReady.length;$('#campaignStatus').textContent=`${p.sendable} sendable by email`;
+      $('#campaignPreview').innerHTML=p.recipients.map(r=>`<div class="event ${r.sendable?'sms-out':'note'}"><div class="when">${esc(r.name||r.email||'No email')} · ${r.sendable?'Ready':'No email'}</div><b>${esc(r.subject)}</b><pre>${esc(r.body)}</pre></div>`).join('')||'<div class="empty">No recipients.</div>';
+    }
   }catch(e){$('#campaignStatus').textContent=e.message}
 };
-$('#sendCampaign').onclick=async()=>{const template=$('#campaignTemplate').value.trim();if(!campaignReady.length||!template)return;if(!confirm('Send this personalized SMS to '+campaignReady.length+' filtered contacts?'))return;$('#campaignStatus').textContent='Sending…';$('#sendCampaign').disabled=true;try{const r=await api('/crm/v1/campaigns/sms/send',{method:'POST',body:JSON.stringify({submission_ids:campaignReady,template,confirm:'SEND'})});$('#campaignStatus').textContent=`Sent ${r.sent} · Suppressed ${r.suppressed} · Failed ${r.failed}`;await load()}catch(e){$('#campaignStatus').textContent=e.message;$('#sendCampaign').disabled=false}};
+$('#sendCampaign').onclick=async()=>{
+  const channel=$('#campaignChannel').value,template=$('#campaignTemplate').value.trim(),subject=$('#campaignSubject').value.trim();
+  if(!campaignReady.length||!template||(channel==='email'&&!subject))return;
+  if(!confirm('Send this personalized '+(channel==='email'?'email':'SMS')+' to '+campaignReady.length+' filtered contacts?'))return;
+  $('#campaignStatus').textContent='Sending…';$('#sendCampaign').disabled=true;
+  try{
+    const path=channel==='email'?'/crm/v1/campaigns/email/send':'/crm/v1/campaigns/sms/send';
+    const payload={submission_ids:campaignReady,template,confirm:'SEND'};if(channel==='email')payload.subject=subject;
+    const r=await api(path,{method:'POST',body:JSON.stringify(payload)});
+    $('#campaignStatus').textContent=channel==='email'?`Sent ${r.sent} · Skipped ${r.skipped} · Failed ${r.failed}`:`Sent ${r.sent} · Suppressed ${r.suppressed} · Failed ${r.failed}`;
+    await load()
+  }catch(e){$('#campaignStatus').textContent=e.message;$('#sendCampaign').disabled=false}
+};
 stages.forEach(s=>$('#stage').insertAdjacentHTML('beforeend',`<option>${s}</option>`));
 start();
 </script>
