@@ -29,7 +29,7 @@ import {initServiceScheduling} from './service-scheduling.js';
 import {initServiceTenancy} from './service-tenancy.js';
 import {initServiceAudit} from './service-audit.js';
 import {initServicePaymentGuard} from './service-payment-guard.js';
-import crmRoutes from './crm-routes.js';
+import crmRoutes,{syncTwilioMessages} from './crm-routes.js';
 import crmV1Routes from './crm-v1-routes.js';
 import crmHistoryRoutes from './crm-history-routes.js';
 import crmSchedulingRoutes,{runCrmScheduledMessages} from './crm-scheduling-routes.js';
@@ -140,10 +140,12 @@ try{
   await q("UPDATE service_users SET role='technician' WHERE active=true AND (lower(username)='bill' OR lower(display_name)='bill' OR lower(display_name) LIKE 'bill %')");
   await runFulfillmentAutomation();
   await runCrmScheduledMessages();
+  await syncTwilioMessages(3,500).catch(e=>console.error('Initial Twilio CRM sync error:',e));
   await promoteLatestStagedCustomers();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
   setInterval(()=>runFulfillmentAutomation().catch(e=>console.error('Fulfillment automation error:',e)),60*60*1000).unref();
   setInterval(()=>runCrmScheduledMessages().catch(e=>console.error('CRM scheduled-message error:',e)),60*1000).unref();
+  setInterval(()=>syncTwilioMessages(3,500).catch(e=>console.error('Twilio CRM sync error:',e)),60*1000).unref();
 }catch(err){
   console.error('Unable to start HTFO service backend:',err);
   process.exit(1);
