@@ -62,7 +62,7 @@ function twilioSignatureOk(req){
   const expected=crypto.createHmac('sha1',token).update(payload).digest('base64');
   try{return crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(expected))}catch{return false}
 }
-async function syncTwilioMessages(days=14,limit=1000){
+export async function syncTwilioMessages(days=14,limit=1000){
   const sid=twilioSid(),token=twilioToken(),owned=twilioNumber();
   if(!sid||!token||!owned)throw new Error('Twilio is not fully configured');
   await ensureSmsTable();
@@ -77,10 +77,13 @@ async function syncTwilioMessages(days=14,limit=1000){
       if(seen++>=limit)break;
       const from=String(m.from||''),to=String(m.to||'');
       const direction=from===owned?'outbound':(to===owned?'inbound':String(m.direction||'unknown'));
-      const rs=await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::timestamptz,NOW()))
-        ON CONFLICT (twilio_sid) DO NOTHING RETURNING id`,
-        [String(m.sid||''),direction,from,to,String(m.body||''),String(m.status||''),m.date_sent||m.date_created||null]);
+      const peer=direction==='inbound'?from:to,digits=phoneDigits(peer);
+      const lead=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND regexp_replace(coalesce(phone,''),'\\D','','g')=$1 ORDER BY received_at DESC LIMIT 1",[digits])).rows[0];
+      const rs=await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,created_at,lead_submission_id)
+        VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::timestamptz,NOW()),$8)
+        ON CONFLICT (twilio_sid) DO UPDATE SET lead_submission_id=COALESCE(crm_sms_messages.lead_submission_id,EXCLUDED.lead_submission_id) RETURNING id`,
+        [String(m.sid||''),direction,from,to,String(m.body||''),String(m.status||''),m.date_sent||m.date_created||null,lead?.submission_id||null]);
+      if(lead?.submission_id&&direction==='inbound')await q("UPDATE crm_website_leads SET last_activity_at=GREATEST(COALESCE(last_activity_at,NOW()),COALESCE($2::timestamptz,NOW())),updated_at=NOW() WHERE submission_id=$1",[lead.submission_id,m.date_sent||m.date_created||null]).catch(()=>{});
       if(rs.rowCount)inserted++;
     }
     const next=j.next_page_uri;
