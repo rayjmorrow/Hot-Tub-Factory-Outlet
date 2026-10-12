@@ -150,6 +150,37 @@ router.patch('/crm/v1/tasks/:id',...guard,async(req,res)=>{try{await ensure();co
 
 router.post('/crm/v1/leads/:id/email',...guard,async(req,res)=>{try{await ensure();const l=(await q('SELECT first_name,last_name,email FROM crm_website_leads WHERE submission_id=$1',[req.params.id])).rows[0];if(!l?.email)return res.status(400).json({error:'Lead has no email address'});const subject=clean(req.body?.subject),body=clean(req.body?.body);if(!subject||!body)return res.status(400).json({error:'Subject and message are required'});const sent=await email(l.email,subject,body,[l.first_name,l.last_name].filter(Boolean).join(' '),req.user,req.params.id);const r=await q(`INSERT INTO crm_email_messages(submission_id,to_email,subject,body,provider_id,status,created_by,direction,from_email) VALUES($1,$2,$3,$4,$5,'sent',$6,'outbound',$7) RETURNING *`,[req.params.id,l.email,subject,body,clean(sent.messageId),clean(req.user?.name)||clean(req.user?.username),clean(sent.from)]);await q('UPDATE crm_website_leads SET last_contacted_at=NOW(),updated_at=NOW() WHERE submission_id=$1',[req.params.id]);res.status(201).json(r.rows[0])}catch(e){res.status(502).json({error:e.message})}});
 
+router.post('/crm/v1/campaigns/email/preview',...guard,async(req,res)=>{try{
+  await ensure();
+  const ids=Array.isArray(req.body?.submission_ids)?req.body.submission_ids.map(clean).filter(Boolean).slice(0,250):[];
+  const subjectTpl=String(req.body?.subject||'').trim(),bodyTpl=String(req.body?.template||'').trim();
+  if(!ids.length||!subjectTpl||!bodyTpl)return res.status(400).json({error:'Recipients, subject and template are required'});
+  const rows=(await q(`SELECT submission_id,first_name,last_name,email,product_interest,brand_interest,model_interest FROM crm_website_leads WHERE deleted_at IS NULL AND submission_id=ANY($1::text[])`,[ids])).rows;
+  const recipients=rows.map(l=>({submission_id:l.submission_id,email:l.email,name:[l.first_name,l.last_name].filter(Boolean).join(' '),subject:merge(subjectTpl,l),body:merge(bodyTpl,l),sendable:Boolean(l.email)}));
+  res.json({total:recipients.length,sendable:recipients.filter(x=>x.sendable).length,recipients});
+}catch(e){res.status(500).json({error:e.message})}});
+
+router.post('/crm/v1/campaigns/email/send',...guard,async(req,res)=>{try{
+  await ensure();
+  const ids=Array.isArray(req.body?.submission_ids)?req.body.submission_ids.map(clean).filter(Boolean).slice(0,250):[];
+  const subjectTpl=String(req.body?.subject||'').trim(),bodyTpl=String(req.body?.template||'').trim();
+  if(String(req.body?.confirm||'')!=='SEND')return res.status(400).json({error:'Campaign send requires confirmation'});
+  if(!ids.length||!subjectTpl||!bodyTpl)return res.status(400).json({error:'Recipients, subject and template are required'});
+  const rows=(await q(`SELECT submission_id,first_name,last_name,email,product_interest,brand_interest,model_interest FROM crm_website_leads WHERE deleted_at IS NULL AND submission_id=ANY($1::text[])`,[ids])).rows;
+  let sent=0,skipped=0,failed=0;
+  for(const l of rows){
+    if(!l.email){skipped++;continue}
+    try{
+      const subject=merge(subjectTpl,l),body=merge(bodyTpl,l);
+      const m=await email(l.email,subject,body,[l.first_name,l.last_name].filter(Boolean).join(' '),req.user,l.submission_id);
+      await q(`INSERT INTO crm_email_messages(submission_id,to_email,subject,body,provider_id,status,created_by,direction,from_email) VALUES($1,$2,$3,$4,$5,'sent',$6,'outbound',$7)`,[l.submission_id,l.email,subject,body,clean(m.messageId),clean(req.user?.name)||clean(req.user?.username),clean(m.from)]);
+      await q('UPDATE crm_website_leads SET last_contacted_at=NOW(),last_activity_at=NOW(),updated_at=NOW() WHERE submission_id=$1',[l.submission_id]);
+      sent++;
+    }catch(e){failed++}
+  }
+  res.json({ok:true,total:rows.length,sent,skipped,failed});
+}catch(e){res.status(500).json({error:e.message})}});
+
 router.post('/crm/v1/campaigns/sms/send',...guard,async(req,res)=>{try{await ensure();const ids=Array.isArray(req.body?.submission_ids)?req.body.submission_ids.map(clean).filter(Boolean).slice(0,250):[],tpl=String(req.body?.template||'').trim();if(String(req.body?.confirm||'')!=='SEND')return res.status(400).json({error:'Campaign send requires confirmation'});if(!ids.length||!tpl)return res.status(400).json({error:'Recipients and template are required'});const rows=(await q(`SELECT submission_id,first_name,last_name,phone,product_interest,brand_interest,model_interest FROM crm_website_leads WHERE submission_id=ANY($1::text[])`,[ids])).rows;let sent=0,suppressed=0,failed=0;for(const l of rows){if(!l.phone||await opted(l.phone)){suppressed++;continue}try{const body=merge(tpl,l),m=await sms(l.phone,body);await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id) VALUES($1,'outbound',$2,$3,$4,$5,$6) ON CONFLICT(twilio_sid) DO NOTHING`,[m.sid,salesNumber(),l.phone,body,m.status||'queued',l.submission_id]);await q('UPDATE crm_website_leads SET last_contacted_at=NOW(),updated_at=NOW() WHERE submission_id=$1',[l.submission_id]);sent++}catch{failed++}}res.json({ok:true,total:rows.length,sent,suppressed,failed})}catch(e){res.status(500).json({error:e.message})}});
 
 router.delete('/crm/v1/leads/:id',...guard,async(req,res)=>{try{
