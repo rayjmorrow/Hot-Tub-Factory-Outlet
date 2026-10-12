@@ -17,7 +17,22 @@ async function ensure(){
 }
 async function opted(phone){if(!phone)return true;const d=String(phone).replace(/\D/g,'');return (await q("SELECT 1 FROM crm_sms_messages WHERE regexp_replace(from_number,'\\D','','g')=$1 AND direction IN ('inbound','inbound-shadow') AND upper(trim(body)) IN ('STOP','STOPALL','UNSUBSCRIBE','CANCEL','END','QUIT') LIMIT 1",[d])).rowCount>0}
 async function sendSms(to,body){const sid=String(process.env.TWILIO_ACCOUNT_SID||'').trim(),token=String(process.env.TWILIO_AUTH_TOKEN||'').trim(),from=salesNumber();if(!sid||!token||!from)throw new Error('Sales Twilio is not configured');const form=new URLSearchParams({To:String(to),From:from,Body:String(body)});const r=await fetch('https://api.twilio.com/2010-04-01/Accounts/'+encodeURIComponent(sid)+'/Messages.json',{method:'POST',headers:{Authorization:'Basic '+Buffer.from(sid+':'+token).toString('base64'),'Content-Type':'application/x-www-form-urlencoded'},body:form});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('Twilio returned '+r.status));return j}
-async function sendEmail(to,subject,body,name){const key=String(process.env.BREVO_API_KEY||'').trim(),from=String(process.env.CRM_FROM_EMAIL||process.env.FULFILLMENT_FROM_EMAIL||'').trim();if(!key||!from)throw new Error('CRM email sender is not configured');const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify({sender:{email:from,name:String(process.env.CRM_FROM_NAME||'Hot Tub Factory Outlet')},to:[{email:to,name:name||to}],subject,textContent:body})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('Brevo returned '+r.status));return j}
+function salespersonEmail(name){
+  const n=String(name||'').trim().toLowerCase();
+  if(n.startsWith('steve'))return 'steve@hottubfactoryoutlet.com';
+  if(n.startsWith('rick'))return 'rick@hottubfactoryoutlet.com';
+  if(n.startsWith('ray'))return 'ray@hottubfactoryoutlet.com';
+  return String(process.env.CRM_FROM_EMAIL||process.env.FULFILLMENT_FROM_EMAIL||'').trim();
+}
+async function sendEmail(to,subject,body,name,salesperson){
+  const key=String(process.env.BREVO_API_KEY||'').trim(),from=salespersonEmail(salesperson);
+  if(!key||!from)throw new Error('CRM email sender is not configured');
+  const senderName=String(salesperson||process.env.CRM_FROM_NAME||'Hot Tub Factory Outlet');
+  const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify({sender:{email:from,name:senderName},replyTo:{email:from,name:senderName},to:[{email:to,name:name||to}],subject,textContent:body})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.message||('Brevo returned '+r.status));
+  return {...j,from};
+}
 
 export async function runCrmScheduledMessages(){
   await ensure();
@@ -32,7 +47,7 @@ export async function runCrmScheduledMessages(){
         await q("UPDATE crm_scheduled_messages SET status='sent',provider_id=$2,sent_at=NOW(),updated_at=NOW() WHERE id=$1",[m.id,x.sid]);
       }else{
         if(!m.email)throw new Error('Lead has no email address');
-        const x=await sendEmail(m.email,m.subject||'Hot Tub Factory Outlet',m.body,[m.first_name,m.last_name].filter(Boolean).join(' '));
+        const x=await sendEmail(m.email,m.subject||'Hot Tub Factory Outlet',m.body,[m.first_name,m.last_name].filter(Boolean).join(' '),m.assigned_to||m.created_by);
         await q("INSERT INTO crm_email_messages(submission_id,to_email,subject,body,provider_id,status,created_by) VALUES($1,$2,$3,$4,$5,'sent',$6)",[m.submission_id,m.email,m.subject||'Hot Tub Factory Outlet',m.body,clean(x.messageId),m.created_by]);
         await q("UPDATE crm_scheduled_messages SET status='sent',provider_id=$2,sent_at=NOW(),updated_at=NOW() WHERE id=$1",[m.id,clean(x.messageId)]);
       }
