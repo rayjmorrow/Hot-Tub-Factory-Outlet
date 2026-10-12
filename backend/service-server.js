@@ -35,6 +35,7 @@ import crmHistoryRoutes from './crm-history-routes.js';
 import crmSchedulingRoutes,{runCrmScheduledMessages} from './crm-scheduling-routes.js';
 import crmEmailInboundRoutes from './crm-email-inbound-routes.js';
 import serviceMessagingRoutes,{syncServiceTwilioMessages} from './service-messaging-routes.js';
+import serviceBillingRoutes from './service-billing-routes.js';
 
 const app=express();
 const port=Number(process.env.PORT||process.env.SERVICE_PORT||8790);
@@ -108,6 +109,7 @@ app.use('/api/service',crmHistoryRoutes);
 app.use('/api/service',crmSchedulingRoutes);
 app.use('/api/service',crmEmailInboundRoutes);
 app.use('/api/service',serviceMessagingRoutes);
+app.use('/api/service',serviceBillingRoutes);
 
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
