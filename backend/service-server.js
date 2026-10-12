@@ -34,6 +34,7 @@ import crmV1Routes from './crm-v1-routes.js';
 import crmHistoryRoutes from './crm-history-routes.js';
 import crmSchedulingRoutes,{runCrmScheduledMessages} from './crm-scheduling-routes.js';
 import crmEmailInboundRoutes from './crm-email-inbound-routes.js';
+import serviceMessagingRoutes,{syncServiceTwilioMessages} from './service-messaging-routes.js';
 
 const app=express();
 const port=Number(process.env.PORT||process.env.SERVICE_PORT||8790);
@@ -106,6 +107,7 @@ app.use('/api/service',crmV1Routes);
 app.use('/api/service',crmHistoryRoutes);
 app.use('/api/service',crmSchedulingRoutes);
 app.use('/api/service',crmEmailInboundRoutes);
+app.use('/api/service',serviceMessagingRoutes);
 
 const portalAssets=new Set([
   'service-portal.css','service-portal.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
@@ -141,11 +143,13 @@ try{
   await runFulfillmentAutomation();
   await runCrmScheduledMessages();
   await syncTwilioMessages(3,500).catch(e=>console.error('Initial Twilio CRM sync error:',e));
+  await syncServiceTwilioMessages(7,500).catch(e=>console.error('Initial service Twilio sync error:',e));
   await promoteLatestStagedCustomers();
   app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
   setInterval(()=>runFulfillmentAutomation().catch(e=>console.error('Fulfillment automation error:',e)),60*60*1000).unref();
   setInterval(()=>runCrmScheduledMessages().catch(e=>console.error('CRM scheduled-message error:',e)),60*1000).unref();
   setInterval(()=>syncTwilioMessages(3,500).catch(e=>console.error('Twilio CRM sync error:',e)),60*1000).unref();
+  setInterval(()=>syncServiceTwilioMessages(7,500).catch(e=>console.error('Service Twilio sync error:',e)),60*1000).unref();
 }catch(err){
   console.error('Unable to start HTFO service backend:',err);
   process.exit(1);
