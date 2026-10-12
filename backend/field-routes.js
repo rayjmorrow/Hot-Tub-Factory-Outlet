@@ -48,7 +48,9 @@ router.get('/field/work-orders/:id',auth,async(req,res)=>{
     deliveryOrder=(await q('SELECT id,order_number,total_amount,amount_paid,delivery_exception_authorized,delivery_exception_reason FROM service_customer_orders WHERE id=$1',[w.rows[0].customer_order_id])).rows[0]||null;
     deliveryOrderItems=(await q('SELECT id,description,quantity,sku FROM service_customer_order_items WHERE order_id=$1 ORDER BY id',[w.rows[0].customer_order_id])).rows;
   }
-  res.json({workOrder:w.rows[0],invoice:inv.rows[0]||null,payments:payments.rows,deliveryOrder,deliveryOrderItems});
+  let customerMessages=[];
+  try{customerMessages=(await q("SELECT id,twilio_sid,direction,from_number,to_number,body,status,media,created_at FROM service_customer_messages WHERE customer_id=$1 ORDER BY created_at ASC LIMIT 1000",[w.rows[0].customer_id])).rows}catch{}
+  res.json({workOrder:w.rows[0],invoice:inv.rows[0]||null,payments:payments.rows,deliveryOrder,deliveryOrderItems,customerMessages});
 });
 
 router.patch('/field/deliveries/:id/progress',auth,async(req,res)=>{
