@@ -99,6 +99,25 @@
       win.document.write(html);win.document.close();win.focus();win.print();
     }catch(e){alert(e.message)}
   }
+  async function finalizeBillAndCharge(id,w){
+    if(String(w.payment_status||'')!=='card_on_file')return alert('This customer does not have a card on file.');
+    try{
+      const bill=await prepareBill(id),balance=Number(bill.balance||0);
+      if(balance<=0)return alert('This work order is already paid in full.');
+      const label=(w.card_brand||'Card')+' •••• '+(w.card_last_four||'');
+      if(!confirm('Charge '+label+' '+money(balance)+' for this completed service work?'))return;
+      const r=await api('/invoices/'+bill.invoice.id+'/charge-card-on-file',{method:'POST',body:JSON.stringify({amount:balance})});
+      alert('Payment approved'+(r.transaction_id?' · Transaction '+r.transaction_id:'')+'.');
+      await refreshWorkOrder(id);
+    }catch(e){alert(e.message)}
+  }
+  async function finalizeCashCheckBill(id){
+    try{
+      const bill=await prepareBill(id);
+      alert('Bill prepared. Amount to collect on site: '+money(bill.balance));
+      await refreshWorkOrder(id);
+    }catch(e){alert(e.message)}
+  }
   async function refreshWorkOrder(id){
     const x=await api(`/work-orders/${id}/detail`),w=x.workOrder;
     currentId=String(id);currentDetail=x;
@@ -137,10 +156,11 @@
       ${renderDeliveryOrder(x,w)}
       ${String(w.job_type||'').toLowerCase()==='delivery'?'':renderServiceEditor(w)}
       <div class="card" id="woPartsBox"><p class="muted">Loading parts…</p></div>
-      <div class="card"><h3>${String(w.job_type||'').toLowerCase()==='delivery'?'Delivery Charges':'Charges'}</h3>
+      <div class="card"><div class="row between wrap"><div><h3 style="margin:.2rem 0">${String(w.job_type||'').toLowerCase()==='delivery'?'Delivery Charges':'Charges / Customer Receipt'}</h3><div class="muted">This work order is the detailed customer bill and receipt.</div></div><div class="row wrap"><button type="button" class="secondary" id="woPrintBill">Print</button><button type="button" class="secondary" id="woTextBill" ${w.phone?'':'disabled'}>Text Copy</button><button type="button" class="secondary" id="woEmailBill" ${w.email?'':'disabled'}>Email Copy</button></div></div>
         <div class="row wrap"><span>Diagnostic: <b>${money(w.diagnostic_amount)}</b></span><span>Labor: <b>${money(w.labor_amount)}</b></span><span>Parts: <b>${money(w.parts_amount)}</b></span><span>Trip: <b>${money(w.trip_amount)}</b></span><span>Tax: <b>${money(w.tax_amount)}</b></span><span>Total: <b>${money(w.total_amount)}</b></span></div>
+        <div style="margin-top:.8rem;padding-top:.8rem;border-top:1px solid #e3e8ee">${w.payment_status==='card_on_file'?`<div class="row between wrap"><div><b>Payment method:</b> ${esc(w.card_brand||'Card')} •••• ${esc(w.card_last_four||'')}<div class="muted">Finalize the work order, then charge the authorized card on file.</div></div><button type="button" id="woChargeCard">Finalize & Charge Card</button></div>`:w.payment_status==='cash_check_approved'?`<div class="row between wrap"><div><b>Payment method:</b> Cash / Check<div class="muted">Prepare the final bill so the technician can collect the exact balance on site.</div></div><button type="button" id="woPrepareCashBill">Prepare Bill for On-Site Payment</button></div>`:`<div class="payment-needed"><b>Payment method not ready.</b> Add a card on file or approve cash/check before final collection.</div>`}</div>
       </div>
-      ${x.invoices.length?`<div class="card"><h3>Invoices</h3>${x.invoices.map(i=>`<div>${esc(i.invoice_number)} · ${esc(i.status)} · ${money(i.total_amount)}</div>`).join('')}</div>`:''}
+      ${x.invoices.length?`<div class="card"><h3>Payment Status</h3>${x.invoices.map(i=>{const bal=Math.max(0,Number(i.total_amount||0)-Number(i.amount_paid||0));return `<div class="item"><div class="row between wrap"><div><b>${esc(i.invoice_number)}</b> · ${esc(i.status)}<div>Total ${money(i.total_amount)} · Paid ${money(i.amount_paid||0)}</div></div><strong>${bal>.001?'Balance '+money(bal):'PAID IN FULL'}</strong></div></div>`}).join('')}<p class="muted">The invoice record is kept for accounting; the work order is the detailed customer-facing bill/receipt.</p></div>`:''}
       ${x.estimates.length?`<div class="card"><h3>Estimates</h3>${x.estimates.map(i=>`<div>${esc(i.estimate_number)} · ${esc(i.status)} · ${money(i.total_amount)}</div>`).join('')}</div>`:''}
     `;
     const status=$('#woServiceForm [name="status"]');if(status)status.value=w.status||'scheduled';
@@ -153,6 +173,8 @@
       try{await api(`/work-orders/${id}`,{method:'PATCH',body:JSON.stringify(b)});await refreshWorkOrder(id);await loadWorkOrders();if(activeCustomerId)try{await loadCustomer(activeCustomerId)}catch{}}catch(err){alert(err.message)}
     };
     $('#woDetailActions').innerHTML=x.canDelete?`<button type="button" class="secondary" id="woDeleteBtn">Delete Work Order</button>`:'';
+    if($('#woChargeCard'))$('#woChargeCard').onclick=()=>finalizeBillAndCharge(id,w);
+    if($('#woPrepareCashBill'))$('#woPrepareCashBill').onclick=()=>finalizeCashCheckBill(id);
     if($('#woPrintBill'))$('#woPrintBill').onclick=()=>printBill(id);
     if($('#woTextBill'))$('#woTextBill').onclick=()=>sendBill(id,'sms');
     if($('#woEmailBill'))$('#woEmailBill').onclick=()=>sendBill(id,'email');
