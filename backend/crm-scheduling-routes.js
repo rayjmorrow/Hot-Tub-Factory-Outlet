@@ -13,6 +13,8 @@ const salesNumber=()=>String(process.env.TWILIO_SALES_PHONE_NUMBER||process.env.
 
 async function ensure(){
   await q("CREATE TABLE IF NOT EXISTS crm_scheduled_messages(id BIGSERIAL PRIMARY KEY,submission_id TEXT REFERENCES crm_website_leads(submission_id) ON DELETE CASCADE,channel TEXT NOT NULL CHECK(channel IN ('sms','email')),scheduled_for TIMESTAMPTZ NOT NULL,subject TEXT,body TEXT NOT NULL,assigned_to TEXT,created_by TEXT,status TEXT NOT NULL DEFAULT 'scheduled',provider_id TEXT,error TEXT,sent_at TIMESTAMPTZ,cancelled_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
+  await q("ALTER TABLE crm_scheduled_messages ADD COLUMN IF NOT EXISTS sender_name TEXT");
+  await q("ALTER TABLE crm_scheduled_messages ADD COLUMN IF NOT EXISTS from_email TEXT");
   await q("CREATE INDEX IF NOT EXISTS idx_crm_scheduled_due ON crm_scheduled_messages(status,scheduled_for)");
 }
 async function opted(phone){if(!phone)return true;const d=String(phone).replace(/\D/g,'');return (await q("SELECT 1 FROM crm_sms_messages WHERE regexp_replace(from_number,'\\D','','g')=$1 AND direction IN ('inbound','inbound-shadow') AND upper(trim(body)) IN ('STOP','STOPALL','UNSUBSCRIBE','CANCEL','END','QUIT') LIMIT 1",[d])).rowCount>0}
@@ -24,10 +26,10 @@ function salespersonEmail(name){
   if(n.startsWith('ray'))return 'ray@hottubfactoryoutlet.com';
   return String(process.env.CRM_FROM_EMAIL||process.env.FULFILLMENT_FROM_EMAIL||'').trim();
 }
-async function sendEmail(to,subject,body,name,salesperson,submissionId){
-  const key=String(process.env.BREVO_API_KEY||'').trim(),from=salespersonEmail(salesperson);
+async function sendEmail(to,subject,body,name,salesperson,submissionId,fromOverride,senderOverride){
+  const key=String(process.env.BREVO_API_KEY||'').trim(),from=String(fromOverride||salespersonEmail(salesperson)).trim();
   if(!key||!from)throw new Error('CRM email sender is not configured');
-  const senderName=String(salesperson||process.env.CRM_FROM_NAME||'Hot Tub Factory Outlet');
+  const senderName=String(senderOverride||salesperson||process.env.CRM_FROM_NAME||'Hot Tub Factory Outlet');
   const replyDomain=String(process.env.CRM_REPLY_DOMAIN||'reply.hottubfactoryoutlet.com').trim();
   const safeUser=String(salesperson||'sales').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,20)||'sales';
   const replyAddress=submissionId?`crm+${submissionId}+${safeUser}@${replyDomain}`:from;
@@ -50,7 +52,7 @@ export async function runCrmScheduledMessages(){
         await q("UPDATE crm_scheduled_messages SET status='sent',provider_id=$2,sent_at=NOW(),updated_at=NOW() WHERE id=$1",[m.id,x.sid]);
       }else{
         if(!m.email)throw new Error('Lead has no email address');
-        const x=await sendEmail(m.email,m.subject||'Hot Tub Factory Outlet',m.body,[m.first_name,m.last_name].filter(Boolean).join(' '),m.assigned_to||m.created_by,m.submission_id);
+        const x=await sendEmail(m.email,m.subject||'Hot Tub Factory Outlet',m.body,[m.first_name,m.last_name].filter(Boolean).join(' '),m.sender_name||m.assigned_to||m.created_by,m.submission_id,m.from_email,m.sender_name);
         await q("INSERT INTO crm_email_messages(submission_id,to_email,subject,body,provider_id,status,created_by,direction,from_email) VALUES($1,$2,$3,$4,$5,'sent',$6,'outbound',$7)",[m.submission_id,m.email,m.subject||'Hot Tub Factory Outlet',m.body,clean(x.messageId),m.created_by,clean(x.from)]);
         await q("UPDATE crm_scheduled_messages SET status='sent',provider_id=$2,sent_at=NOW(),updated_at=NOW() WHERE id=$1",[m.id,clean(x.messageId)]);
       }
@@ -66,8 +68,8 @@ router.post('/crm/v1/scheduled-messages',...guard,async(req,res)=>{try{
   if(new Date(scheduled).getTime()<=Date.now())return res.status(400).json({error:'Scheduled time must be in the future'});
   const lead=(await q('SELECT submission_id,assigned_to,phone,email FROM crm_website_leads WHERE submission_id=$1',[id])).rows[0];if(!lead)return res.status(404).json({error:'Lead not found'});
   if(channel==='sms'&&!lead.phone)return res.status(400).json({error:'Lead has no phone number'});if(channel==='email'&&!lead.email)return res.status(400).json({error:'Lead has no email address'});
-  const who=clean(req.user?.name)||clean(req.user?.username),owner=clean(req.body?.assigned_to)||lead.assigned_to||who;
-  const r=await q("INSERT INTO crm_scheduled_messages(submission_id,channel,scheduled_for,subject,body,assigned_to,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",[id,channel,scheduled,subject,body,owner,who]);res.status(201).json(r.rows[0]);
+  const who=clean(req.user?.name)||clean(req.user?.username),owner=clean(req.body?.assigned_to)||lead.assigned_to||who;const senderName=clean(req.body?.sender_name),fromEmail=clean(req.body?.from_email);
+  const r=await q("INSERT INTO crm_scheduled_messages(submission_id,channel,scheduled_for,subject,body,assigned_to,created_by,sender_name,from_email) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *",[id,channel,scheduled,subject,body,owner,who,senderName,fromEmail]);res.status(201).json(r.rows[0]);
 }catch(e){res.status(500).json({error:e.message})}});
 
 router.get('/crm/v1/scheduled-messages',...guard,async(req,res)=>{try{await ensure();const id=clean(req.query.submission_id),mine=String(req.query.mine||'false')==='true',who=clean(req.user?.name)||clean(req.user?.username);const p=[];let w='WHERE 1=1';if(id){p.push(id);w+=' AND s.submission_id=$'+p.length}if(mine){p.push(who);w+=' AND lower(coalesce(s.assigned_to,\'\'))=lower($'+p.length+')'}const r=await q('SELECT s.*,concat_ws(\' \',l.first_name,l.last_name) lead_name,l.phone,l.email FROM crm_scheduled_messages s JOIN crm_website_leads l ON l.submission_id=s.submission_id '+w+' ORDER BY s.scheduled_for ASC LIMIT 500',p);res.json(r.rows)}catch(e){res.status(500).json({error:e.message})}});
