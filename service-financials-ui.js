@@ -1,10 +1,12 @@
 (()=>{
+  const financialOwner=()=>{const u=window.currentServiceUser||{};const role=String(u.role||'').toLowerCase();const user=String(u.username||'').toLowerCase();return role==='owner'||user==='ray'};
+
   const nav=document.querySelector('nav');
-  if(nav&&!nav.querySelector('[data-view="financials"]')){
+  if(financialOwner()&&nav&&!nav.querySelector('[data-view="financials"]')){
     const b=document.createElement('button');b.dataset.view='financials';b.textContent='Service Financials';nav.appendChild(b);
   }
   const main=document.querySelector('main');
-  if(main&&!document.getElementById('financials')){
+  if(financialOwner()&&main&&!document.getElementById('financials')){
     const s=document.createElement('section');s.id='financials';s.className='view';s.hidden=true;
     s.innerHTML=`
       <div class="row between wrap"><div><h1>Service Department Financials</h1><p class="muted">Collections first: customer balances, warranty credits, delivery revenue, payroll and service P/L.</p></div><button class="secondary" id="finRefresh">Refresh</button></div>
@@ -101,7 +103,8 @@
   const originalShowView=showView;
   showView=function(id){
     if(id==='financials'){
-      $$('.view').forEach(v=>v.hidden=v.id!=='financials');loadFinancials();return;
+      if(!financialOwner())return originalShowView('dashboard');
+      $('.view').forEach(v=>v.hidden=v.id!=='financials');loadFinancials();return;
     }
     originalShowView(id);
   };
