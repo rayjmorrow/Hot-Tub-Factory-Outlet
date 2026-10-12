@@ -19,10 +19,12 @@ const canDelete=req=>['admin','owner','manager','service_manager'].includes(req.
 
 router.get('/work-orders/:id/detail',auth,async(req,res)=>{
   const r=await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.email,c.street,c.street2,c.city,c.state,c.zip,
-    e.equipment_type,e.brand,e.model,e.serial_number,e.install_date,e.warranty_expires
+    e.equipment_type,e.brand,e.model,e.serial_number,e.install_date,e.warranty_expires,
+    COALESCE(ps.payment_status,'needed') payment_status,ps.card_brand,ps.card_last_four,ps.authorized_at,ps.cash_check_approved_by_name
     FROM service_work_orders w
     JOIN service_customers c ON c.id=w.customer_id
     LEFT JOIN service_equipment e ON e.id=w.equipment_id
+    LEFT JOIN service_customer_payment_settings ps ON ps.customer_id=w.customer_id
     WHERE w.id=$1`,[req.params.id]);
   if(!r.rowCount) return res.status(404).json({error:'Work order not found'});
   const [inv,est,parts]=await Promise.all([
