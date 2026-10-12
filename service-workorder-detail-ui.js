@@ -135,6 +135,7 @@
   async function openWorkOrderDetail(id){
     try{await refreshWorkOrder(id);d.showModal()}catch(e){alert(e.message)}
   }
+  window.openHtfoWorkOrderDetail=openWorkOrderDetail;
 
   const originalWorkCard=workCard;
   workCard=function(w){return `<button type="button" class="item work-order-row" data-work-id="${w.id}" style="width:100%;text-align:left;color:inherit;background:white">${originalWorkCard(w).replace(/^<div class="item">|<\/div>$/g,'')}</button>`};
