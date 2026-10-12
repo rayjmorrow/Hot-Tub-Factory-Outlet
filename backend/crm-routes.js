@@ -5,6 +5,7 @@ import { q } from './service-db.js';
 
 const router=express.Router();
 const clean=v=>v==null?null:String(v).trim();
+const phoneDigits=v=>String(v||'').replace(/\D/g,'');
 function secret(){if(!process.env.SERVICE_JWT_SECRET)throw new Error('SERVICE_JWT_SECRET is required');return process.env.SERVICE_JWT_SECRET}
 const twilioNumber=()=>String(process.env.TWILIO_PHONE_NUMBER||'').trim();
 const twilioSid=()=>String(process.env.TWILIO_ACCOUNT_SID||'').trim();
@@ -155,9 +156,12 @@ router.post('/crm/twilio/incoming',async(req,res)=>{
     if(!twilioSignatureOk(req))return res.status(403).send('Invalid Twilio signature');
     await ensureSmsTable();
     const b=req.body||{};
-    await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status)
-      VALUES($1,'inbound',$2,$3,$4,$5)
-      ON CONFLICT (twilio_sid) DO NOTHING`,[clean(b.MessageSid),clean(b.From),clean(b.To),clean(b.Body),clean(b.SmsStatus)||'received']);
+    const from=clean(b.From),to=clean(b.To),body=clean(b.Body),digits=phoneDigits(from);
+    const lead=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND regexp_replace(coalesce(phone,''),'\\D','','g')=$1 ORDER BY received_at DESC LIMIT 1",[digits])).rows[0];
+    await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id)
+      VALUES($1,'inbound',$2,$3,$4,$5,$6)
+      ON CONFLICT (twilio_sid) DO UPDATE SET lead_submission_id=COALESCE(crm_sms_messages.lead_submission_id,EXCLUDED.lead_submission_id)`,[clean(b.MessageSid),from,to,body,clean(b.SmsStatus)||'received',lead?.submission_id||null]);
+    if(lead?.submission_id)await q("UPDATE crm_website_leads SET last_activity_at=NOW(),updated_at=NOW() WHERE submission_id=$1",[lead.submission_id]);
     res.type('text/xml').send('<Response></Response>');
   }catch(e){res.status(500).send('SMS ingest failed')}
 });
@@ -189,10 +193,13 @@ router.post('/crm/shadow/inbound',async(req,res)=>{
     const status=clean(b.status)||'shadow';
     if(!from||!body)return res.status(400).json({error:'from and body are required'});
     const shadowSid=externalId?('shadow:'+externalId):('shadow:'+crypto.createHash('sha256').update([from,to,body].join('|')).digest('hex').slice(0,48));
-    await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status)
-      VALUES($1,'inbound-shadow',$2,$3,$4,$5)
-      ON CONFLICT (twilio_sid) DO NOTHING`,[shadowSid,from,to,body,status]);
-    res.json({ok:true,id:shadowSid});
+    const digits=phoneDigits(from);
+    const lead=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND regexp_replace(coalesce(phone,''),'\\D','','g')=$1 ORDER BY received_at DESC LIMIT 1",[digits])).rows[0];
+    await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id)
+      VALUES($1,'inbound-shadow',$2,$3,$4,$5,$6)
+      ON CONFLICT (twilio_sid) DO UPDATE SET lead_submission_id=COALESCE(crm_sms_messages.lead_submission_id,EXCLUDED.lead_submission_id)`,[shadowSid,from,to,body,status,lead?.submission_id||null]);
+    if(lead?.submission_id)await q("UPDATE crm_website_leads SET last_activity_at=NOW(),updated_at=NOW() WHERE submission_id=$1",[lead.submission_id]);
+    res.json({ok:true,id:shadowSid,matched:Boolean(lead?.submission_id)});
   }catch(e){res.status(500).json({error:e.message})}
 });
 
