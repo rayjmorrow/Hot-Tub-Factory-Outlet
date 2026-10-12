@@ -28,8 +28,9 @@ async function loadBill(id){
   }else{
     invoice=(await q(`UPDATE service_invoices SET subtotal=$2,tax_amount=$3,total_amount=$4,status=CASE WHEN amount_paid >= $4 THEN 'paid' WHEN amount_paid>0 THEN 'partial' ELSE 'open' END,updated_at=NOW() WHERE id=$1 RETURNING *`,[invoice.id,subtotal,tax,total])).rows[0];
   }
-  const payments=(await q('SELECT amount,payment_method,received_at FROM service_payments WHERE invoice_id=$1 ORDER BY received_at DESC',[invoice.id])).rows;
-  return{workOrder:w,invoice,balance:num(Number(invoice.total_amount)-Number(invoice.amount_paid||0)),payments};
+  await q('UPDATE service_invoice_line_items SET invoice_id=$2 WHERE work_order_id=$1 AND invoice_id IS NULL',[w.id,invoice.id]).catch(()=>{});
+  const [payments,lineItems]=(await Promise.all([q('SELECT amount,payment_method,received_at FROM service_payments WHERE invoice_id=$1 ORDER BY received_at DESC',[invoice.id]),q('SELECT description,sku,quantity,unit_price,line_total FROM service_invoice_line_items WHERE work_order_id=$1 ORDER BY id',[w.id])])).map(x=>x.rows);
+  return{workOrder:w,invoice,balance:num(Number(invoice.total_amount)-Number(invoice.amount_paid||0)),payments,lineItems};
 }
 function billText(x){
   const w=x.workOrder,i=x.invoice;
@@ -45,8 +46,9 @@ function billText(x){
     `Diagnostic: $${num(w.diagnostic_amount).toFixed(2)}`,
     `Labor: $${num(w.labor_amount).toFixed(2)}`,
     `Parts: $${num(w.parts_amount).toFixed(2)}`,
-    `Trip: $${num(w.trip_amount).toFixed(2)}`,
-    `Tax: $${num(w.tax_amount).toFixed(2)}`,
+    `Trip: ${num(w.trip_amount).toFixed(2)}`,
+    ...(x.lineItems||[]).map(li=>`Part: ${li.description} — ${Number(li.quantity||1)} × ${num(li.unit_price).toFixed(2)} = ${num(li.line_total).toFixed(2)}`),
+    `Tax: ${num(w.tax_amount).toFixed(2)}`,
     `Total: $${num(i.total_amount).toFixed(2)}`,
     `Paid: $${num(i.amount_paid).toFixed(2)}`,
     `Balance due: $${num(x.balance).toFixed(2)}`
