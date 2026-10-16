@@ -23,6 +23,18 @@ jobs:
     steps:
       - name: Check out HTFO website
         uses: actions/checkout@v4
+      - name: Verify essential HTFO pages before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in index.html hot-tubs.html hot-tubs-pittsburgh-pa.html hot-tubs-wexford-pa.html hot-tubs-monroeville-pa.html sitemap.xml CNAME .nojekyll; do
+            test -f "$file" || { echo "::error file=$file::Missing file required for HTFO publication"; exit 1; }
+          done
+          grep -Fq 'hottubfactoryoutlet.com' CNAME
+          grep -Fq 'Hot tubs for sale near Pittsburgh.' hot-tubs.html
+          grep -Fq 'Hot tubs for sale near Pittsburgh, PA' hot-tubs-pittsburgh-pa.html
+          grep -Fq 'hot-tubs-monroeville-pa.html' sitemap.xml
+          echo "Validated site files for commit $GITHUB_SHA"
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload static website
