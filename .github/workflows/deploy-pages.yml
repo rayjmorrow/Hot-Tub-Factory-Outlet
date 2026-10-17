@@ -44,3 +44,22 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify deployed HTFO pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            catalog=$(curl -fsSL --max-time 20 "https://hottubfactoryoutlet.com/hot-tubs.html?deploy_check=$GITHUB_SHA" || true)
+            monroeville=$(curl -fsSL --max-time 20 "https://hottubfactoryoutlet.com/hot-tubs-monroeville-pa.html?deploy_check=$GITHUB_SHA" || true)
+            wexford=$(curl -fsSL --max-time 20 "https://hottubfactoryoutlet.com/wexford-location/?deploy_check=$GITHUB_SHA" || true)
+            if grep -Fq 'Hot tubs for sale near Pittsburgh.' <<< "$catalog" &&
+               grep -Fq 'Hot tubs for sale in Monroeville' <<< "$monroeville" &&
+               grep -Fq 'Our Wexford showroom page has moved' <<< "$wexford"; then
+              echo "Live HTFO SEO pages verified for commit $GITHUB_SHA"
+              exit 0
+            fi
+            echo "Public pages have not updated yet (check $i of 5)"
+            sleep 12
+          done
+          echo "::error::Deployed site does not expose the expected HTFO SEO pages. Check Pages domain mapping and publishing configuration."
+          exit 1
