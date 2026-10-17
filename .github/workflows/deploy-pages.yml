@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for file in index.html hot-tubs.html hot-tubs-pittsburgh-pa.html hot-tubs-wexford-pa.html hot-tubs-monroeville-pa.html sitemap.xml CNAME .nojekyll; do
+          for file in index.html hot-tubs.html hot-tubs-pittsburgh-pa.html hot-tubs-wexford-pa.html hot-tubs-monroeville-pa.html wexford-location.html wexford-location/index.html sitemap.xml CNAME .nojekyll; do
             test -f "$file" || { echo "::error file=$file::Missing file required for HTFO publication"; exit 1; }
           done
           grep -Fq 'hottubfactoryoutlet.com' CNAME
