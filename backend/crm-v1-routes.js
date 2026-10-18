@@ -153,6 +153,47 @@ router.get('/crm/v1/leads',...guard,async(req,res)=>{try{
   res.json((await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,next_follow_up_at,last_contacted_at,last_activity_at,has_opportunity,ghl_opportunity_status,ghl_opportunity_id,ghl_pipeline_id,ghl_pipeline_stage_id,ghl_assigned_user_id,ghl_assigned_user_name,ghl_opportunity_value,ghl_stage_probability,ghl_last_stage_change_at,ghl_last_status_change_at,lifecycle_stage,pipeline_stage,ghl_contact_id,received_at,updated_at FROM crm_website_leads ${w} ORDER BY received_at DESC LIMIT $${p.length}`,p)).rows);
 }catch(e){res.status(500).json({error:e.message})}});
 
+router.get('/crm/v1/conversations',...guard,async(req,res)=>{try{
+  await ensure();
+  const days=Math.min(365,Math.max(1,Number(req.query.days)||30));
+  const limit=Math.min(1000,Math.max(1,Number(req.query.limit)||300));
+  const channel=clean(req.query.channel)||'all',direction=clean(req.query.direction)||'all',term=clean(req.query.q)||'';
+  const params=[String(days),String(limit),term?('%'+term+'%'):null,channel,direction];
+  const rows=(await q(`
+    WITH sms AS (
+      SELECT m.id::text message_id,'sms'::text channel,m.direction,NULL::text subject,m.body,m.status,m.created_at occurred_at,
+        COALESCE(m.lead_submission_id,match.submission_id) submission_id
+      FROM crm_sms_messages m
+      LEFT JOIN LATERAL (
+        SELECT l.submission_id FROM crm_website_leads l
+        WHERE l.deleted_at IS NULL
+          AND regexp_replace(coalesce(l.phone,''),'\\D','','g')=regexp_replace(
+            CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN coalesce(m.from_number,'') ELSE coalesce(m.to_number,'') END,
+            '\\D','','g')
+          AND regexp_replace(coalesce(l.phone,''),'\\D','','g')<>''
+        ORDER BY l.received_at DESC LIMIT 1
+      ) match ON true
+      WHERE m.created_at >= NOW()-($1::text||' days')::interval
+    ),
+    email AS (
+      SELECT e.id::text message_id,'email'::text channel,e.direction,e.subject,e.body,e.status,COALESCE(e.received_at,e.created_at) occurred_at,e.submission_id
+      FROM crm_email_messages e
+      WHERE COALESCE(e.received_at,e.created_at) >= NOW()-($1::text||' days')::interval
+    ),
+    messages AS (SELECT * FROM sms UNION ALL SELECT * FROM email)
+    SELECT m.*,l.first_name,l.last_name,l.phone,l.email,l.assigned_to,l.showroom,l.pipeline_stage,l.product_interest,l.brand_interest,l.model_interest
+    FROM messages m
+    LEFT JOIN crm_website_leads l ON l.submission_id=m.submission_id AND l.deleted_at IS NULL
+    WHERE ($4='all' OR m.channel=$4)
+      AND ($5='all' OR CASE WHEN $5='inbound' THEN lower(coalesce(m.direction,'')) LIKE 'inbound%' ELSE lower(coalesce(m.direction,'')) NOT LIKE 'inbound%' END)
+      AND ($3::text IS NULL OR concat_ws(' ',l.first_name,l.last_name,l.phone,l.email,l.assigned_to,m.subject,m.body) ILIKE $3)
+    ORDER BY m.occurred_at DESC
+    LIMIT $2::int
+  `,params)).rows;
+  const stats=rows.reduce((a,r)=>{a.total++;a[r.channel]=(a[r.channel]||0)+1;if(String(r.direction||'').toLowerCase().startsWith('inbound'))a.inbound++;else a.outbound++;return a},{total:0,sms:0,email:0,inbound:0,outbound:0});
+  res.json({days,stats,conversations:rows});
+}catch(e){res.status(500).json({error:e.message})}});
+
 router.get('/crm/v1/leads/:id',...guard,async(req,res)=>{try{
   await ensure();const lead=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,next_follow_up_at,last_contacted_at,last_activity_at,has_opportunity,ghl_opportunity_status,ghl_opportunity_id,ghl_pipeline_id,ghl_pipeline_stage_id,ghl_assigned_user_id,ghl_assigned_user_name,ghl_opportunity_value,ghl_stage_probability,ghl_last_stage_change_at,ghl_last_status_change_at,lifecycle_stage,pipeline_stage,ghl_contact_id,received_at,updated_at FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL`,[req.params.id])).rows[0];if(!lead)return res.status(404).json({error:'Lead not found'});
   const [notes,smsRows,emails,tasks]=await Promise.all([q('SELECT id,note_type,body,quoted_price,financing_interest,created_by,created_at FROM crm_lead_notes WHERE submission_id=$1 ORDER BY created_at DESC',[req.params.id]),lead.phone?q(`SELECT id,direction,from_number,to_number,body,status,created_at FROM crm_sms_messages WHERE from_number=$1 OR to_number=$1 OR lead_submission_id=$2 ORDER BY created_at DESC LIMIT 500`,[lead.phone,req.params.id]):Promise.resolve({rows:[]}),q('SELECT * FROM crm_email_messages WHERE submission_id=$1 ORDER BY created_at DESC LIMIT 250',[req.params.id]),q('SELECT * FROM crm_tasks WHERE submission_id=$1 ORDER BY due_at DESC',[req.params.id])]);
