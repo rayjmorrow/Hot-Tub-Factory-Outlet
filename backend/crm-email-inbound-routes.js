@@ -23,7 +23,7 @@ router.post('/crm/email/inbound',async(req,res)=>{
       const body=String(item.ExtractedMarkdownMessage||item.RawTextBody||item.RawHtmlBody||'').trim();if(!body)continue;
       const providerId=clean(item.MessageId)||clean(item.Uuid?.[0]);
       await q("INSERT INTO crm_email_messages(submission_id,to_email,subject,body,provider_id,status,created_by,direction,from_email,received_at) VALUES($1,$2,$3,$4,$5,'received','customer','inbound',$6,NOW())",[submissionId,addr,subject,body,providerId,fromEmail]);
-      await q('UPDATE crm_website_leads SET last_activity_at=NOW(),updated_at=NOW() WHERE submission_id=$1',[submissionId]);saved++;
+      await q("UPDATE crm_website_leads SET last_activity_at=NOW(),pipeline_stage=CASE WHEN pipeline_stage IN ('New Lead','Attempted Contact') THEN 'Two Way Conversation' ELSE pipeline_stage END,updated_at=NOW() WHERE submission_id=$1",[submissionId]);saved++;
       const target=staffEmail(lead.assigned_to||salesKey);if(target){await forward(target,subject,body);forwarded++}
     }
     res.json({ok:true,saved,forwarded});
