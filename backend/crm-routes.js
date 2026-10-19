@@ -164,7 +164,7 @@ router.post('/crm/twilio/incoming',async(req,res)=>{
     await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id)
       VALUES($1,'inbound',$2,$3,$4,$5,$6)
       ON CONFLICT (twilio_sid) DO UPDATE SET lead_submission_id=COALESCE(crm_sms_messages.lead_submission_id,EXCLUDED.lead_submission_id)`,[clean(b.MessageSid),from,to,body,clean(b.SmsStatus)||'received',lead?.submission_id||null]);
-    if(lead?.submission_id)await q("UPDATE crm_website_leads SET last_activity_at=NOW(),updated_at=NOW() WHERE submission_id=$1",[lead.submission_id]);
+    if(lead?.submission_id)await q("UPDATE crm_website_leads SET last_activity_at=NOW(),pipeline_stage=CASE WHEN pipeline_stage IN ('New Lead','Attempted Contact') THEN 'Two Way Conversation' ELSE pipeline_stage END,updated_at=NOW() WHERE submission_id=$1",[lead.submission_id]);
     res.type('text/xml').send('<Response></Response>');
   }catch(e){res.status(500).send('SMS ingest failed')}
 });
@@ -201,7 +201,7 @@ router.post('/crm/shadow/inbound',async(req,res)=>{
     await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id)
       VALUES($1,'inbound-shadow',$2,$3,$4,$5,$6)
       ON CONFLICT (twilio_sid) DO UPDATE SET lead_submission_id=COALESCE(crm_sms_messages.lead_submission_id,EXCLUDED.lead_submission_id)`,[shadowSid,from,to,body,status,lead?.submission_id||null]);
-    if(lead?.submission_id)await q("UPDATE crm_website_leads SET last_activity_at=NOW(),updated_at=NOW() WHERE submission_id=$1",[lead.submission_id]);
+    if(lead?.submission_id)await q("UPDATE crm_website_leads SET last_activity_at=NOW(),pipeline_stage=CASE WHEN pipeline_stage IN ('New Lead','Attempted Contact') THEN 'Two Way Conversation' ELSE pipeline_stage END,updated_at=NOW() WHERE submission_id=$1",[lead.submission_id]);
     res.json({ok:true,id:shadowSid,matched:Boolean(lead?.submission_id)});
   }catch(e){res.status(500).json({error:e.message})}
 });
@@ -226,7 +226,7 @@ router.get('/crm/dashboard',auth,async(req,res)=>{
     q(`SELECT count(*)::int total,
       count(*) FILTER (WHERE received_at>=NOW()-INTERVAL '24 hours')::int last_24_hours,
       count(*) FILTER (WHERE received_at>=NOW()-INTERVAL '7 days')::int last_7_days,
-      count(*) FILTER (WHERE pipeline_stage NOT IN ('Sold','Lost'))::int open
+      count(*) FILTER (WHERE pipeline_stage NOT IN ('Won','Lost'))::int open
       FROM crm_website_leads`),
     q(`SELECT pipeline_stage,count(*)::int count FROM crm_website_leads GROUP BY pipeline_stage ORDER BY count DESC`),
     q(`SELECT source,count(*)::int count FROM crm_website_leads GROUP BY source ORDER BY count DESC LIMIT 10`),
@@ -337,9 +337,9 @@ router.patch('/crm/leads/:submissionId/interest',auth,async(req,res)=>{
 });
 
 router.patch('/crm/leads/:submissionId',auth,async(req,res)=>{
-  const stage=clean(req.body?.pipeline_stage),allowed=new Set(['New Lead','Contacted','Appointment','Visited Showroom','Quoted','Sold','Lost']);
+  const stage=clean(req.body?.pipeline_stage),allowed=new Set(['New Lead','Attempted Contact','Two Way Conversation','Appointment Set','Showroom Visit','Quoted','Won','Lost']);
   if(!allowed.has(stage))return res.status(400).json({error:'Invalid pipeline stage'});
-  const row=(await q(`UPDATE crm_website_leads SET pipeline_stage=$2,lifecycle_stage=CASE WHEN $2='Sold' THEN 'Customer' WHEN $2='Lost' THEN 'Past Prospect' ELSE 'Prospect' END,updated_at=NOW() WHERE submission_id=$1 RETURNING *`,[req.params.submissionId,stage])).rows[0];
+  const row=(await q(`UPDATE crm_website_leads SET pipeline_stage=$2,lifecycle_stage=CASE WHEN $2='Won' THEN 'Customer' WHEN $2='Lost' THEN 'Past Prospect' ELSE 'Prospect' END,updated_at=NOW() WHERE submission_id=$1 RETURNING *`,[req.params.submissionId,stage])).rows[0];
   if(!row)return res.status(404).json({error:'Lead not found'});
   res.json(row);
 });
