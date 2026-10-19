@@ -83,7 +83,7 @@ export async function syncTwilioMessages(days=14,limit=1000){
         VALUES($1,$2,$3,$4,$5,$6,COALESCE($7::timestamptz,NOW()),$8)
         ON CONFLICT (twilio_sid) DO UPDATE SET lead_submission_id=COALESCE(crm_sms_messages.lead_submission_id,EXCLUDED.lead_submission_id) RETURNING id`,
         [String(m.sid||''),direction,from,to,String(m.body||''),String(m.status||''),m.date_sent||m.date_created||null,lead?.submission_id||null]);
-      if(lead?.submission_id&&direction==='inbound')await q("UPDATE crm_website_leads SET last_activity_at=GREATEST(COALESCE(last_activity_at,NOW()),COALESCE($2::timestamptz,NOW())),updated_at=NOW() WHERE submission_id=$1",[lead.submission_id,m.date_sent||m.date_created||null]).catch(()=>{});
+      if(lead?.submission_id&&direction==='inbound')await q("UPDATE crm_website_leads SET last_activity_at=GREATEST(COALESCE(last_activity_at,NOW()),COALESCE($2::timestamptz,NOW())),pipeline_stage=CASE WHEN pipeline_stage IN ('New Lead','Attempted Contact') THEN 'Two Way Conversation' ELSE pipeline_stage END,updated_at=NOW() WHERE submission_id=$1",[lead.submission_id,m.date_sent||m.date_created||null]).catch(()=>{});
       if(rs.rowCount)inserted++;
     }
     const next=j.next_page_uri;
