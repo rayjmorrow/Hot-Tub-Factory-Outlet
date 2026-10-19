@@ -8,7 +8,21 @@ const specs={'Cal Spas|Aloha':['1 seat','78 × 34 × 29 in','Lounger','14 jets']
 const plugAndPlay={'AquaSolus':['Brook','Cypress','Zephyr','Cove'],'American Whirlpool':['101','151','160'],'Vita Spa':['Duet','Image','Voeux'],'Cal Spas':['Aloha','Balboa','Kona','Hawaiian','Maui'],'Eco Spas':['E1','E2','E3','E4','E5','E6'],'Innova Spas':['Storm','Fantom','Monsoon','Stream 110V']};
 function supports110V(b,m){return (plugAndPlay[b]||[]).includes(m)}
 function capacityOf(b,m){const a=specs[b+'|'+m];if(!a)return null;const v=a[0]||'';const n=v.match(/^(?:Up to )?(\d+) seats?$/i);return n?Number(n[1]):null}
-function loungerCountOf(b,m){const a=specs[b+'|'+m];if(!a)return null;const layout=a.find(v=>/lounger|bench/i.test(v));if(!layout)return null;if(/bench\s*\/\s*lounger|configurations/i.test(layout))return null;if(/dual lounger/i.test(layout))return 2;if(/lounger/i.test(layout))return 1;if(/bench/i.test(layout))return 0;return null}
+function loungerCountOf(b,m){
+ // Manufacturer naming rules apply to actual model codes, not arbitrary series names.
+ if(b==='American Whirlpool'&&/^\d+[012]$/.test(m))return Number(m.slice(-1));
+ if(b==='Cal Spas'&&/\d+[A-Z]*DL$/i.test(m))return 2;
+ if(b==='Cal Spas'&&/\d+[A-Z]*L$/i.test(m))return 1;
+ if(b==='Cal Spas'&&/\d+[A-Z]*B$/i.test(m))return 0;
+ if(b==='Vita Spa'&&m==='Salon')return 2;
+ const a=specs[b+'|'+m];if(!a)return null;
+ const layout=a.find(v=>/lounger|bench/i.test(v));if(!layout)return null;
+ if(/bench\s*\/\s*lounger|configurations/i.test(layout))return null;
+ if(/dual lounger/i.test(layout))return 2;
+ if(/lounger/i.test(layout))return 1;
+ if(/bench/i.test(layout))return 0;
+ return null;
+}
 function matchingModels(x){return x[5].split('|').filter(m=>{
  if(state.power!=='all'&&!supports110V(x[0],m))return false;
  const seats=capacityOf(x[0],m),loungers=loungerCountOf(x[0],m);
