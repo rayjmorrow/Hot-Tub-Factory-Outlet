@@ -40,6 +40,13 @@ async function ensure(){
     ALTER TABLE crm_email_messages ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS idx_crm_tasks_due ON crm_tasks(status,due_at);
     CREATE INDEX IF NOT EXISTS idx_crm_email_submission ON crm_email_messages(submission_id,created_at DESC);`);
+  await q(`UPDATE crm_website_leads SET pipeline_stage=CASE pipeline_stage
+    WHEN 'Contacted' THEN 'Attempted Contact'
+    WHEN 'Appointment' THEN 'Appointment Set'
+    WHEN 'Visited Showroom' THEN 'Showroom Visit'
+    WHEN 'Sold' THEN 'Won'
+    ELSE pipeline_stage END
+    WHERE pipeline_stage IN ('Contacted','Appointment','Visited Showroom','Sold')`);
 }
 function splitName(n){const p=String(n||'').trim().split(/\s+/).filter(Boolean);return{first:p.shift()||null,last:p.length?p.join(' '):null}}
 function showroomFrom(tags=[]){const a=(Array.isArray(tags)?tags:[]).map(x=>String(x).toLowerCase());return a.includes('showroom-wexford')?'Wexford':a.includes('showroom-monroeville')?'Monroeville':a.includes('showroom-either')?'Either':null}
@@ -72,26 +79,29 @@ async function email(to,subject,body,name,user,submissionId){
 
 function normalizePipelineStage(name,status){
   const s=String(status||'').toLowerCase(),n=String(name||'').trim().toLowerCase();
-  if(s==='won')return 'Sold';
+  if(s==='won')return 'Won';
   if(s==='lost'||s==='abandoned')return 'Lost';
   if(!n)return null;
   if(n.includes('new'))return 'New Lead';
-  if(n.includes('contact'))return 'Contacted';
-  if(n.includes('appoint'))return 'Appointment';
-  if(n.includes('visit')||n.includes('showroom'))return 'Visited Showroom';
+  if(n.includes('attempt'))return 'Attempted Contact';
+  if(n.includes('two way')||n.includes('2 way')||n.includes('conversation')||n.includes('engaged'))return 'Two Way Conversation';
+  if(n.includes('appoint'))return 'Appointment Set';
+  if(n.includes('visit')||n.includes('showroom'))return 'Showroom Visit';
   if(n.includes('quot')||n.includes('proposal')||n.includes('price'))return 'Quoted';
-  if(n.includes('sold')||n.includes('won'))return 'Sold';
+  if(n.includes('sold')||n.includes('won'))return 'Won';
+  if(n.includes('contact'))return 'Attempted Contact';
   if(n.includes('lost')||n.includes('dead')||n.includes('closed'))return 'Lost';
   return null;
 }
 function stageFromHighLevel(status,probability){
   const s=String(status||'').toLowerCase(),p=Number(probability)||0;
-  if(s==='won')return 'Sold';
+  if(s==='won')return 'Won';
   if(s==='lost'||s==='abandoned')return 'Lost';
   if(p<=20)return 'New Lead';
-  if(p<=35)return 'Contacted';
-  if(p<=50)return 'Appointment';
-  if(p<=65)return 'Visited Showroom';
+  if(p<=30)return 'Attempted Contact';
+  if(p<=40)return 'Two Way Conversation';
+  if(p<=55)return 'Appointment Set';
+  if(p<=70)return 'Showroom Visit';
   return 'Quoted';
 }
 function contactIdFromOpportunity(x){
@@ -244,7 +254,7 @@ router.post('/crm/v1/campaigns/email/send',...guard,async(req,res)=>{try{
   res.json({ok:true,total:rows.length,sent,skipped,failed});
 }catch(e){res.status(500).json({error:e.message})}});
 
-router.post('/crm/v1/campaigns/sms/send',...guard,async(req,res)=>{try{await ensure();const ids=Array.isArray(req.body?.submission_ids)?req.body.submission_ids.map(clean).filter(Boolean).slice(0,250):[],tpl=String(req.body?.template||'').trim();if(String(req.body?.confirm||'')!=='SEND')return res.status(400).json({error:'Campaign send requires confirmation'});if(!ids.length||!tpl)return res.status(400).json({error:'Recipients and template are required'});const rows=(await q(`SELECT submission_id,first_name,last_name,phone,product_interest,brand_interest,model_interest FROM crm_website_leads WHERE submission_id=ANY($1::text[])`,[ids])).rows;let sent=0,suppressed=0,failed=0;for(const l of rows){if(!l.phone||await opted(l.phone)){suppressed++;continue}try{const body=merge(tpl,l),m=await sms(l.phone,body);await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id) VALUES($1,'outbound',$2,$3,$4,$5,$6) ON CONFLICT(twilio_sid) DO NOTHING`,[m.sid,salesNumber(),l.phone,body,m.status||'queued',l.submission_id]);await q('UPDATE crm_website_leads SET last_contacted_at=NOW(),updated_at=NOW() WHERE submission_id=$1',[l.submission_id]);sent++}catch{failed++}}res.json({ok:true,total:rows.length,sent,suppressed,failed})}catch(e){res.status(500).json({error:e.message})}});
+router.post('/crm/v1/campaigns/sms/send',...guard,async(req,res)=>{try{await ensure();const ids=Array.isArray(req.body?.submission_ids)?req.body.submission_ids.map(clean).filter(Boolean).slice(0,250):[],tpl=String(req.body?.template||'').trim();if(String(req.body?.confirm||'')!=='SEND')return res.status(400).json({error:'Campaign send requires confirmation'});if(!ids.length||!tpl)return res.status(400).json({error:'Recipients and template are required'});const rows=(await q(`SELECT submission_id,first_name,last_name,phone,product_interest,brand_interest,model_interest FROM crm_website_leads WHERE submission_id=ANY($1::text[])`,[ids])).rows;let sent=0,suppressed=0,failed=0;for(const l of rows){if(!l.phone||await opted(l.phone)){suppressed++;continue}try{const body=merge(tpl,l),m=await sms(l.phone,body);await q(`INSERT INTO crm_sms_messages(twilio_sid,direction,from_number,to_number,body,status,lead_submission_id) VALUES($1,'outbound',$2,$3,$4,$5,$6) ON CONFLICT(twilio_sid) DO NOTHING`,[m.sid,salesNumber(),l.phone,body,m.status||'queued',l.submission_id]);await q("UPDATE crm_website_leads SET last_contacted_at=NOW(),pipeline_stage=CASE WHEN pipeline_stage='New Lead' THEN 'Attempted Contact' ELSE pipeline_stage END,updated_at=NOW() WHERE submission_id=$1",[l.submission_id]);sent++}catch{failed++}}res.json({ok:true,total:rows.length,sent,suppressed,failed})}catch(e){res.status(500).json({error:e.message})}});
 
 router.delete('/crm/v1/leads/:id',...guard,async(req,res)=>{try{
   if(!isManager(req))return res.status(403).json({error:'Manager access required'});
@@ -256,7 +266,7 @@ router.delete('/crm/v1/leads/:id',...guard,async(req,res)=>{try{
   res.json({ok:true,lead:r.rows[0]});
 }catch(e){res.status(500).json({error:e.message})}});
 
-router.get('/crm/v1/reports/summary',...guard,async(req,res)=>{try{await ensure();const days=Math.min(365,Math.max(1,Number(req.query.days)||30)),overall=(await q(`SELECT count(*)::int leads,count(*) FILTER(WHERE pipeline_stage='Appointment')::int appointments,count(*) FILTER(WHERE pipeline_stage='Visited Showroom')::int showroom_visits,count(*) FILTER(WHERE pipeline_stage='Quoted')::int quoted,count(*) FILTER(WHERE pipeline_stage='Sold')::int sold,count(*) FILTER(WHERE pipeline_stage='Lost')::int lost FROM crm_website_leads WHERE received_at>=NOW()-($1::text||' days')::interval`,[String(days)])).rows[0];const grp=async col=>(await q('SELECT '+col+' label,count(*)::int leads,count(*) FILTER(WHERE pipeline_stage=\'Sold\')::int sold FROM crm_website_leads WHERE received_at>=NOW()-($1::text||\' days\')::interval GROUP BY '+col+' ORDER BY leads DESC NULLS LAST LIMIT 50',[String(days)])).rows;const [sources,salespeople,products,brands,models]=await Promise.all([grp('source'),grp('assigned_to'),grp('product_interest'),grp('brand_interest'),grp('model_interest')]);res.json({days,overall,sources,salespeople,products,brands,models})}catch(e){res.status(500).json({error:e.message})}});
+router.get('/crm/v1/reports/summary',...guard,async(req,res)=>{try{await ensure();const days=Math.min(365,Math.max(1,Number(req.query.days)||30)),overall=(await q(`SELECT count(*)::int leads,count(*) FILTER(WHERE pipeline_stage='Appointment Set')::int appointments,count(*) FILTER(WHERE pipeline_stage='Showroom Visit')::int showroom_visits,count(*) FILTER(WHERE pipeline_stage='Quoted')::int quoted,count(*) FILTER(WHERE pipeline_stage='Won')::int sold,count(*) FILTER(WHERE pipeline_stage='Lost')::int lost FROM crm_website_leads WHERE received_at>=NOW()-($1::text||' days')::interval`,[String(days)])).rows[0];const grp=async col=>(await q('SELECT '+col+' label,count(*)::int leads,count(*) FILTER(WHERE pipeline_stage=\'Won\')::int sold FROM crm_website_leads WHERE received_at>=NOW()-($1::text||\' days\')::interval GROUP BY '+col+' ORDER BY leads DESC NULLS LAST LIMIT 50',[String(days)])).rows;const [sources,salespeople,products,brands,models]=await Promise.all([grp('source'),grp('assigned_to'),grp('product_interest'),grp('brand_interest'),grp('model_interest')]);res.json({days,overall,sources,salespeople,products,brands,models})}catch(e){res.status(500).json({error:e.message})}});
 
 router.post('/crm/v1/reconcile/highlevel',...guard,async(req,res)=>{try{
   if(!isManager(req))return res.status(403).json({error:'Manager access required'});
