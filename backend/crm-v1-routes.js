@@ -40,6 +40,7 @@ async function ensure(){
     ALTER TABLE crm_email_messages ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS idx_crm_tasks_due ON crm_tasks(status,due_at);
     CREATE INDEX IF NOT EXISTS idx_crm_email_submission ON crm_email_messages(submission_id,created_at DESC);`);
+  await q("CREATE TABLE IF NOT EXISTS crm_highlevel_events(id BIGSERIAL PRIMARY KEY,external_id TEXT NOT NULL UNIQUE,submission_id TEXT REFERENCES crm_website_leads(submission_id) ON DELETE CASCADE,ghl_contact_id TEXT,ghl_conversation_id TEXT,event_type TEXT NOT NULL,direction TEXT,subject TEXT,body TEXT,author TEXT,status TEXT,occurred_at TIMESTAMPTZ NOT NULL,raw JSONB NOT NULL DEFAULT '{}'::jsonb,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
   await q(`UPDATE crm_website_leads SET pipeline_stage=CASE pipeline_stage
     WHEN 'Contacted' THEN 'Attempted Contact'
     WHEN 'Appointment' THEN 'Appointment Set'
@@ -160,7 +161,11 @@ router.get('/crm/v1/leads',...guard,async(req,res)=>{try{
   const p=['%'+term+'%'];let w=`WHERE deleted_at IS NULL AND concat_ws(' ',first_name,last_name,email,phone,source,note,product_interest,brand_interest,model_interest,tags::text,payload::text) ILIKE $1`;
   if(stage){p.push(stage);w+=' AND pipeline_stage=$'+p.length}if(product){p.push(product);w+=' AND lower(coalesce(product_interest,\'\'))=lower($'+p.length+')'}if(brand){p.push('%'+brand+'%');w+=' AND coalesce(brand_interest,\'\') ILIKE $'+p.length}if(model){p.push('%'+model+'%');w+=' AND coalesce(model_interest,\'\') ILIKE $'+p.length}if(assigned){p.push(assigned);w+=' AND lower(coalesce(assigned_to,\'\'))=lower($'+p.length+')'}if(showroom){p.push(showroom);w+=' AND lower(coalesce(showroom,\'\'))=lower($'+p.length+')'}
   p.push(Math.min(1500,Math.max(1,Number(req.query.limit)||500)));
-  res.json((await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,next_follow_up_at,last_contacted_at,last_activity_at,has_opportunity,ghl_opportunity_status,ghl_opportunity_id,ghl_pipeline_id,ghl_pipeline_stage_id,ghl_assigned_user_id,ghl_assigned_user_name,ghl_opportunity_value,ghl_stage_probability,ghl_last_stage_change_at,ghl_last_status_change_at,lifecycle_stage,pipeline_stage,ghl_contact_id,received_at,updated_at FROM crm_website_leads ${w} ORDER BY received_at DESC LIMIT $${p.length}`,p)).rows);
+  res.json((await q(`SELECT * FROM (SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,next_follow_up_at,last_contacted_at,last_activity_at,has_opportunity,ghl_opportunity_status,ghl_opportunity_id,ghl_pipeline_id,ghl_pipeline_stage_id,ghl_assigned_user_id,ghl_assigned_user_name,ghl_opportunity_value,ghl_stage_probability,ghl_last_stage_change_at,ghl_last_status_change_at,lifecycle_stage,pipeline_stage,ghl_contact_id,received_at,updated_at , GREATEST(
+    (SELECT MAX(m.created_at) FROM crm_sms_messages m WHERE m.lead_submission_id=crm_website_leads.submission_id AND lower(m.direction) LIKE 'inbound%' AND m.status IS DISTINCT FROM 'historical-optout'),
+    (SELECT MAX(COALESCE(e.received_at,e.created_at)) FROM crm_email_messages e WHERE e.submission_id=crm_website_leads.submission_id AND lower(e.direction)='inbound'),
+    (SELECT MAX(h.occurred_at) FROM crm_highlevel_events h WHERE h.submission_id=crm_website_leads.submission_id AND lower(h.direction)='inbound')
+  ) AS last_customer_reply_at FROM crm_website_leads ${w}) activity_leads ORDER BY GREATEST(received_at,last_customer_reply_at) DESC,submission_id LIMIT $${p.length}`,p)).rows);
 }catch(e){res.status(500).json({error:e.message})}});
 
 router.get('/crm/v1/conversations',...guard,async(req,res)=>{try{
