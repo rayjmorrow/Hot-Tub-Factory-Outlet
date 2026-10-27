@@ -419,6 +419,50 @@ router.delete('/crm/v1/sales-drafts/:id/check-images/:paymentIndex',...guard,sal
  await q('DELETE FROM crm_sales_check_images WHERE draft_id=$1 AND payment_index=$2',[c.row.id,c.index]);res.json({ok:true})
  }catch(e){res.status(500).json({error:'Unable to remove check image'})}
 });
+
+// Confidential MSRP pricebook. Dealer cost never returned to sales users.
+let salesPricebookSchema;
+function ensureSalesPricebook(){
+ if(!salesPricebookSchema)salesPricebookSchema=q(`CREATE TABLE IF NOT EXISTS crm_sales_pricebook (
+ brand TEXT NOT NULL, model TEXT NOT NULL, wholesale_cents BIGINT NOT NULL CHECK (wholesale_cents>0),
+ source TEXT NOT NULL DEFAULT '', updated_by TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(brand,model)
+ )`).catch(e=>{salesPricebookSchema=null;throw e});
+ return salesPricebookSchema;
+}
+const listFromWholesale=cents=>{
+ const par=((cents/100+750)/0.6)+600;
+ return Math.ceil((par/0.76)*1.33);
+};
+router.get('/crm/v1/sales-pricebook/quote',...guard,salesIdentity,async(req,res)=>{
+ try{
+  const brand=String(req.query.brand||'').trim(),model=String(req.query.model||'').trim();
+  if(!brand||!model)return res.status(400).json({error:'Brand and model required'});
+  await ensureSalesPricebook();
+  const p=(await q('SELECT wholesale_cents FROM crm_sales_pricebook WHERE lower(brand)=lower($1) AND lower(model)=lower($2)',[brand,model])).rows[0];
+  if(!p)return res.status(404).json({error:'No approved model price available'});
+  res.json({brand,model,list_price_cents:listFromWholesale(Number(p.wholesale_cents))*100});
+ }catch(e){res.status(500).json({error:'Unable to retrieve model price'})}
+});
+router.post('/crm/v1/admin/sales-pricebook/import',...guard,salesIdentity,async(req,res)=>{
+ if(!salesAdmin(req))return res.status(403).json({error:'Administrator access required'});
+ try{
+  const rows=req.body?.prices;
+  if(!Array.isArray(rows)||rows.length<1||rows.length>250)return res.status(400).json({error:'Provide 1–250 model prices'});
+  const cleanRows=rows.map(x=>{
+   const brand=String(x.brand||'').trim(),model=String(x.model||'').trim(),cost=Number(x.wholesale_cents),source=String(x.source||'').slice(0,160);
+   if(!['American Whirlpool','Vita Spa','Cal Spas','AquaSolus','Eco Spas','Innova Spas'].includes(brand)||!model||model.length>80||!Number.isSafeInteger(cost)||cost<=0||cost>100000000)return null;
+   return {brand,model,cost,source};
+  });
+  if(cleanRows.some(x=>!x))return res.status(400).json({error:'Invalid model or wholesale amount'});
+  if(new Set(cleanRows.map(x=>x.brand.toLowerCase()+'|'+x.model.toLowerCase())).size!==cleanRows.length)return res.status(400).json({error:'Duplicate brand and model in import'});
+  await ensureSalesPricebook();
+  for(const x of cleanRows)await q(`INSERT INTO crm_sales_pricebook(brand,model,wholesale_cents,source,updated_by)
+    VALUES($1,$2,$3,$4,$5) ON CONFLICT(brand,model) DO UPDATE SET wholesale_cents=excluded.wholesale_cents,
+    source=excluded.source,updated_by=excluded.updated_by,updated_at=NOW()`,[x.brand,x.model,x.cost,x.source,req.user.name||req.user.username]);
+  res.json({ok:true,imported:cleanRows.length});
+ }catch(e){res.status(500).json({error:'Unable to import prices'})}
+});
 router.get('/crm/v1/admin/order-list',...guard,salesIdentity,async(req,res)=>{if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,created_by,updated_at FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 1000')).rows;res.json(rows.map(r=>{const d=r.document,items=d.items||[],lifts=items.filter(x=>/lift|roller|LFSE|CLP100|VSL400|VSLA201/i.test(x.description)),steps=items.filter(x=>/step|STCS|STDS/i.test(x.description));return{id:r.id,status:'Draft',sale_date:d.contract_date||'',salesperson:d.salesperson||r.created_by,brand:d.spa?.brand||'',serial:d.spa?.serial||'',model:d.spa?.model||'',shell:d.spa?.shell||'',cabinet:d.spa?.cabinet||'',manufacturer_add_ons:d.spa?.manufacturer_add_ons||'',other_items:items.filter(x=>!lifts.includes(x)&&!steps.includes(x)).map(x=>x.quantity+' × '+x.description).join('; '),customer_last_name:d.customer?.last_name||'',cover_lift_model:lifts.map(x=>x.quantity+' × '+x.description).join('; '),step_model:steps.map(x=>x.quantity+' × '+x.description).join('; ')}}))}catch(e){res.status(500).json({error:e.message})}});
 router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();res.json((await q('SELECT * FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
 router.post('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);document.salesperson=req.user.name||req.user.username;await ensureSalesDrafts();const who=String(req.user.name||req.user.username);res.status(201).json((await q('INSERT INTO crm_sales_drafts(document,created_by,updated_by,owner_user_id) VALUES($1::jsonb,$2,$2,$3) RETURNING *',[JSON.stringify(document),who,req.user.sub])).rows[0])}catch(e){res.status(400).json({error:e.message})}});
