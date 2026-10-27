@@ -26,27 +26,47 @@ Q('#saSpa').innerHTML=`<label>Brand<select id="saBrand"><option value="">Choose 
 
 // Product configuration starter lists, not guaranteed for every model/year.
 // Explicit custom entry keeps the salesperson from being blocked on uncommon configurations.
+// 2026 factory option compatibility. Retail option amounts only; dealer base costs remain on the server.
+// Model-specific options are conservative: N/A / standard/included entries are intentionally omitted.
+const FACTORY_OPTIONS_2026=(async()=>{
+ const input=Uint8Array.from(atob('eNqtWcuS2sgS/ZUKFg46rvpaz5LwDgHd9gRtEw1u9/XMLApUBo2FCpekfng8u/mS+2nzJZOlNyAhifamI6g8JzMrnyX7zx7bhb03v/7aU9DbGbI99kg5enTDDVIwGroc/ULDAPU/7tacODRAIUP2zJCVe/QKLWamLKPJt8jdbakfXvQkQ5d/lzrpIt6SkRYq1f/K6IpT6rAtmrPId9A8pJyynqTjBKBfbljE0cjlq8gjoct8NIu2u55kGingtVkhNRL60J6jG+Y51EE2C0OwsuDkGcRmInYcV5CIhzTuxFT0hGy4Zn+xcQMEURQqH13PQ1FyP7RifsiZh5bsqQgb3Ggg/2SVqD8ivs9CtBSI7dL14RZx3NMcfIhVlUw/MN8NKfpEHmhPUpPDNBV57NHja/SePqL7KXpLCQQ7yxKcL1i02sDfXeA6oEFRX6pBG9RoELfo6EV8556E5dLPRFFWg3lV2V5EQ8ZAlFWTKdcIrFpBUl6jOVpsOJSOR9EcPBUO3hHukqU42EHlJim+ZSGUn79G13T1laHpZIxGaVZnxKcexMKQf6pG1P9QKiVOt+yB5iV3UbIHlTjkW8bhasR3CCBGAOUobVhk/NYTVaf91gNSwQFjPl2F6PYKOsiJPEiFrubSa+7u0Bg8Ex72rzwG+l+J4O0CsG3hHHjrOmuKRkSUb3zX+TaO84hxn/IAgUvx3WaUu1sqKmHqrjfi4pDOwps58UJ05XohT7vciyDfijI4iUD9osDSbkHv/JUXwZx6g4bRU5YcRdd+hiIIQT6PkiwGVJQwbnAzU3XIfrXn47lawAfU4WJgqSHwpau/yOE7Am0H6NXXwvek2v83MYpRMHaDnUeej4ILFiy5s4U3Z5rYkO2OrH0qxg2UZjoePEr8z8ynRetkJ+ijcOUYmZ0rSkGA2H+HlREyLkoxOa5vP8Y8yFY8O7Ie7ufxSwfjf/KpCPnU5bOIaUFka6rqlVC7ovLdlxdV5kTEIQR3IOTuF3cV56ro9Aohmj8HId3mmIOhQ5I3A4ydeIqCl8tn9BrGCeGeiFxciKaM21JHHoucfQWoBa9sxIueYJJvqCeGqMdgyKXRBtBAbsCg/hcOz5RrjwUB+rSBfX5R0NiWJuG9ghma7rw0rsVyhSwlFd4mmpMnSH/gwuoYOn9EQRhvocWGcrJ7TrFxJ/3z9/9Rf7iYxz/iEWG25cfU8q66PdpVHbUlg6vCm5NPyVQoFKTy5Hr57pfQTLQAlPA8Wj4y9oUmue7rFwjDkoTlTL7CzgJ7svFylYW69P32k7Qp2kvVYR25PpoCaQ1HrxEWP23qrzYXKCgFIbHz9tnhUGzVY6zVkpyJQm1TreKhYHtimtuUbLM3BLx19dNiIxdXPTNS8fvJJzT8FpE59QNow09iJ07J8gJdpv2Ut1hx90bOB9973od/9B3K1zBs80dR4QluB1PSt/3xZVDDB0/rSB+vncphVTmmKrtvrwS7lPHi0fWTCpm73te4mhMl4wi2flZwgdjlN+T7d+rCpv8DNidLH5c37pMIjNjfy3I1tAlwsRbmj+42LtYg3QnH81ZoTgJQ/6Y9mZ/fpd5W6A56b/5MnjQ7EvyYfb7Eij6Fr3ldh8eEhA1JlURK9iCGgvchx4CBABycYlUWp9iEcMMXA3ywQQFIGj6G2Y0wYURNHNVSLwzAWYe+CJym7eFUS9IzcAUca5la3ZCU1hy7K8fUtRo7WIk5FQS7K2E66myiI8NQ01u0RNvt0VbXCFldI2SlEapSVMRBzjRh0KSZdQm18lB04thdOJMR5CjuLWUg6QNJsyQTekMWNCg2CQsC9LdkqMc0+xyaoRTWzA4s+wwWNsu2OjiJTfssonVeLK3zYmmVY5miBbQCd0b0rHOjZ50dPWyOzyoOI2NJWFIHAmpUwuwWMKudNqudNtFc9wIHQ8OCr2ZxJwPDUym+jyphvTJjornOoUFB1NL000T7PCIUySERElYimlod0T6LaFVENCeepNnn0NKIVnTUoTbVhCdUyztURK0b/YXWxy8xrygYTwRfNGkcxUHMArQSE5Qjgm5NqwmH6NkUKiN+1SnwXJMlHdwCmF54Bk2mHzPsbgyrsw2rsw1zoHa9x0Dreo+B3vUe3WxcDS8VTTXE89nIEqbtAZrlumaelGOjUf9hCyZaxakJtQrPG/gLZaxIGIbW4Fh/W6QlF8gajIWt8ecW6q4n7y9Hb99Np8fTIzvWIeTWQX5OycafD6XDLXykrYgvPmK5t2PM+6HICgA0VaqTGw1yLJ+Wm6f58IEq6gsenPUQrDRCzEKLptWjlDYoq5Uuq50utQVKj2OsGA2oONI5SlHrgUpLoNlWo9lao9oSaLU1bbU0bbXVaLXVOLDKl6nG3F61wEz1ZozdjLlpoeemhZ7bqRigCj6p574NBjfaGt9YqR6xJ+7ckIjx9GMc0bAYC/nxuy1Z04rzO0ajp4rz4ZZFfG82FKr8kLvriFZLJx5dEz8selORtH3ENHqi5dY9Roh/Bk3+R+ckbMFdlrieiPeEvzDPLRfjMX3GaRC6cVROoG6YT/i3qAE18R/cBsiceMmF6iHXnPjOaciILAmPM3wCdOuCN5ycBt25D7zB5VvqO/T7A4uChhg9QyAPY1QG3B/2ciE57LxCYtdJ7mo5d7Wc+8POLDg39RJcZ6fUe3/99S9zTrQZ'),c=>c.charCodeAt(0));
+ const stream=new Blob([input]).stream().pipeThrough(new DecompressionStream('deflate'));
+ return JSON.parse(await new Response(stream).text());
+})();
+let configurationRevision=0;
 const SPA_CONFIGURATION={
- 'American Whirlpool':{shell:['Storm Clouds','Silver Marble','Midnight Canyon','Smokey Mountain','Tuscan Sun'],cabinet:['Charcoal','Light Fog','Modern Mocha'],options:['CleanZone® water care','Bluetooth / stereo','Wi-Fi / smart control']},
- 'Vita Spa':{shell:[],cabinet:[],options:['Stereo / Bluetooth','Wi-Fi / smart control','Additional water-care system']},
- 'Cal Spas':{shell:['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon','High Gloss White','Moulin Rouge','Champagne Dreams','Arctic Blue','Ocean Wave Opal','Odyssey'],cabinet:['Smoke','Mist','Taupe'],options:['Deluxe shell color upgrade','Freedom Sound stereo','Cal Connect RF module','Hydro Clear ozonator','Pure Cure UV system','Pure Silk ozonator','24/7 filtration','Cal Salt filtration','Air blower','Cooler seat upgrade','Elite cabinet upgrade']},
- 'AquaSolus':{shell:[],cabinet:[],options:[]},
- 'Eco Spas':{shell:[],cabinet:[],options:[]},
- 'Innova Spas':{shell:[],cabinet:[],options:[]}
+ 'American Whirlpool':{shell:['Storm Clouds','Silver Marble','Midnight Canyon','Smokey Mountain','Glacier Mountain','Tuscan Sun'],cabinet:['Resort Gray','Light Fog','Modern Mocha','Charcoal']},
+ 'Vita Spa':{shell:[],cabinet:[]},
+ 'Cal Spas':{shell:['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon','High Gloss White','Moulin Rouge','Champagne Dreams','Arctic Blue','Ocean Wave Opal','Odyssey'],cabinet:['Smoke','Mist','Taupe']},
+ 'AquaSolus':{shell:[],cabinet:[]},'Eco Spas':{shell:[],cabinet:[]},'Innova Spas':{shell:[],cabinet:[]}
 };
 function populateConfiguration(saved={}){
- const spec=SPA_CONFIGURATION[Q('#saBrand').value]||{shell:[],cabinet:[],options:[]};
+ const revision=++configurationRevision,brand=Q('#saBrand').value,model=Q('#saModel').value.trim();
+ const spec=SPA_CONFIGURATION[brand]||{shell:[],cabinet:[]};
  for(const [id,values,key] of [['saShell',spec.shell,'shell'],['saCabinet',spec.cabinet,'cabinet']]){
   const field=Q('#'+id),custom=Q('#'+id+'Custom'),value=saved[key]||'';
   field.innerHTML='<option value="">Select color…</option>'+values.map(v=>'<option value="'+html(v)+'">'+html(v)+'</option>').join('')+'<option value="__custom">Other / specify</option>';
   field.value=values.includes(value)?value:value?'__custom':'';
   custom.hidden=field.value!=='__custom';custom.value=field.value==='__custom'?value:'';
  }
- const selected=(saved.manufacturer_add_ons||'').split(',').map(x=>x.trim()).filter(Boolean);
- const choices=Q('#saFactoryChoices');choices.innerHTML=spec.options.map(v=>'<option value="'+html(v)+'">'+html(v)+'</option>').join('');
- Array.from(choices.options).forEach(o=>o.selected=selected.includes(o.value));
- Q('#saFactoryCustom').value=selected.filter(x=>!spec.options.includes(x)).join(', ');
- syncConfig();
+ const choices=Q('#saFactoryChoices');
+ choices.innerHTML='';
+ Q('#saFactoryCustom').value=(saved.manufacturer_add_ons||'');
+ Q('#saFactoryCustom').hidden=true;
+ const hint=choices.nextElementSibling;
+ if(hint)hint.textContent='Select a factory model first to see verified compatible options.';
+ FACTORY_OPTIONS_2026.then(catalog=>{
+   if(configurationRevision!==revision||Q('#saBrand').value!==brand||Q('#saModel').value.trim()!==model)return;
+   const options=catalog.models[brand+'|'+model]||[];
+   const savedOptions=(saved.manufacturer_add_ons||'').split(',').map(x=>x.trim()).filter(Boolean);
+   choices.innerHTML=options.map(i=>{const [label,retail]=catalog.opt[i];return '<option value="'+html(label)+'">'+html(label)+' — $'+Number(retail).toLocaleString()+'</option>'}).join('');
+   Array.from(choices.options).forEach(o=>o.selected=savedOptions.includes(o.value));
+   const unverified=savedOptions.filter(x=>!Array.from(choices.options).some(o=>o.value===x));
+   Q('#saFactoryCustom').value=unverified.join(', ');
+   if(hint)hint.textContent=options.length?'Only the factory-priced options for this exact 2026 model are shown. Verify final factory order.':'No verified factory add-ons found for this model; check with management before quoting upgrades.';
+   syncConfig();
+   if(brand==='Cal Spas'){window.HTFO_2026_CAL_MODEL_CODES=Object.keys(catalog.models).filter(k=>k.startsWith('Cal Spas|')).map(k=>k.slice(10));modelOptions();}
+ }).catch(()=>{if(hint)hint.textContent='Factory options could not load. Do not promise any unverified upgrades.'});
 }
 function syncConfig(){
  for(const id of ['saShell','saCabinet'])Q('#'+id+'Custom').hidden=Q('#'+id).value!=='__custom';
@@ -141,7 +161,7 @@ function modelOptions(){
  Q('#saModelLabel').textContent=cal?'Cal Spas model number':'Model';
  Q('#saModel').placeholder=cal?'Select or enter exact factory model number':'Choose model';
  Q('#saModels').innerHTML=cal
-  ?CAL_VERIFIED_CODES.map(x=>`<option value="${html(x.code)}" label="${html(x.name)}"></option>`).join('')
+  ?(window.HTFO_2026_CAL_MODEL_CODES||CAL_VERIFIED_CODES.map(x=>x.code)).map(x=>`<option value="${html(x)}"></option>`).join('')
   :(window.HTFO_AGREEMENT_MODELS?.[Q('#saBrand').value]||[]).map(x=>`<option value="${html(x)}"></option>`).join('');
  Q('#saModelHelp').textContent=cal?'Use the exact Cal Spas model number on the dealer order. Cancun examples: EC-855B (Escape Plus), EC-849B (Escape), EC-867BX (Escape X). Other numbers can be entered manually until the dealer catalog is complete.':'';
 }
@@ -182,7 +202,7 @@ Q('#saSavePayments').onclick=async()=>{if(busy||!record?.id)return;const d=data(
 
 function open(lead){orderButton.hidden=!isSalesAdmin();priceImportButton.hidden=!isSalesAdmin();Q('#saLog').textContent='All saved agreements';if(!discard())return;if(lead){fill({document:{customer:Object.fromEntries(customerFields.map(([k])=>[k,lead[k]||''])),spa:{brand:lead.brand_interest||'',model:lead.model_interest||''},submission_id:lead.submission_id,msrp:0,discount:0,items:[],payments:[],finance:{}}})}else if(!record)fill(null);if(!dialog.open)dialog.showModal()}
 Q('#saNew').onclick=()=>{if(!busy&&discard())fill(null)};Q('#saClose').onclick=()=>{if(!busy&&discard()){fill(record);dialog.close()}};dialog.addEventListener('cancel',e=>{if(busy||!discard())e.preventDefault();else fill(record)});
-Q('#saBrand').onchange=()=>{Q('#saModel').value='';populateConfiguration();Q('#saMsrp').value='0';Q('#saSalePrice').value='';synchronizeDiscount();modelOptions();changed()};Q('#saModel').onchange=()=>{Q('#saMsrp').value='0';Q('#saSalePrice').value='';synchronizeDiscount();changed();applyModelPrice()};
+Q('#saBrand').onchange=()=>{Q('#saModel').value='';populateConfiguration();Q('#saMsrp').value='0';Q('#saSalePrice').value='';synchronizeDiscount();modelOptions();changed()};Q('#saModel').onchange=()=>{populateConfiguration();Q('#saMsrp').value='0';Q('#saSalePrice').value='';synchronizeDiscount();changed();applyModelPrice()};
 Q('#saForm').addEventListener('input',changed);Q('#saForm').addEventListener('change',changed);Q('#saAddItem').onclick=()=>{if(Q('#saItems').children.length>=40){Q('#saAccessoryNotice').textContent='An agreement can have up to 40 accessory lines.';return}const line=itemRow();changed();line.querySelector('[data-item="description"]').focus()};Q('#saAddPayment').onclick=()=>{if(Q('#saPayments').children.length>=40)return;paymentRow();changed()};
 Q('#saForm').onsubmit=async e=>{e.preventDefault();if(busy)return;const d=data();if(!record?.id&&!checkPaymentPhotosRequired())return;if(record?.id){const original=record.document.customer||{},channel=Q('#saChangeChannel').value,to=channel==='email'?original.email:original.phone;if(!to){Q('#saMessage').textContent='No customer '+channel+' contact on the original agreement.';return}if(!confirm('Send the proposed changes to '+to+' by '+channel+' for customer signature? The agreement will not change until approved.'))return}busy=true;Q('#saForm').inert=true;Q('#saSave').disabled=true;Q('#saMessage').textContent=record?.id?'Creating customer approval request…':'Saving…';try{if(record?.id){const original=record,channel=Q('#saChangeChannel').value;const c=await api('/crm/v1/sales-drafts/'+record.id+'/change-orders',{method:'POST',body:JSON.stringify({...d,version:record.version,reason:Q('#saChangeReason').value})});fill(original);try{await api('/crm/v1/change-orders/'+c.id+'/send',{method:'POST',body:JSON.stringify({channel})});Q('#saMessage').textContent='Change order '+c.id+' sent. Waiting for customer signature.'}catch(err){Q('#saMessage').textContent='Change order saved but message was not sent: '+err.message+' Use Send / resend below.'}await loadChangeHistory()}else{const r=await api('/crm/v1/sales-drafts',{method:'POST',body:JSON.stringify(d)});try{await uploadCheckPhotos(r);Q('#saMessage').textContent='Draft and check photos saved securely.'}catch(photoError){Q('#saMessage').textContent='Draft saved, but check photo upload failed: '+photoError.message+'. Retake or reattach the photo before using this agreement.'}fill(r);}}catch(err){Q('#saMessage').textContent=err.message;await loadChangeHistory()}finally{busy=false;Q('#saForm').inert=false;Q('#saSave').disabled=false}};
 Q('#saLog').onclick=async()=>{if(busy||!discard())return;try{const rows=await api('/crm/v1/sales-drafts');Q('#saLogList').innerHTML='<h3>Saved draft agreements</h3><div class="small">Up to 200 most recently updated drafts. Payment amounts are staff records, not processor confirmations.</div>'+rows.map(r=>`<button type="button" class="btn secondary" data-draft="${r.id}"><b>DRAFT-${String(r.id).padStart(5,'0')} · ${html([r.document.customer?.first_name,r.document.customer?.last_name].filter(Boolean).join(' ')||'Customer not entered')}</b><br>${html([r.document.spa?.brand,r.document.spa?.model].filter(Boolean).join(' '))} · ${money(r.document.totals?.total||0)} · Balance ${money(r.document.totals?.balance||0)}<br><span class="small">${html(r.updated_by)} · ${new Date(r.updated_at).toLocaleString()}</span></button>`).join('');if(!rows.length)Q('#saLogList').innerHTML+='<p>No saved drafts yet.</p>';Q('#saLogList').querySelectorAll('[data-draft]').forEach(b=>b.onclick=()=>{if(!busy&&discard())fill(rows.find(r=>String(r.id)===b.dataset.draft))})}catch(e){Q('#saMessage').textContent=e.message}};
