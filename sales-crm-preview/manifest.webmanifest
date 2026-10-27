@@ -1,0 +1,18 @@
+{
+  "name": "HTFO Sales Agreement",
+  "short_name": "HTFO Sales Agreement",
+  "description": "Open a new Hot Tub Factory Outlet sales agreement",
+  "start_url": "./?new-agreement=1",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f6f8",
+  "theme_color": "#082642",
+  "icons": [
+    {
+      "src": "agreement-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
