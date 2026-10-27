@@ -38,7 +38,7 @@ const SPA_CONFIGURATION={
  'American Whirlpool':{shell:['Storm Clouds','Silver Marble','Midnight Canyon','Smokey Mountain','Glacier Mountain','Tuscan Sun'],cabinet:['Resort Gray','Light Fog','Modern Mocha','Charcoal']},
  'Vita Spa':{shell:[],cabinet:[]},
  'Cal Spas':{shell:['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon','High Gloss White','Moulin Rouge','Champagne Dreams','Arctic Blue','Ocean Wave Opal','Odyssey'],cabinet:['Smoke','Mist','Taupe']},
- 'AquaSolus':{shell:[],cabinet:[]},'Eco Spas':{shell:[],cabinet:[]},'Innova Spas':{shell:[],cabinet:[]}
+ 'AquaSolus':{shell:[],cabinet:[]},'Eco Spas':{shell:['Greystone','Harvestone','Sandstone'],cabinet:["Stack Stone — Brown","Stack Stone — Latte","Stack Stone — Black","Stack Stone — Dolphin","Rattan — Brown","Rattan — Latte","Rattan — Black","Rattan — Dolphin"]},'Innova Spas':{shell:[],cabinet:[]}
 };
 function populateConfiguration(saved={}){
  const revision=++configurationRevision,brand=Q('#saBrand').value,model=Q('#saModel').value.trim();
