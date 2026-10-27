@@ -29,7 +29,7 @@ Q('#saSpa').innerHTML=`<label>Brand<select id="saBrand"><option value="">Choose 
 const SPA_CONFIGURATION={
  'American Whirlpool':{shell:['Storm Clouds','Silver Marble','Midnight Canyon','Smokey Mountain','Tuscan Sun'],cabinet:['Charcoal','Light Fog','Modern Mocha'],options:['CleanZone® water care','Bluetooth / stereo','Wi-Fi / smart control']},
  'Vita Spa':{shell:[],cabinet:[],options:['Stereo / Bluetooth','Wi-Fi / smart control','Additional water-care system']},
- 'Cal Spas':{shell:['Gloss White','Sterling Silver'],cabinet:['Coastal Grey','Mocha','Lime Oak','Smoke','Mist'],options:['Deluxe shell color upgrade','Freedom Sound stereo','Cal Connect RF module','Hydro Clear ozonator','Pure Cure UV system','Pure Silk ozonator','24/7 filtration','Cal Salt filtration','Air blower','Cooler seat upgrade','Elite cabinet upgrade']},
+ 'Cal Spas':{shell:['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon','High Gloss White','Moulin Rouge','Champagne Dreams','Arctic Blue','Ocean Wave Opal','Odyssey'],cabinet:['Smoke','Mist','Taupe'],options:['Deluxe shell color upgrade','Freedom Sound stereo','Cal Connect RF module','Hydro Clear ozonator','Pure Cure UV system','Pure Silk ozonator','24/7 filtration','Cal Salt filtration','Air blower','Cooler seat upgrade','Elite cabinet upgrade']},
  'AquaSolus':{shell:[],cabinet:[],options:[]},
  'Eco Spas':{shell:[],cabinet:[],options:[]},
  'Innova Spas':{shell:[],cabinet:[],options:[]}
