@@ -212,7 +212,7 @@ router.get('/crm/v1/conversations',...guard,async(req,res)=>{try{
 
 router.get('/crm/v1/leads/:id',...guard,async(req,res)=>{try{
   await ensure();const lead=(await q(`SELECT submission_id,first_name,last_name,email,phone,source,tags,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,next_follow_up_at,last_contacted_at,last_activity_at,has_opportunity,ghl_opportunity_status,ghl_opportunity_id,ghl_pipeline_id,ghl_pipeline_stage_id,ghl_assigned_user_id,ghl_assigned_user_name,ghl_opportunity_value,ghl_stage_probability,ghl_last_stage_change_at,ghl_last_status_change_at,lifecycle_stage,pipeline_stage,ghl_contact_id,received_at,updated_at FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL`,[req.params.id])).rows[0];if(!lead)return res.status(404).json({error:'Lead not found'});
-  const [notes,smsRows,emails,tasks]=await Promise.all([q('SELECT id,note_type,body,quoted_price,financing_interest,created_by,created_at FROM crm_lead_notes WHERE submission_id=$1 ORDER BY created_at DESC',[req.params.id]),lead.phone?q(`SELECT id,direction,from_number,to_number,body,status,created_at FROM crm_sms_messages WHERE from_number=$1 OR to_number=$1 OR lead_submission_id=$2 ORDER BY created_at DESC LIMIT 500`,[lead.phone,req.params.id]):Promise.resolve({rows:[]}),q('SELECT * FROM crm_email_messages WHERE submission_id=$1 ORDER BY created_at DESC LIMIT 250',[req.params.id]),q('SELECT * FROM crm_tasks WHERE submission_id=$1 ORDER BY due_at DESC',[req.params.id])]);
+  const [notes,smsRows,emails,tasks]=await Promise.all([q('SELECT id,note_type,body,quoted_price,financing_interest,created_by,created_at FROM crm_lead_notes WHERE submission_id=$1 ORDER BY created_at DESC',[req.params.id]),q(`SELECT id,direction,from_number,to_number,body,status,created_at FROM crm_sms_messages WHERE lead_submission_id=$2 OR (nullif(${threadPhoneSql('$1::text')},'') IS NOT NULL AND ${threadPhoneSql("CASE WHEN lower(coalesce(direction,'')) LIKE 'inbound%' THEN from_number ELSE to_number END")}=${threadPhoneSql('$1::text')}) ORDER BY created_at DESC LIMIT 500`,[lead.phone||'',req.params.id]),q('SELECT * FROM crm_email_messages WHERE submission_id=$1 ORDER BY created_at DESC LIMIT 250',[req.params.id]),q('SELECT * FROM crm_tasks WHERE submission_id=$1 ORDER BY due_at DESC',[req.params.id])]);
   res.json({lead,notes:notes.rows,sms:smsRows.rows,emails:emails.rows,tasks:tasks.rows});
 }catch(e){res.status(500).json({error:e.message})}});
 
@@ -499,5 +499,63 @@ Q('#signForm').onsubmit=async e=>{e.preventDefault();Q('#signButton').disabled=t
 })();`;
 router.get('/crm/v1/change-orders/customer',(_req,res)=>{res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.type('html').send(changeCustomerPage)});
 router.get('/crm/v1/change-orders/customer.js',(_req,res)=>{res.setHeader('Cache-Control','no-store');res.type('application/javascript').send(changeCustomerScript)});
+
+// Group by verified contact identifiers, never by display name.
+const threadPhoneSql=column=>{const d=`regexp_replace(coalesce(${column},''),'[^0-9]','','g')`;return `(CASE WHEN length(${d})=11 AND left(${d},1)='1' THEN substring(${d} from 2) ELSE ${d} END)`};
+let threadSchemaPromise;
+async function ensureThreadSchema(){if(!threadSchemaPromise)threadSchemaPromise=(async()=>{await ensure();await q(`
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_lead_phone ON crm_website_leads ((${threadPhoneSql('phone')})) WHERE deleted_at IS NULL;
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_lead_email ON crm_website_leads ((lower(trim(coalesce(email,''))))) WHERE deleted_at IS NULL;
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_sms_date ON crm_sms_messages(created_at DESC);
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_email_date ON crm_email_messages((COALESCE(received_at,created_at)) DESC);`);})().catch(e=>{threadSchemaPromise=null;throw e});return threadSchemaPromise}
+function conversationThreadCte(detail=false){const contacts=detail?`key_contacts AS (SELECT submission_id,${threadPhoneSql('phone')} phone,lower(trim(coalesce(email,''))) email FROM crm_website_leads WHERE deleted_at IS NULL AND ('phone:'||${threadPhoneSql('phone')}=$2 OR 'email:'||lower(trim(coalesce(email,'')))=$2 OR 'lead:'||submission_id=$2)),`:'';
+ const smsKey=detail?` AND ('phone:'||${threadPhoneSql("CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END")}=$2 OR m.lead_submission_id IN (SELECT submission_id FROM key_contacts) OR ${threadPhoneSql("CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END")} IN (SELECT phone FROM key_contacts WHERE phone<>'') OR 'unknown:sms:'||m.id::text=$2)`:'';
+ const emailKey=detail?` AND (e.submission_id IN (SELECT submission_id FROM key_contacts) OR lower(trim(coalesce(CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,''))) IN (SELECT email FROM key_contacts WHERE email<>'') OR 'email:'||lower(trim(coalesce(CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,'')))=$2 OR 'unknown:email:'||e.id::text=$2)`:'';
+ return `WITH ${contacts}raw_messages AS (
+ SELECT m.id::text message_id,'sms'::text channel,m.direction,NULL::text subject,m.body,m.status,m.created_at occurred_at,m.lead_submission_id original_lead,
+ CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END peer,
+ ${threadPhoneSql("CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END")} peer_phone,NULL::text peer_email
+ FROM crm_sms_messages m WHERE m.created_at >= $1::timestamptz ${smsKey}
+ UNION ALL
+ SELECT e.id::text,'email'::text,e.direction,e.subject,e.body,e.status,COALESCE(e.received_at,e.created_at),e.submission_id,
+ CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,
+ NULL::text,lower(trim(coalesce(CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,'')))
+ FROM crm_email_messages e WHERE COALESCE(e.received_at,e.created_at) >= $1::timestamptz ${emailKey}
+ ), resolved AS (
+ SELECT m.*,l.submission_id,l.first_name,l.last_name,l.phone,l.email,l.assigned_to,l.pipeline_stage,
+ CASE WHEN coalesce(nullif(${threadPhoneSql('l.phone')},''),nullif(m.peer_phone,'')) IS NOT NULL THEN 'phone:'||coalesce(nullif(${threadPhoneSql('l.phone')},''),nullif(m.peer_phone,''))
+ WHEN coalesce(nullif(lower(trim(l.email)),''),nullif(m.peer_email,'')) IS NOT NULL THEN 'email:'||coalesce(nullif(lower(trim(l.email)),''),nullif(m.peer_email,''))
+ WHEN l.submission_id IS NOT NULL THEN 'lead:'||l.submission_id ELSE 'unknown:'||m.channel||':'||m.message_id END thread_key
+ FROM raw_messages m
+ LEFT JOIN LATERAL (
+ SELECT x.submission_id,x.first_name,x.last_name,x.phone,x.email,x.assigned_to,x.pipeline_stage
+ FROM crm_website_leads x WHERE x.deleted_at IS NULL AND (
+ x.submission_id=m.original_lead OR (m.peer_phone<>'' AND ${threadPhoneSql('x.phone')}=m.peer_phone)
+ OR (m.peer_email<>'' AND lower(trim(coalesce(x.email,'')))=m.peer_email))
+ ORDER BY (trim(concat_ws(' ',x.first_name,x.last_name))<>'') DESC,(x.submission_id=m.original_lead) DESC NULLS LAST,x.received_at DESC,x.submission_id LIMIT 1
+ ) l ON true
+ )`}
+router.get('/crm/v1/conversation-threads',...guard,async(req,res)=>{try{await ensureThreadSchema();const days=Math.min(365,Math.max(1,Number(req.query.days)||30)),limit=Math.min(500,Math.max(1,Number(req.query.limit)||300));
+ const channel=['sms','email'].includes(req.query.channel)?req.query.channel:'all',direction=['inbound','outbound'].includes(req.query.direction)?req.query.direction:'all',term=String(req.query.q||'').trim().slice(0,300);
+ const cutoff=new Date(Date.now()-days*86400000).toISOString();const rows=(await q(conversationThreadCte()+`, filtered AS (
+ SELECT * FROM resolved WHERE ($2='all' OR channel=$2) AND ($3='all' OR CASE WHEN $3='inbound' THEN lower(coalesce(direction,'')) LIKE 'inbound%' ELSE lower(coalesce(direction,'')) NOT LIKE 'inbound%' END)
+ AND ($4::text IS NULL OR concat_ws(' ',first_name,last_name,phone,email,peer,subject,body,assigned_to) ILIKE $4)
+ ), ranked AS (
+ SELECT *,row_number() OVER(PARTITION BY thread_key ORDER BY occurred_at DESC,channel,message_id DESC) rn,
+ count(*) OVER(PARTITION BY thread_key)::int message_count,
+ count(*) FILTER(WHERE lower(coalesce(direction,'')) LIKE 'inbound%') OVER(PARTITION BY thread_key)::int inbound_count,
+ count(*) FILTER(WHERE channel='sms') OVER(PARTITION BY thread_key)::int sms_count,
+ max(occurred_at) FILTER(WHERE lower(coalesce(direction,'')) LIKE 'inbound%') OVER(PARTITION BY thread_key) last_inbound_at,
+ count(*) FILTER(WHERE channel='email') OVER(PARTITION BY thread_key)::int email_count
+ FROM filtered)
+ SELECT thread_key,submission_id,first_name,last_name,phone,email,peer,assigned_to,pipeline_stage,channel,direction,subject,left(body,180) body,occurred_at,message_count,inbound_count,sms_count,email_count,last_inbound_at,count(*) OVER()::int total_threads
+ FROM ranked WHERE rn=1 ORDER BY occurred_at DESC,thread_key LIMIT $5`,[cutoff,channel,direction,term?'%'+term+'%':null,limit])).rows;
+ const stats=rows.reduce((a,r)=>{a.total++;a.inbound+=r.inbound_count;a.outbound+=r.message_count-r.inbound_count;a.sms+=r.sms_count;a.email+=r.email_count;a.messages+=r.message_count;return a},{total:0,messages:0,inbound:0,outbound:0,sms:0,email:0});res.json({days,stats,total_threads:rows[0]?.total_threads||0,threads:rows})
+}catch(e){res.status(500).json({error:e.message})}});
+router.get('/crm/v1/conversation-threads/messages',...guard,async(req,res)=>{try{await ensureThreadSchema();const key=String(req.query.key||'');if(!/^(phone|email|lead|unknown):.{1,240}$/.test(key))return res.status(400).json({error:'Choose a valid conversation'});
+ const beforeAt=req.query.before_at?new Date(String(req.query.before_at)):null;if(beforeAt&&!Number.isFinite(beforeAt.getTime()))return res.status(400).json({error:'Invalid history cursor'});
+ const rows=(await q(conversationThreadCte(true)+` SELECT message_id,channel,direction,subject,body,status,occurred_at,submission_id,peer FROM resolved WHERE thread_key=$2 AND ($3::timestamptz IS NULL OR (occurred_at,channel||':'||message_id)<($3::timestamptz,$4::text)) ORDER BY occurred_at DESC,channel||':'||message_id DESC LIMIT 101`,['1970-01-01T00:00:00.000Z',key,beforeAt?.toISOString()||null,String(req.query.before_key||'')])).rows;
+ const hasMore=rows.length>100,items=rows.slice(0,100),last=items.at(-1);res.json({messages:items.reverse(),has_more:hasMore,next:hasMore?{at:last.occurred_at,key:last.channel+':'+last.message_id}:null})
+}catch(e){res.status(500).json({error:e.message})}});
 
 export default router;
