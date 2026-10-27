@@ -74,6 +74,31 @@ function syncConfig(){
 }
 for(const id of ['saShell','saCabinet'])Q('#'+id).addEventListener('change',()=>{syncConfig();changed()});
 for(const id of ['saFactoryChoices','saFactoryCustom','saShellCustom','saCabinetCustom'])Q('#'+id).addEventListener('input',()=>{syncConfig();changed()});
+// Factory options are actual quoted line items: retail = 2x 2026 factory cost, no surcharge.
+// Do not modify historical agreements just because their model options load; only reconcile after a salesperson changes selections.
+function reconcileFactoryOptionLines(){
+ const selected=Array.from(Q('#saFactoryChoices').selectedOptions);
+ const requested=new Map(selected.map(o=>[o.value,Number(o.dataset.retail)]));
+ for(const row of Array.from(Q('#saItems').children)){
+  const field=row.querySelector('[data-item="description"]');
+  if(!field||!field.value.startsWith('Factory option: '))continue;
+  const name=field.value.slice('Factory option: '.length);
+  if(!requested.has(name))row.remove();
+  else{
+    const amount=requested.get(name);
+    row.querySelector('[data-item="price"]').value=amount.toFixed(2);
+    requested.delete(name);
+  }
+ }
+ for(const [name,amount] of requested){
+  if(Q('#saItems').children.length>=40){Q('#saPricingNotice').textContent='Too many agreement line items to add every factory option.';break;}
+  itemRow({description:'Factory option: '+name,quantity:1,unit_price:Math.round(amount*100),taxable:true});
+ }
+ syncConfig();
+ changed();
+}
+Q('#saFactoryChoices').addEventListener('change',reconcileFactoryOptionLines);
+
 function itemRow(x={description:'',quantity:1,unit_price:0,taxable:true}){const el=document.createElement('div');el.className='sa-line';el.innerHTML=`<label>Description<input data-item="description" value="${html(x.description)}" list="saItemNames"></label><label>Qty<input data-item="quantity" type="number" min="1" max="100" step="1" value="${x.quantity}"></label><label>Unit price ($)<input data-item="price" type="number" min="0" step="0.01" value="${x.unit_price/100}"></label><label>Taxable<input data-item="taxable" type="checkbox" style="width:auto" ${x.taxable?'checked':''}></label><button type="button" class="btn danger" aria-label="Remove accessory">×</button>`;el.querySelector('button').onclick=()=>{el.remove();changed()};Q('#saItems').append(el);return el}
 function accessoryOptions(){const category=Q('#saAccessoryCategory').value;Q('#saAccessoryProduct').innerHTML='<option value="">Choose an accessory…</option>'+HTFO_AGREEMENT_ACCESSORIES.filter(x=>!category||x.category===category).map(x=>`<option value="${html(x.sku)}">${html(x.name)} · ${html(x.sku)} · ${money(x.unit_price)}</option>`).join('');Q('#saAccessoryNotice').textContent=''}
 Q('#saAccessoryCategory').onchange=accessoryOptions;
