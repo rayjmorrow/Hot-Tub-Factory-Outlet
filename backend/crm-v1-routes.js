@@ -375,14 +375,15 @@ router.post('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{c
 router.put('/crm/v1/sales-drafts/:id',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);const version=Number(req.body.version);if(!Number.isInteger(version)||version<1)return res.status(400).json({error:'Draft version is required'});await ensureSalesDrafts();const existing=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!existing||(!salesAdmin(req)&&String(existing.owner_user_id)!==String(req.user.sub)))return res.status(404).json({error:'Agreement not found'});if(commercialChanged(existing.document,document))return res.status(409).json({error:'Agreement changes require a customer-signed change order'});document.salesperson=existing.document.salesperson||'';const who=String(req.user.name||req.user.username);const params=[JSON.stringify(document),who,req.params.id,version];let access='';if(!salesAdmin(req)){params.push(req.user.sub);access=' AND owner_user_id=$5'}const row=(await q('UPDATE crm_sales_drafts SET document=$1::jsonb,version=version+1,updated_by=$2,updated_at=NOW() WHERE id=$3 AND version=$4'+access+' RETURNING *',params)).rows[0];if(!row)return res.status(409).json({error:'This draft changed or no longer exists. Reopen it from the log before saving.'});res.json(row)}catch(e){res.status(400).json({error:e.message})}});
 
 // Customer-authorized revisions. Snapshots are retained; commission ownership is never reassigned.
-async function ensureChangeOrders(){await ensureSalesDrafts();await q(`CREATE TABLE IF NOT EXISTS crm_sales_change_orders(
+let changeSchemaPromise;
+async function ensureChangeOrders(){if(!changeSchemaPromise)changeSchemaPromise=(async()=>{await ensureSalesDrafts();await q(`CREATE TABLE IF NOT EXISTS crm_sales_change_orders(
  id BIGSERIAL PRIMARY KEY,draft_id BIGINT NOT NULL REFERENCES crm_sales_drafts(id),base_version INTEGER NOT NULL,
  base_document JSONB NOT NULL,proposed_document JSONB NOT NULL,document_hash TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'pending',reason TEXT NOT NULL,created_by TEXT NOT NULL,created_user JSONB NOT NULL,
  token_hash TEXT UNIQUE,expires_at TIMESTAMPTZ,delivery_channel TEXT,delivery_status TEXT,delivery_error TEXT,
  signed_name TEXT,signed_at TIMESTAMPTZ,signer_ip TEXT,signer_agent TEXT,consent_text TEXT,
  cancelled_by TEXT,cancelled_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
- CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_change_pending ON crm_sales_change_orders(draft_id) WHERE status='pending'`)}
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_change_pending ON crm_sales_change_orders(draft_id) WHERE status='pending'`)})().catch(e=>{changeSchemaPromise=null;throw e});return changeSchemaPromise}
 const changeConsent='I have reviewed the original and updated agreement details, including the pricing difference. I authorize these changes and agree to use my typed name as my electronic signature for this change order.';
 const changeHash=value=>createHash('sha256').update(String(value)).digest('hex');
 const customerReviewUrl=raw=>'https://htfo-service-operations.onrender.com/api/service/crm/v1/change-orders/customer#'+raw;
