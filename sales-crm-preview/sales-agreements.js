@@ -40,9 +40,22 @@ const SPA_CONFIGURATION={
  'Cal Spas':{shell:['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon','High Gloss White','Moulin Rouge','Champagne Dreams','Arctic Blue','Ocean Wave Opal','Odyssey'],cabinet:['Smoke','Mist','Taupe']},
  'AquaSolus':{shell:[],cabinet:[]},'Eco Spas':{shell:['Greystone','Harvestone','Sandstone'],cabinet:["Stack Stone — Brown","Stack Stone — Latte","Stack Stone — Black","Stack Stone — Dolphin","Rattan — Brown","Rattan — Latte","Rattan — Black","Rattan — Dolphin"]},'Innova Spas':{shell:[],cabinet:[]}
 };
+// 2026 Cal Spas cabinet families from the factory guide; no blanket Cal-wide colors.
+function calCabinetsForModel(model){
+ const m=String(model||'').trim().toUpperCase();
+ if(!m)return [];
+ // Escape X factory part numbers are EC-...X (including BX, LX and DLX).
+ if(/^EC-[A-Z0-9-]+X$/.test(m)||/\b(?:ESCAPE\s*)?X(?:\s*SERIES)?$/.test(m))
+  return ['Grey','Mocha','Lime Oak']; // Elite Plus
+ // Patio / Patio Plus and non-X Escape / Deck have Cal Edge cabinets.
+ if(/^(PZ-|PPZ-|EC-|DE-)/.test(m))return ['Smoke','Mist','Taupe'];
+ // Other collections have separate cabinets: don't invent factory choices.
+ return [];
+}
 function populateConfiguration(saved={}){
  const revision=++configurationRevision,brand=Q('#saBrand').value,model=Q('#saModel').value.trim();
- const spec=SPA_CONFIGURATION[brand]||{shell:[],cabinet:[]};
+ const baseSpec=SPA_CONFIGURATION[brand]||{shell:[],cabinet:[]};
+ const spec=brand==='Cal Spas'?{...baseSpec,cabinet:calCabinetsForModel(model)}:baseSpec;
  for(const [id,values,key] of [['saShell',spec.shell,'shell'],['saCabinet',spec.cabinet,'cabinet']]){
   const field=Q('#'+id),custom=Q('#'+id+'Custom'),value=saved[key]||'';
   field.innerHTML='<option value="">Select color…</option>'+values.map(v=>'<option value="'+html(v)+'">'+html(v)+'</option>').join('')+'<option value="__custom">Other / specify</option>';
