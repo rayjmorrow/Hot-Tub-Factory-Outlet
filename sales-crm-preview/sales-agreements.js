@@ -106,18 +106,21 @@ async function uploadCheckPhotos(saved){
  }
 }
 // Approved pricing is keyed by exact factory model number. No invented wholesale values.
-const HTFO_WHOLESALE_PRICES=window.HTFO_WHOLESALE_PRICES||{};
-function calculatedListPrice(wholesaleDollars){
- const wholesale=Number(wholesaleDollars);
- if(!Number.isFinite(wholesale)||wholesale<=0)return null;
- const par=((wholesale+750)/0.60)+200+400;
- return {par,financingProtected:par/0.76,list:Math.ceil(par/0.76*1.33)};
-}
-function applyModelPrice(){
- const key=Q('#saBrand').value+'|'+Q('#saModel').value.trim().toUpperCase();
- const price=calculatedListPrice(HTFO_WHOLESALE_PRICES[key]);
- if(price){Q('#saMsrp').value=price.list;Q('#saPricingNotice').textContent='Approved model price filled automatically. Sale price is optional.'}
- else{Q('#saPricingNotice').textContent='No verified wholesale cost is loaded for this model yet. Confirm its approved HTFO price before preparing a customer agreement.'}
+let quoteRequest=0;
+async function applyModelPrice(){
+ const brand=Q('#saBrand').value,model=Q('#saModel').value.trim(),request=++quoteRequest;
+ if(!brand||!model)return;
+ Q('#saPricingNotice').textContent='Checking approved model price…';
+ try{
+  const p=await api('/crm/v1/sales-pricebook/quote?brand='+encodeURIComponent(brand)+'&model='+encodeURIComponent(model));
+  if(request!==quoteRequest)return;
+  Q('#saMsrp').value=(p.list_price_cents/100).toFixed(2);
+  synchronizeDiscount();changed();
+  Q('#saPricingNotice').textContent='Price loaded from protected model pricebook. Optional sale price may be entered below.';
+ }catch(e){
+  if(request!==quoteRequest)return;
+  Q('#saPricingNotice').textContent='No approved model price found. Administrator must import or approve this model before quoting.';
+ }
 }
 function synchronizeDiscount(){
  const msrp=cents(Q('#saMsrp').value);
@@ -147,6 +150,24 @@ function discard(){return !dirty||confirm('Discard unsaved changes to this agree
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
 const originalLogout=$('#logout').onclick;$('#logout').onclick=()=>{adminOrderRows=[];orderButton.hidden=true;fill(null);record=null;dirty=false;dialog.close();Q('#saForm').reset();Q('#saLogList').innerHTML='';document.querySelector('.sa-print')?.remove();originalLogout()};
 const isSalesAdmin=()=>['admin','owner'].includes(String(user?.role||'').toLowerCase());
+const priceImportButton=document.createElement('button');
+priceImportButton.type='button';priceImportButton.className='btn secondary';priceImportButton.textContent='Admin · Import factory pricing';priceImportButton.hidden=true;
+Q('.sa-controls').insertBefore(priceImportButton,Q('#saMessage'));
+const priceImportFile=document.createElement('input');priceImportFile.type='file';priceImportFile.accept='.json,application/json';priceImportFile.hidden=true;dialog.append(priceImportFile);
+priceImportButton.onclick=()=>priceImportFile.click();
+priceImportFile.onchange=async()=>{
+ const file=priceImportFile.files?.[0];if(!file)return;
+ try{
+  if(file.size>180000)throw Error('Price import file exceeds 180 KB');
+  const data=JSON.parse(await file.text());
+  if(!Array.isArray(data.prices)||!data.prices.length)throw Error('Invalid price import file');
+  if(!confirm('Import '+data.prices.length+' confidential wholesale model costs into the administrator-only database? The source file will not be published.'))return;
+  const result=await api('/crm/v1/admin/sales-pricebook/import',{method:'POST',body:JSON.stringify({prices:data.prices})});
+  Q('#saMessage').textContent=result.imported+' confidential model prices imported. Select a model to load MSRP.';
+  await applyModelPrice();
+ }catch(e){Q('#saMessage').textContent='Price import failed: '+e.message}
+ finally{priceImportFile.value=''}
+};
 const orderButton=document.createElement('button');orderButton.type='button';orderButton.className='btn secondary';orderButton.textContent='Admin · Order list';orderButton.hidden=true;Q('.sa-controls').insertBefore(orderButton,Q('#saMessage'));
 let adminOrderRows=[];
 const orderColumns=[['Agreement','id'],['Status','status'],['Sale date','sale_date'],['Salesperson','salesperson'],['Brand','brand'],['Serial number','serial'],['Spa model','model'],['Shell color','shell'],['Cabinet color','cabinet'],['Manufacturer add-ons','manufacturer_add_ons'],['Customer last name','customer_last_name'],['Other accessory / custom lines','other_items'],['Cover lift model','cover_lift_model'],['Step model','step_model']];
@@ -159,9 +180,9 @@ function agreementEditingMode(){const saved=Boolean(record?.id),canPayments=!sav
 Q('#saRefreshChanges').onclick=async()=>{if(!discard())return;try{const rows=await api('/crm/v1/sales-drafts'),latest=rows.find(r=>r.id===record?.id);if(latest){fill(latest);Q('#saMessage').textContent='Latest agreement loaded.'}}catch(e){Q('#saMessage').textContent=e.message}};
 Q('#saSavePayments').onclick=async()=>{if(busy||!record?.id)return;const d=data();if(clientCommercialChanged(record.document,d)){alert('Submit or discard the agreement changes before saving payment records.');return}Q('#saChangeReason').required=false;const validPaymentForm=Q('#saForm').reportValidity();Q('#saChangeReason').required=true;if(!validPaymentForm||!checkPaymentPhotosRequired())return;busy=true;Q('#saForm').inert=true;try{const r=await api('/crm/v1/sales-drafts/'+record.id,{method:'PUT',body:JSON.stringify({...record.document,payments:d.payments,finance:d.finance,version:record.version})});fill(r);Q('#saMessage').textContent='Payment records saved.'}catch(e){Q('#saMessage').textContent=e.message}finally{busy=false;Q('#saForm').inert=false}};
 
-function open(lead){orderButton.hidden=!isSalesAdmin();Q('#saLog').textContent='All saved agreements';if(!discard())return;if(lead){fill({document:{customer:Object.fromEntries(customerFields.map(([k])=>[k,lead[k]||''])),spa:{brand:lead.brand_interest||'',model:lead.model_interest||''},submission_id:lead.submission_id,msrp:0,discount:0,items:[],payments:[],finance:{}}})}else if(!record)fill(null);if(!dialog.open)dialog.showModal()}
+function open(lead){orderButton.hidden=!isSalesAdmin();priceImportButton.hidden=!isSalesAdmin();Q('#saLog').textContent='All saved agreements';if(!discard())return;if(lead){fill({document:{customer:Object.fromEntries(customerFields.map(([k])=>[k,lead[k]||''])),spa:{brand:lead.brand_interest||'',model:lead.model_interest||''},submission_id:lead.submission_id,msrp:0,discount:0,items:[],payments:[],finance:{}}})}else if(!record)fill(null);if(!dialog.open)dialog.showModal()}
 Q('#saNew').onclick=()=>{if(!busy&&discard())fill(null)};Q('#saClose').onclick=()=>{if(!busy&&discard()){fill(record);dialog.close()}};dialog.addEventListener('cancel',e=>{if(busy||!discard())e.preventDefault();else fill(record)});
-Q('#saBrand').onchange=()=>{Q('#saModel').value='';populateConfiguration();Q('#saMsrp').value='0';Q('#saSalePrice').value='';synchronizeDiscount();modelOptions();changed()};Q('#saModel').onchange=()=>{Q('#saMsrp').value='0';Q('#saSalePrice').value='';applyModelPrice();synchronizeDiscount();changed()};
+Q('#saBrand').onchange=()=>{Q('#saModel').value='';populateConfiguration();Q('#saMsrp').value='0';Q('#saSalePrice').value='';synchronizeDiscount();modelOptions();changed()};Q('#saModel').onchange=()=>{Q('#saMsrp').value='0';Q('#saSalePrice').value='';synchronizeDiscount();changed();applyModelPrice()};
 Q('#saForm').addEventListener('input',changed);Q('#saForm').addEventListener('change',changed);Q('#saAddItem').onclick=()=>{if(Q('#saItems').children.length>=40){Q('#saAccessoryNotice').textContent='An agreement can have up to 40 accessory lines.';return}const line=itemRow();changed();line.querySelector('[data-item="description"]').focus()};Q('#saAddPayment').onclick=()=>{if(Q('#saPayments').children.length>=40)return;paymentRow();changed()};
 Q('#saForm').onsubmit=async e=>{e.preventDefault();if(busy)return;const d=data();if(!record?.id&&!checkPaymentPhotosRequired())return;if(record?.id){const original=record.document.customer||{},channel=Q('#saChangeChannel').value,to=channel==='email'?original.email:original.phone;if(!to){Q('#saMessage').textContent='No customer '+channel+' contact on the original agreement.';return}if(!confirm('Send the proposed changes to '+to+' by '+channel+' for customer signature? The agreement will not change until approved.'))return}busy=true;Q('#saForm').inert=true;Q('#saSave').disabled=true;Q('#saMessage').textContent=record?.id?'Creating customer approval request…':'Saving…';try{if(record?.id){const original=record,channel=Q('#saChangeChannel').value;const c=await api('/crm/v1/sales-drafts/'+record.id+'/change-orders',{method:'POST',body:JSON.stringify({...d,version:record.version,reason:Q('#saChangeReason').value})});fill(original);try{await api('/crm/v1/change-orders/'+c.id+'/send',{method:'POST',body:JSON.stringify({channel})});Q('#saMessage').textContent='Change order '+c.id+' sent. Waiting for customer signature.'}catch(err){Q('#saMessage').textContent='Change order saved but message was not sent: '+err.message+' Use Send / resend below.'}await loadChangeHistory()}else{const r=await api('/crm/v1/sales-drafts',{method:'POST',body:JSON.stringify(d)});try{await uploadCheckPhotos(r);Q('#saMessage').textContent='Draft and check photos saved securely.'}catch(photoError){Q('#saMessage').textContent='Draft saved, but check photo upload failed: '+photoError.message+'. Retake or reattach the photo before using this agreement.'}fill(r);}}catch(err){Q('#saMessage').textContent=err.message;await loadChangeHistory()}finally{busy=false;Q('#saForm').inert=false;Q('#saSave').disabled=false}};
 Q('#saLog').onclick=async()=>{if(busy||!discard())return;try{const rows=await api('/crm/v1/sales-drafts');Q('#saLogList').innerHTML='<h3>Saved draft agreements</h3><div class="small">Up to 200 most recently updated drafts. Payment amounts are staff records, not processor confirmations.</div>'+rows.map(r=>`<button type="button" class="btn secondary" data-draft="${r.id}"><b>DRAFT-${String(r.id).padStart(5,'0')} · ${html([r.document.customer?.first_name,r.document.customer?.last_name].filter(Boolean).join(' ')||'Customer not entered')}</b><br>${html([r.document.spa?.brand,r.document.spa?.model].filter(Boolean).join(' '))} · ${money(r.document.totals?.total||0)} · Balance ${money(r.document.totals?.balance||0)}<br><span class="small">${html(r.updated_by)} · ${new Date(r.updated_at).toLocaleString()}</span></button>`).join('');if(!rows.length)Q('#saLogList').innerHTML+='<p>No saved drafts yet.</p>';Q('#saLogList').querySelectorAll('[data-draft]').forEach(b=>b.onclick=()=>{if(!busy&&discard())fill(rows.find(r=>String(r.id)===b.dataset.draft))})}catch(e){Q('#saMessage').textContent=e.message}};
