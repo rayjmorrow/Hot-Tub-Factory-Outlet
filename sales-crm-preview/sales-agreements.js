@@ -52,7 +52,7 @@ function paymentRow(x={date:today(),method:'Cash',amount:0,reference:''},index=-
  el.querySelector('button[aria-label="Remove payment record"]').onclick=()=>{el.remove();changed()};
  Q('#saPayments').append(el);mode();
  if(record?.id&&index>=0&&x.method==='Check'){
-  const id=record.id;fetch(API+'/crm/v1/sales-drafts/'+id+'/check-images/'+index,{headers:{Authorization:'Bearer '+token},cache:'no-store'}).then(async r=>{if(!r.ok)throw Error('Not attached or not accessible');const blob=await r.blob();if(record?.id!==id||!el.isConnected)return;el.checkPhotoSaved=true;el.checkPhotoFingerprint=[x.date,x.method,x.amount,x.reference].join('|');preview.src=URL.createObjectURL(blob);preview.hidden=false;status.textContent='Private check image saved.'}).catch(()=>{if(el.isConnected)status.textContent='No saved image found. Take a photo to attach one.'});
+  const id=record.id;fetch(API+'/crm/v1/sales-drafts/'+id+'/check-images/'+index,{headers:{Authorization:'Bearer '+token},cache:'no-store'}).then(async r=>{if(!r.ok)throw Error('Not attached or not accessible');const blob=await r.blob();if(record?.id!==id||!el.isConnected)return;el.checkPhotoSaved=true;el.checkPhotoFingerprint=[x.date,x.method,x.amount,x.reference].join('|');const reader=new FileReader();reader.onload=()=>{if(el.isConnected){preview.src=reader.result;preview.hidden=false}};reader.readAsDataURL(blob);status.textContent='Private check image saved.'}).catch(()=>{if(el.isConnected)status.textContent='No saved image found. Take a photo to attach one.'});
  }
  return el;
 }
