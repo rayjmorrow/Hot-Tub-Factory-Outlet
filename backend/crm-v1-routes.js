@@ -430,6 +430,14 @@ function ensureSalesPricebook(){
  )`).catch(e=>{salesPricebookSchema=null;throw e});
  return salesPricebookSchema;
 }
+// Factory-installed options use a separate retail rule: twice dealer cost, with no freight or financing adjustment.
+const optionRetailFromWholesale=cents=>{if(!Number.isSafeInteger(cents)||cents<0)throw new Error('Invalid option cost');return cents*2};
+router.post('/crm/v1/admin/sales-pricebook/option-preview',...guard,salesIdentity,(req,res)=>{
+ if(!salesAdmin(req))return res.status(403).json({error:'Administrator access required'});
+ const cost=Number(req.body?.wholesale_cents);
+ if(!Number.isSafeInteger(cost)||cost<0||cost>100000000)return res.status(400).json({error:'Invalid factory-option wholesale cost'});
+ res.json({retail_price_cents:optionRetailFromWholesale(cost),rule:'2x factory-option cost; no added fees or freight'});
+});
 const listFromWholesale=cents=>{
  const par=((cents/100+750)/0.6)+600;
  return Math.ceil((par/0.76)*1.33);
