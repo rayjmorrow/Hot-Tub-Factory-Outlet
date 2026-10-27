@@ -369,6 +369,56 @@ function validateSalesDraft(input){
 }
 const salesAdmin=req=>['admin','owner'].includes(String(req.user?.role||'').toLowerCase());
 async function salesIdentity(req,res,next){try{const row=(await q('SELECT id,username,display_name,role FROM service_users WHERE id=$1 AND active=true',[req.user.sub])).rows[0];if(!row)return res.status(401).json({error:'Active staff login required'});if(!['admin','owner','manager','service_manager','sales'].includes(row.role))return res.status(403).json({error:'Sales access required'});req.user={...req.user,sub:row.id,username:row.username,name:row.display_name,role:row.role};next()}catch(e){res.status(500).json({error:'Unable to verify staff access'})}}
+// Sensitive check images are stored separately from customer-facing agreement JSON.
+// Only the original salesperson/owner or admins can read or upload them.
+let checkImageSchemaPromise;
+async function ensureCheckImages(){
+ if(!checkImageSchemaPromise)checkImageSchemaPromise=q(`CREATE TABLE IF NOT EXISTS crm_sales_check_images(
+   draft_id BIGINT NOT NULL REFERENCES crm_sales_drafts(id) ON DELETE CASCADE,
+   payment_index INTEGER NOT NULL,
+   payment_fingerprint TEXT NOT NULL,
+   content BYTEA NOT NULL,
+   mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
+   created_by TEXT NOT NULL,
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+   PRIMARY KEY(draft_id,payment_index)
+ )`).catch(e=>{checkImageSchemaPromise=null;throw e});
+ return checkImageSchemaPromise;
+}
+const paymentFingerprint=p=>createHash('sha256').update(JSON.stringify([p.date,p.method,p.amount,p.reference])).digest('hex');
+async function checkImageContext(req){
+ await ensureSalesDrafts();await ensureCheckImages();
+ const row=(await q('SELECT id,owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];
+ if(!row)return {error:404,message:'Agreement not found'};
+ if(!salesAdmin(req)&&String(row.owner_user_id)!==String(req.user.sub))return {error:403,message:'Only the original salesperson or an administrator may access check images'};
+ const index=Number(req.params.paymentIndex),p=row.document.payments?.[index];
+ if(!Number.isInteger(index)||index<0||index>=40||!p||p.method!=='Check')return {error:400,message:'Choose a check payment saved on this agreement'};
+ return {row,index,p,fingerprint:paymentFingerprint(p)};
+}
+router.get('/crm/v1/sales-drafts/:id/check-images/:paymentIndex',...guard,salesIdentity,async(req,res)=>{
+ try{const c=await checkImageContext(req);if(c.error)return res.status(c.error).json({error:c.message});
+ const image=(await q('SELECT content,mime_type FROM crm_sales_check_images WHERE draft_id=$1 AND payment_index=$2 AND payment_fingerprint=$3',[c.row.id,c.index,c.fingerprint])).rows[0];
+ if(!image)return res.status(404).json({error:'No check image attached'});
+ res.setHeader('Cache-Control','no-store, private');res.setHeader('Content-Disposition','inline; filename="check-record.jpg"');
+ res.type('image/jpeg').send(image.content);
+ }catch(e){res.status(500).json({error:'Unable to load check image'})}
+});
+router.post('/crm/v1/sales-drafts/:id/check-images/:paymentIndex',...guard,salesIdentity,async(req,res)=>{
+ try{const c=await checkImageContext(req);if(c.error)return res.status(c.error).json({error:c.message});
+ const encoded=String(req.body?.image||'');
+ if(!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(encoded))return res.status(400).json({error:'Upload a JPEG image'});
+ const b=Buffer.from(encoded.slice('data:image/jpeg;base64,'.length),'base64');
+ if(b.length<100||b.length>850000||b[0]!==0xff||b[1]!==0xd8||b[b.length-2]!==0xff||b[b.length-1]!==0xd9)return res.status(400).json({error:'Invalid JPEG or image exceeds 850 KB'});
+ await q(`INSERT INTO crm_sales_check_images(draft_id,payment_index,payment_fingerprint,content,created_by)
+ VALUES($1,$2,$3,$4,$5) ON CONFLICT(draft_id,payment_index) DO UPDATE SET payment_fingerprint=EXCLUDED.payment_fingerprint,content=EXCLUDED.content,created_by=EXCLUDED.created_by,created_at=NOW()`,[c.row.id,c.index,c.fingerprint,b,req.user.name||req.user.username]);
+ res.json({ok:true,payment_index:c.index});
+ }catch(e){res.status(500).json({error:'Unable to save check image'})}
+});
+router.delete('/crm/v1/sales-drafts/:id/check-images/:paymentIndex',...guard,salesIdentity,async(req,res)=>{
+ try{const c=await checkImageContext(req);if(c.error)return res.status(c.error).json({error:c.message});
+ await q('DELETE FROM crm_sales_check_images WHERE draft_id=$1 AND payment_index=$2',[c.row.id,c.index]);res.json({ok:true})
+ }catch(e){res.status(500).json({error:'Unable to remove check image'})}
+});
 router.get('/crm/v1/admin/order-list',...guard,salesIdentity,async(req,res)=>{if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,created_by,updated_at FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 1000')).rows;res.json(rows.map(r=>{const d=r.document,items=d.items||[],lifts=items.filter(x=>/lift|roller|LFSE|CLP100|VSL400|VSLA201/i.test(x.description)),steps=items.filter(x=>/step|STCS|STDS/i.test(x.description));return{id:r.id,status:'Draft',sale_date:d.contract_date||'',salesperson:d.salesperson||r.created_by,brand:d.spa?.brand||'',serial:d.spa?.serial||'',model:d.spa?.model||'',shell:d.spa?.shell||'',cabinet:d.spa?.cabinet||'',manufacturer_add_ons:d.spa?.manufacturer_add_ons||'',other_items:items.filter(x=>!lifts.includes(x)&&!steps.includes(x)).map(x=>x.quantity+' × '+x.description).join('; '),customer_last_name:d.customer?.last_name||'',cover_lift_model:lifts.map(x=>x.quantity+' × '+x.description).join('; '),step_model:steps.map(x=>x.quantity+' × '+x.description).join('; ')}}))}catch(e){res.status(500).json({error:e.message})}});
 router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();res.json((await q('SELECT * FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
 router.post('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);document.salesperson=req.user.name||req.user.username;await ensureSalesDrafts();const who=String(req.user.name||req.user.username);res.status(201).json((await q('INSERT INTO crm_sales_drafts(document,created_by,updated_by,owner_user_id) VALUES($1::jsonb,$2,$2,$3) RETURNING *',[JSON.stringify(document),who,req.user.sub])).rows[0])}catch(e){res.status(400).json({error:e.message})}});
