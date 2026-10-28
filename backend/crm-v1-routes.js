@@ -501,7 +501,8 @@ async function signedPdf(d,id,sign){
   const chunks=[];pdf.on('data',chunk=>chunks.push(chunk));pdf.on('error',reject);pdf.on('end',()=>resolve(Buffer.concat(chunks)));
   const row=(title,value)=>{if(pdf.y>704)pdf.addPage();pdf.font('Helvetica-Bold').fontSize(9).text(title,{continued:true});pdf.font('Helvetica').text('  '+String(value||''));pdf.moveDown(.25)};
   pdf.font('Helvetica-Bold').fontSize(19).text('HOT TUB FACTORY OUTLET');
-  pdf.fontSize(12).text('EXECUTED SALES AGREEMENT #'+id);pdf.moveDown(.6);
+  pdf.font('Helvetica').fontSize(10).text('Monroeville & Wexford');
+  pdf.font('Helvetica-Bold').fontSize(12).text('EXECUTED SALES AGREEMENT #'+id);pdf.moveDown(.6);
   row('Executed UTC:',new Date().toISOString());row('Customer:',sign.customer_name);row('Email:',d.customer.email);row('Phone:',d.customer.phone);row('Address:',[d.customer.street,d.customer.city,d.customer.state,d.customer.zip].filter(Boolean).join(', '));
   row('Salesperson:',sign.salesperson_name);row('Location:',d.location);
   row('Brand / Model:',[d.spa.brand,d.spa.model].join(' / '));row('Serial:',d.spa.serial);
