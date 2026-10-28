@@ -56,7 +56,7 @@ function calCabinetsForModel(model){
 function populateConfiguration(saved={}){
  const revision=++configurationRevision,brand=Q('#saBrand').value,model=Q('#saModel').value.trim();
  const baseSpec=SPA_CONFIGURATION[brand]||{shell:[],cabinet:[]};
- const spec=brand==='Cal Spas'?{...baseSpec,cabinet:calCabinetsForModel(model)}:baseSpec;
+ const spec=brand==='Cal Spas'?{...baseSpec,shell:/^(PZ-|PPZ-)/i.test(model)?['High Gloss White']:/^EC-/i.test(model)?['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon']:baseSpec.shell,cabinet:calCabinetsForModel(model)}:brand==='Innova Spas'?{shell:/^Stream/i.test(model)?['Frost','Sand','Moka','Graphite']:/^Fantom/i.test(model)?['Dark Charcoal','Moka']:/^Storm/i.test(model)?['Frost','Sand','Midnight Grey','Moka']:/^Monsoon/i.test(model)?['Frost','Sand','Graphite','Moka']:[],cabinet:[]} :baseSpec;
  for(const [id,values,key] of [['saShell',spec.shell,'shell'],['saCabinet',spec.cabinet,'cabinet']]){
   const field=Q('#'+id),custom=Q('#'+id+'Custom'),value=saved[key]||'';
   field.innerHTML='<option value="">Select color…</option>'+values.map(v=>'<option value="'+html(v)+'">'+html(v)+'</option>').join('')+'<option value="__custom">Other / specify</option>';
