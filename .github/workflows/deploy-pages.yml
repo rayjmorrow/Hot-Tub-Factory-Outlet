@@ -31,7 +31,7 @@ jobs:
             test -f "$file" || { echo "::error file=$file::Missing file required for HTFO publication"; exit 1; }
           done
           grep -Fq 'hottubfactoryoutlet.com' CNAME
-          grep -Fq 'Hot tubs for sale near Pittsburgh.' hot-tubs.html
+          grep -Fq 'USA-made hot tubs. Unbeatable prices.' hot-tubs.html
           grep -Fq 'Hot tubs for sale near Pittsburgh, PA' hot-tubs-pittsburgh-pa.html
           grep -Fq 'hot-tubs-monroeville-pa.html' sitemap.xml
           echo "Validated site files for commit $GITHUB_SHA"
@@ -52,7 +52,7 @@ jobs:
             catalog=$(curl -fsSL --max-time 20 "https://hottubfactoryoutlet.com/hot-tubs.html?deploy_check=$GITHUB_SHA" || true)
             monroeville=$(curl -fsSL --max-time 20 "https://hottubfactoryoutlet.com/hot-tubs-monroeville-pa.html?deploy_check=$GITHUB_SHA" || true)
             wexford=$(curl -fsSL --max-time 20 "https://hottubfactoryoutlet.com/wexford-location/?deploy_check=$GITHUB_SHA" || true)
-            if grep -Fq 'Hot tubs for sale near Pittsburgh.' <<< "$catalog" &&
+            if grep -Fq 'USA-made hot tubs. Unbeatable prices.' <<< "$catalog" &&
                grep -Fq 'Hot tubs for sale in Monroeville' <<< "$monroeville" &&
                grep -Fq 'Our Wexford showroom page has moved' <<< "$wexford"; then
               echo "Live HTFO SEO pages verified for commit $GITHUB_SHA"
