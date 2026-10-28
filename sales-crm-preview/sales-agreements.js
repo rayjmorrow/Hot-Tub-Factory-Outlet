@@ -48,7 +48,8 @@ function calCabinetsForModel(model){
  if(/^EC-[A-Z0-9-]+X$/.test(m)||/\b(?:ESCAPE\s*)?X(?:\s*SERIES)?$/.test(m))
   return ['Grey','Mocha','Lime Oak']; // Elite Plus
  // Patio / Patio Plus and non-X Escape / Deck have Cal Edge cabinets.
- if(/^(PZ-|PPZ-|EC-|DE-)/.test(m))return ['Smoke','Mist','Taupe'];
+ if(/^(DE-|PL-)/.test(m))return ['Grey','Mocha','Lime Oak'];
+ if(/^(PZ-|PPZ-|EC-)/.test(m))return ['Smoke','Mist','Taupe'];
  // Other collections have separate cabinets: don't invent factory choices.
  return [];
 }
