@@ -1,6 +1,7 @@
 import express from 'express';
 import {randomBytes,createHash} from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import PDFDocument from 'pdfkit';
 import { q } from './service-db.js';
 
 const router=express.Router();
@@ -470,6 +471,262 @@ router.post('/crm/v1/admin/sales-pricebook/import',...guard,salesIdentity,async(
     source=excluded.source,updated_by=excluded.updated_by,updated_at=NOW()`,[x.brand,x.model,x.cost,x.source,req.user.name||req.user.username]);
   res.json({ok:true,imported:cleanRows.length});
  }catch(e){res.status(500).json({error:'Unable to import prices'})}
+});
+// Immutable signed agreements. Signed copies are stored separately from editable drafts.
+async function ensureExecutedContracts(){
+ await q(`CREATE TABLE IF NOT EXISTS crm_sales_executed_contracts (
+ id BIGSERIAL PRIMARY KEY, draft_id BIGINT NOT NULL UNIQUE REFERENCES crm_sales_drafts(id),
+ submission_id TEXT, customer_email TEXT NOT NULL, salesperson_email TEXT NOT NULL,
+ executed_document JSONB NOT NULL, customer_name TEXT NOT NULL, salesperson_name TEXT NOT NULL,
+ customer_signature BYTEA NOT NULL, salesperson_signature BYTEA NOT NULL,
+ terms_text TEXT NOT NULL, terms_version TEXT NOT NULL,
+ pdf_data BYTEA NOT NULL, pdf_sha256 TEXT NOT NULL,
+ executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ sent_customer_at TIMESTAMPTZ, sent_salesperson_at TIMESTAMPTZ, sent_owner_at TIMESTAMPTZ,
+ last_error TEXT
+ )`);
+}
+const signatureImage=(value,label)=>{
+ const match=String(value||'').match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+ if(!match)throw new Error(label+' signature image must be PNG');
+ const bytes=Buffer.from(match[1],'base64');
+ if(bytes.length<120||bytes.length>350000||bytes.subarray(0,8).toString('hex')!=='89504e470d0a1a0a')throw new Error('Invalid '+label+' signature');
+ return bytes;
+};
+const currency=c=>',...guard,salesIdentity,async(req,res)=>{if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,created_by,updated_at FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 1000')).rows;res.json(rows.map(r=>{const d=r.document,items=d.items||[],lifts=items.filter(x=>/lift|roller|LFSE|CLP100|VSL400|VSLA201/i.test(x.description)),steps=items.filter(x=>/step|STCS|STDS/i.test(x.description));return{id:r.id,status:'Draft',sale_date:d.contract_date||'',salesperson:d.salesperson||r.created_by,brand:d.spa?.brand||'',serial:d.spa?.serial||'',model:d.spa?.model||'',shell:d.spa?.shell||'',cabinet:d.spa?.cabinet||'',manufacturer_add_ons:d.spa?.manufacturer_add_ons||'',other_items:items.filter(x=>!lifts.includes(x)&&!steps.includes(x)).map(x=>x.quantity+' × '+x.description).join('; '),customer_last_name:d.customer?.last_name||'',cover_lift_model:lifts.map(x=>x.quantity+' × '+x.description).join('; '),step_model:steps.map(x=>x.quantity+' × '+x.description).join('; ')}}))}catch(e){res.status(500).json({error:e.message})}});
+router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();res.json((await q('SELECT * FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
+router.post('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);document.salesperson=req.user.name||req.user.username;await ensureSalesDrafts();const who=String(req.user.name||req.user.username);res.status(201).json((await q('INSERT INTO crm_sales_drafts(document,created_by,updated_by,owner_user_id) VALUES($1::jsonb,$2,$2,$3) RETURNING *',[JSON.stringify(document),who,req.user.sub])).rows[0])}catch(e){res.status(400).json({error:e.message})}});
+router.put('/crm/v1/sales-drafts/:id',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);const version=Number(req.body.version);if(!Number.isInteger(version)||version<1)return res.status(400).json({error:'Draft version is required'});await ensureSalesDrafts();const existing=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!existing||(!salesAdmin(req)&&String(existing.owner_user_id)!==String(req.user.sub)))return res.status(404).json({error:'Agreement not found'});if(commercialChanged(existing.document,document))return res.status(409).json({error:'Agreement changes require a customer-signed change order'});document.salesperson=existing.document.salesperson||'';const who=String(req.user.name||req.user.username);const params=[JSON.stringify(document),who,req.params.id,version];let access='';if(!salesAdmin(req)){params.push(req.user.sub);access=' AND owner_user_id=$5'}const row=(await q('UPDATE crm_sales_drafts SET document=$1::jsonb,version=version+1,updated_by=$2,updated_at=NOW() WHERE id=$3 AND version=$4'+access+' RETURNING *',params)).rows[0];if(!row)return res.status(409).json({error:'This draft changed or no longer exists. Reopen it from the log before saving.'});res.json(row)}catch(e){res.status(400).json({error:e.message})}});
+
+// Customer-authorized revisions. Snapshots are retained; commission ownership is never reassigned.
+let changeSchemaPromise;
+async function ensureChangeOrders(){if(!changeSchemaPromise)changeSchemaPromise=(async()=>{await ensureSalesDrafts();await q(`CREATE TABLE IF NOT EXISTS crm_sales_change_orders(
+ id BIGSERIAL PRIMARY KEY,draft_id BIGINT NOT NULL REFERENCES crm_sales_drafts(id),base_version INTEGER NOT NULL,
+ base_document JSONB NOT NULL,proposed_document JSONB NOT NULL,document_hash TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending',reason TEXT NOT NULL,created_by TEXT NOT NULL,created_user JSONB NOT NULL,
+ token_hash TEXT UNIQUE,expires_at TIMESTAMPTZ,delivery_channel TEXT,delivery_status TEXT,delivery_error TEXT,
+ signed_name TEXT,signed_at TIMESTAMPTZ,signer_ip TEXT,signer_agent TEXT,consent_text TEXT,
+ cancelled_by TEXT,cancelled_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_change_pending ON crm_sales_change_orders(draft_id) WHERE status='pending'`)})().catch(e=>{changeSchemaPromise=null;throw e});return changeSchemaPromise}
+const changeConsent='I have reviewed the original and updated agreement details, including the pricing difference. I authorize these changes and agree to use my typed name as my electronic signature for this change order.';
+const changeHash=value=>createHash('sha256').update(String(value)).digest('hex');
+const customerReviewUrl=raw=>'https://htfo-service-operations.onrender.com/api/service/crm/v1/change-orders/customer#'+raw;
+function changedSalesDocument(original,input){
+ const proposed=validateSalesDraft({...original,spa:input.spa,msrp:input.msrp,discount:input.discount,items:input.items,tax_rate:input.tax_rate,notes:input.notes});
+ // Contacts, payments, financing, salesperson and original terms cannot be changed through a change order.
+ proposed.customer=original.customer;proposed.payments=original.payments;proposed.finance=original.finance;proposed.salesperson=original.salesperson;
+ proposed.status=original.status;proposed.terms_version=original.terms_version;return proposed;
+}
+const changeFields=['spa','msrp','discount','items','tax_rate','notes'];
+const stableChangeJSON=v=>JSON.stringify(v,(_k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.entries(x).sort(([a],[b])=>a.localeCompare(b))):x);
+const commercialChanged=(a,b)=>{const left=validateSalesDraft(a),right=validateSalesDraft(b);return changeFields.some(k=>stableChangeJSON(left[k])!==stableChangeJSON(right[k]))};
+function agreementCopy(d){const money=n=>'$'+(Number(n||0)/100).toFixed(2);return[
+ 'HOT TUB FACTORY OUTLET — UPDATED DRAFT AGREEMENT',
+ 'This change approval does not replace the original purchase-contract signing step.',
+ 'Customer: '+[d.customer?.first_name,d.customer?.last_name].filter(Boolean).join(' '),
+ 'Address: '+[d.customer?.street,d.customer?.city,d.customer?.state,d.customer?.zip].filter(Boolean).join(', '),
+ 'Phone: '+(d.customer?.phone||''),'Email: '+(d.customer?.email||''),
+ 'Original salesperson: '+(d.salesperson||''),'Contract date: '+(d.contract_date||''),
+ ...Object.entries(d.spa||{}).map(([k,v])=>k.replaceAll('_',' ')+': '+(v||'')),
+ 'Spa MSRP: '+money(d.msrp),'Manual discount: '+money(d.discount),
+ ...(d.items||[]).map(x=>x.quantity+' × '+x.description+' @ '+money(x.unit_price)+' = '+money(x.quantity*x.unit_price)),
+ 'Subtotal: '+money(d.totals?.subtotal),'Tax ('+(d.tax_rate/100)+'%): '+money(d.totals?.tax),'Total: '+money(d.totals?.total),
+ 'Payments recorded: '+money(d.totals?.paid),'Balance: '+money(d.totals?.balance),
+ 'Financing bank: '+(d.finance?.bank||''),'Financed amount: '+money(d.finance?.amount),
+ 'Financing agreements completed: '+(d.finance?.complete?'Yes':'No'),
+ ...(d.payments||[]).map(x=>'Payment: '+x.date+' · '+x.method+' · '+money(x.amount)+' · '+(x.reference||'')),
+ 'Notes: '+(d.notes||''),'Delivery and removal: HTFO in-house employees.'
+ ].join('\n')}
+async function dispatchChange(c,channel,staffUser){
+ if(!['email','sms'].includes(channel))throw new Error('Choose email or text');
+ const customer=c.base_document.customer||{},to=channel==='email'?customer.email:customer.phone;
+ if(!to)throw new Error('The original agreement has no '+(channel==='email'?'email address':'phone number'));
+ if(channel==='sms'&&await opted(to))throw new Error('Customer has opted out of text messages');
+ const raw=randomBytes(32).toString('hex'),url=customerReviewUrl(raw),approved=c.status==='approved';
+ await q("UPDATE crm_sales_change_orders SET token_hash=$2,expires_at=NOW()+INTERVAL '7 days',delivery_channel=$3,delivery_status='sending',delivery_error=NULL WHERE id=$1",[c.id,changeHash(raw),channel]);
+ const subject=approved?'Your updated HTFO agreement — change order '+c.id:'Please review and sign HTFO change order '+c.id;
+ const body=approved?('Your change order has been signed.\nSigned by '+c.signed_name+' on '+new Date(c.signed_at).toISOString()+'\n\n'+agreementCopy(c.proposed_document)+'\n\nView and print your signed change order and updated agreement:\n'+url):('Please review the requested changes to your HTFO agreement.\n\n'+c.reason+'\n\nOriginal total: $'+(c.base_document.totals.total/100).toFixed(2)+'\nUpdated total: $'+(c.proposed_document.totals.total/100).toFixed(2)+'\n\nReview both versions and sign here:\n'+url+'\n\nThis link expires in 7 days. No changes take effect until you approve.');
+ try{if(channel==='email')await email(to,subject,body,[customer.first_name,customer.last_name].filter(Boolean).join(' '),staffUser,c.base_document.submission_id||null);else await sms(to,approved?'HTFO: Your signed change order and updated agreement are ready to view or print: '+url:'HTFO: Please review and sign your requested agreement changes: '+url);await q("UPDATE crm_sales_change_orders SET delivery_status='sent',delivery_error=NULL WHERE id=$1",[c.id]);return {sent:true,channel,to}}catch(e){await q("UPDATE crm_sales_change_orders SET delivery_status='failed',delivery_error=$2 WHERE id=$1",[c.id,String(e.message).slice(0,500)]);throw e}
+}
+router.get('/crm/v1/sales-drafts/:id/change-orders',...guard,salesIdentity,async(req,res)=>{try{await ensureChangeOrders();res.json((await q('SELECT id,draft_id,base_version,base_document,proposed_document,status,reason,created_by,created_at,delivery_channel,delivery_status,delivery_error,signed_name,signed_at,cancelled_by,cancelled_at FROM crm_sales_change_orders WHERE draft_id=$1 ORDER BY created_at DESC',[req.params.id])).rows)}catch(e){res.status(500).json({error:e.message})}});
+router.post('/crm/v1/sales-drafts/:id/change-orders',...guard,salesIdentity,async(req,res)=>{try{await ensureChangeOrders();const base=(await q('SELECT * FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!base)return res.status(404).json({error:'Agreement not found'});if(Number(req.body.version)!==base.version)return res.status(409).json({error:'Reopen the latest agreement before proposing a change'});const reason=String(req.body.reason||'').trim().slice(0,2000);if(!reason)return res.status(400).json({error:'Describe the customer-requested change'});const proposed=changedSalesDocument(base.document,req.body);if(!commercialChanged(base.document,proposed))return res.status(400).json({error:'No agreement changes were entered'});const row=(await q(`INSERT INTO crm_sales_change_orders(draft_id,base_version,base_document,proposed_document,document_hash,reason,created_by,created_user) SELECT id,version,document,$3::jsonb,$4,$5,$6,$7::jsonb FROM crm_sales_drafts WHERE id=$1 AND version=$2 RETURNING id,status`,[base.id,base.version,JSON.stringify(proposed),changeHash(stableChangeJSON(proposed)),reason,req.user.name||req.user.username,JSON.stringify(req.user)])).rows[0];if(!row)return res.status(409).json({error:'Agreement changed. Reopen it and try again.'});res.status(201).json(row)}catch(e){res.status(e.code==='23505'?409:400).json({error:e.code==='23505'?'A pending change order already exists. Review or cancel it first.':e.message})}});
+router.post('/crm/v1/change-orders/:id/send',...guard,salesIdentity,async(req,res)=>{try{await ensureChangeOrders();const c=(await q('SELECT c.*,d.version current_version FROM crm_sales_change_orders c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.id=$1',[req.params.id])).rows[0];if(!c||!['pending','approved'].includes(c.status))return res.status(404).json({error:'Active change order not found'});if(c.status==='pending'&&c.base_version!==c.current_version)return res.status(409).json({error:'Agreement changed. Cancel this request and create a new one.'});res.json(await dispatchChange(c,req.body.channel,req.user))}catch(e){res.status(502).json({error:e.message})}});
+router.post('/crm/v1/change-orders/:id/cancel',...guard,salesIdentity,async(req,res)=>{try{await ensureChangeOrders();const c=(await q("UPDATE crm_sales_change_orders SET status='cancelled',cancelled_at=NOW(),cancelled_by=$2,token_hash=NULL WHERE id=$1 AND status='pending' RETURNING id",[req.params.id,req.user.name||req.user.username])).rows[0];if(!c)return res.status(409).json({error:'Change order is no longer pending'});res.json({ok:true})}catch(e){res.status(400).json({error:e.message})}});
+async function publicChange(raw){if(!/^[a-f0-9]{64}$/.test(String(raw||'')))return null;await ensureChangeOrders();return(await q("SELECT c.*,d.version current_version FROM crm_sales_change_orders c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE token_hash=$1 AND expires_at>NOW() AND c.status IN ('pending','approved')",[changeHash(raw)])).rows[0]||null}
+router.post('/crm/v1/change-orders/customer/review',async(req,res)=>{res.setHeader('Cache-Control','no-store');try{const c=await publicChange(req.body.token);if(!c)return res.status(410).json({error:'This link is invalid, cancelled or expired. Please contact HTFO.'});const stale=c.status==='pending'&&c.current_version!==c.base_version;res.json({id:c.id,draft_id:c.draft_id,status:c.status,reason:c.reason,original:c.base_document,updated:c.proposed_document,signed_name:c.signed_name,signed_at:c.signed_at,document_hash:c.document_hash,consent_text:changeConsent,can_sign:c.status==='pending'&&!stale,stale,original_copy:agreementCopy(c.base_document),updated_copy:agreementCopy(c.proposed_document)})}catch(e){res.status(500).json({error:'Unable to load this change order'})}});
+router.post('/crm/v1/change-orders/customer/sign',async(req,res)=>{res.setHeader('Cache-Control','no-store');try{if(req.body.consent!==true)return res.status(400).json({error:'Please confirm your approval and electronic signature consent'});const name=String(req.body.name||'').trim().slice(0,150);if(name.length<2)return res.status(400).json({error:'Enter your full name to sign'});const c=await publicChange(req.body.token);if(!c)return res.status(410).json({error:'This link has expired or is unavailable'});if(c.status==='approved')return res.json({ok:true,already_signed:true});const result=(await q(`WITH candidate AS (
+ SELECT * FROM crm_sales_change_orders WHERE id=$1 AND token_hash=$2 AND status='pending' AND expires_at>NOW() FOR UPDATE
+ ), changed AS (
+ UPDATE crm_sales_drafts d SET document=c.proposed_document,version=d.version+1,updated_by=$3,updated_at=NOW() FROM candidate c WHERE d.id=c.draft_id AND d.version=c.base_version RETURNING d.id
+ ) UPDATE crm_sales_change_orders c SET status='approved',signed_name=$4,signed_at=NOW(),signer_ip=$5,signer_agent=$6,consent_text=$7 FROM changed d WHERE c.id=$1 AND c.draft_id=d.id AND c.status='pending' RETURNING c.*`,[c.id,changeHash(req.body.token),'Customer-approved change order '+c.id,name,String(req.ip||'').slice(0,100),String(req.get('user-agent')||'').slice(0,500),changeConsent])).rows[0];if(!result)return res.status(409).json({error:'The agreement or change request has changed. Contact HTFO for an updated request.'});let notification='sent';try{const channel=result.base_document.customer?.email?'email':'sms';const customer=result.base_document.customer||{},url=customerReviewUrl(req.body.token);if(channel==='email')await email(customer.email,'Your signed HTFO change order '+result.id,'Signed by '+name+'\n\n'+agreementCopy(result.proposed_document)+'\n\nView and print the signed change order and updated copy:\n'+url,[customer.first_name,customer.last_name].filter(Boolean).join(' '),result.created_user,result.base_document.submission_id||null);else{if(await opted(customer.phone))throw new Error('Customer opted out of texts');await sms(customer.phone,'HTFO: Your signed change order and updated agreement are available to view and print: '+url)}await q("UPDATE crm_sales_change_orders SET delivery_status='receipt_sent',delivery_error=NULL WHERE id=$1",[result.id])}catch(e){notification='failed';await q("UPDATE crm_sales_change_orders SET delivery_status='receipt_failed',delivery_error=$2 WHERE id=$1",[result.id,String(e.message).slice(0,500)])}res.json({ok:true,notification})}catch(e){res.status(500).json({error:'Unable to apply this change order. Please reload before trying again.'})}});
+
+const changeCustomerPage=`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HTFO change order</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f3f6f8;color:#172331;font:16px system-ui,-apple-system,sans-serif}main{max-width:960px;margin:auto;padding:22px}header{background:#082642;color:white;padding:24px}h1{font-size:26px;margin:4px 0}section,details{background:white;border:1px solid #dbe4ea;border-radius:12px;padding:18px;margin:16px 0}.note{background:#fff7e5;border:1px solid #ead9a4;padding:14px;border-radius:10px}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #dbe4ea;white-space:pre-wrap;overflow-wrap:anywhere}th{color:#082642}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.6 system-ui}label{display:block;margin:14px 0}input[type=text]{display:block;width:100%;padding:13px;border:1px solid #8ba5b8;border-radius:8px;font:inherit;margin-top:8px}input[type=checkbox]{width:22px;height:22px;vertical-align:middle;margin-right:8px}button{padding:13px 18px;min-height:46px;border:0;border-radius:8px;background:#0b79b7;color:white;font:700 16px system-ui;cursor:pointer}button:disabled{opacity:.55}summary{cursor:pointer;font-weight:700;padding:6px}#status{white-space:pre-wrap;line-height:1.6}#signed{background:#eaf4ec;padding:15px;border-radius:10px;white-space:pre-wrap}small{color:#617181}@media(max-width:600px){main{padding:12px}th,td{padding:7px;font-size:13px}h1{font-size:22px}}@media print{header{background:white;color:black}body{background:white}#signForm,#printButton{display:none}section,details{break-inside:avoid;border:0;padding:0}main{max-width:none}pre{font-size:11px}}
+</style><script src="/api/service/crm/v1/change-orders/customer.js" defer></script></head><body><header><div>HOT TUB FACTORY OUTLET</div><h1>Review your change order</h1></header><main><p id="status" role="status">Loading your secure change order…</p><div id="content" hidden><p id="draftNote" class="note">This approves changes to a draft agreement. Initial purchase-contract signing is a separate step.</p><h2 id="title"></h2><p id="reason"></p><section><h3>What changes</h3><table><thead><tr><th>Item</th><th>Original</th><th>Updated</th></tr></thead><tbody id="changes"></tbody></table><p id="price"></p></section><details><summary>Original agreement copy</summary><pre id="original"></pre></details><details open><summary>Updated agreement copy</summary><pre id="updated"></pre></details><div id="signed" hidden></div><form id="signForm"><section><h3>Customer authorization</h3><p id="consentText"></p><label>Full name — electronic signature<input id="signature" type="text" autocomplete="name" maxlength="150" minlength="2" required></label><label><input id="consent" type="checkbox" required>I approve the changes shown and consent to sign electronically.</label><button id="signButton">Sign and authorize changes</button><p><small>Anyone with this private link can view the agreement. Keep it private. Please contact HTFO if anything is incorrect.</small></p></section></form><button id="printButton" type="button">Print / Save PDF</button></div></main></body></html>`;
+const changeCustomerScript=String.raw`(()=>{
+const root='/api/service/crm/v1/change-orders/customer',token=location.hash.slice(1),Q=s=>document.querySelector(s),money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(n||0)/100);
+async function request(path,data){const r=await fetch(root+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,token})}),j=await r.json();if(!r.ok)throw new Error(j.error||'Unable to complete this request');return j}
+function row(label,old,value){if(String(old??'')===String(value??''))return;const tr=document.createElement('tr');for(const v of [label,old??'',value??'']){const td=document.createElement('td');td.textContent=String(v);tr.append(td)}Q('#changes').append(tr)}
+const items=d=>(d.items||[]).map(x=>x.quantity+' × '+x.description+' @ '+money(x.unit_price)+' = '+money(x.quantity*x.unit_price)).join('\n');
+async function load(){try{const c=await request('/review',{});Q('#content').hidden=false;Q('#title').textContent='Change order '+c.id+' · Agreement '+c.draft_id;Q('#reason').textContent=c.reason;Q('#draftNote').hidden=c.original.status!=='draft';Q('#original').textContent=c.original_copy;Q('#updated').textContent=c.updated_copy;Q('#consentText').textContent=c.consent_text;Q('#changes').replaceChildren();const a=c.original,b=c.updated;for(const key of new Set([...Object.keys(a.spa||{}),...Object.keys(b.spa||{})]))row(key.replaceAll('_',' '),a.spa?.[key],b.spa?.[key]);for(const [key,label]of [['msrp','Spa MSRP'],['discount','Manual discount']])row(label,money(a[key]),money(b[key]));row('Accessories / services',items(a),items(b));row('Sales tax rate',a.tax_rate/100+'%',b.tax_rate/100+'%');row('Notes',a.notes,b.notes);row('Total price',money(a.totals.total),money(b.totals.total));row('Balance',money(a.totals.balance),money(b.totals.balance));const difference=b.totals.total-a.totals.total;Q('#price').textContent='Original total: '+money(a.totals.total)+' · Updated total: '+money(b.totals.total)+' · Difference: '+money(difference);Q('#signForm').hidden=!c.can_sign;Q('#signed').hidden=c.status!=='approved';if(c.status==='approved')Q('#signed').textContent='APPROVED CHANGE ORDER\nElectronically signed by '+c.signed_name+'\n'+new Date(c.signed_at).toLocaleString()+'\nDocument reference: '+c.document_hash;Q('#status').textContent=c.stale?'This request has been superseded by an agreement update. Please contact HTFO for a new request.':c.status==='approved'?'Your approved changes have been saved. You can print or save your updated copy below.':'Please review all changes and updated pricing before signing.'}catch(e){Q('#status').textContent=e.message;Q('#content').hidden=true}}
+Q('#signForm').onsubmit=async e=>{e.preventDefault();Q('#signButton').disabled=true;Q('#status').textContent='Saving your authorization…';try{const r=await request('/sign',{name:Q('#signature').value,consent:Q('#consent').checked});await load();if(r.notification==='failed')Q('#status').textContent+=' Your changes are approved, but the confirmation message could not be sent. Please save this copy or contact HTFO.'}catch(e){Q('#status').textContent=e.message}finally{Q('#signButton').disabled=false}};Q('#printButton').onclick=()=>{document.querySelectorAll('details').forEach(d=>d.open=true);window.print()};load();
+})();`;
+router.get('/crm/v1/change-orders/customer',(_req,res)=>{res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.type('html').send(changeCustomerPage)});
+router.get('/crm/v1/change-orders/customer.js',(_req,res)=>{res.setHeader('Cache-Control','no-store');res.type('application/javascript').send(changeCustomerScript)});
+
+// Group by verified contact identifiers, never by display name.
+const threadPhoneSql=column=>{const d=`regexp_replace(coalesce(${column},''),'[^0-9]','','g')`;return `(CASE WHEN length(${d})=11 AND left(${d},1)='1' THEN substring(${d} from 2) ELSE ${d} END)`};
+let threadSchemaPromise;
+async function ensureThreadSchema(){if(!threadSchemaPromise)threadSchemaPromise=(async()=>{await ensure();await q(`
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_lead_phone ON crm_website_leads ((${threadPhoneSql('phone')})) WHERE deleted_at IS NULL;
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_lead_email ON crm_website_leads ((lower(trim(coalesce(email,''))))) WHERE deleted_at IS NULL;
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_sms_date ON crm_sms_messages(created_at DESC);
+ CREATE INDEX IF NOT EXISTS idx_crm_thread_email_date ON crm_email_messages((COALESCE(received_at,created_at)) DESC);`);})().catch(e=>{threadSchemaPromise=null;throw e});return threadSchemaPromise}
+function conversationThreadCte(detail=false){const contacts=detail?`key_contacts AS (SELECT submission_id,${threadPhoneSql('phone')} phone,lower(trim(coalesce(email,''))) email FROM crm_website_leads WHERE deleted_at IS NULL AND ('phone:'||${threadPhoneSql('phone')}=$2 OR 'email:'||lower(trim(coalesce(email,'')))=$2 OR 'lead:'||submission_id=$2)),`:'';
+ const smsKey=detail?` AND ('phone:'||${threadPhoneSql("CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END")}=$2 OR m.lead_submission_id IN (SELECT submission_id FROM key_contacts) OR ${threadPhoneSql("CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END")} IN (SELECT phone FROM key_contacts WHERE phone<>'') OR 'unknown:sms:'||m.id::text=$2)`:'';
+ const emailKey=detail?` AND (e.submission_id IN (SELECT submission_id FROM key_contacts) OR lower(trim(coalesce(CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,''))) IN (SELECT email FROM key_contacts WHERE email<>'') OR 'email:'||lower(trim(coalesce(CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,'')))=$2 OR 'unknown:email:'||e.id::text=$2)`:'';
+ return `WITH ${contacts}raw_messages AS (
+ SELECT m.id::text message_id,'sms'::text channel,m.direction,NULL::text subject,m.body,m.status,m.created_at occurred_at,m.lead_submission_id original_lead,
+ CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END peer,
+ ${threadPhoneSql("CASE WHEN lower(coalesce(m.direction,'')) LIKE 'inbound%' THEN m.from_number ELSE m.to_number END")} peer_phone,NULL::text peer_email
+ FROM crm_sms_messages m WHERE m.created_at >= $1::timestamptz ${smsKey}
+ UNION ALL
+ SELECT e.id::text,'email'::text,e.direction,e.subject,e.body,e.status,COALESCE(e.received_at,e.created_at),e.submission_id,
+ CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,
+ NULL::text,lower(trim(coalesce(CASE WHEN lower(coalesce(e.direction,'')) LIKE 'inbound%' THEN e.from_email ELSE e.to_email END,'')))
+ FROM crm_email_messages e WHERE COALESCE(e.received_at,e.created_at) >= $1::timestamptz ${emailKey}
+ ), resolved AS (
+ SELECT m.*,l.submission_id,l.first_name,l.last_name,l.phone,l.email,l.assigned_to,l.pipeline_stage,
+ CASE WHEN coalesce(nullif(${threadPhoneSql('l.phone')},''),nullif(m.peer_phone,'')) IS NOT NULL THEN 'phone:'||coalesce(nullif(${threadPhoneSql('l.phone')},''),nullif(m.peer_phone,''))
+ WHEN coalesce(nullif(lower(trim(l.email)),''),nullif(m.peer_email,'')) IS NOT NULL THEN 'email:'||coalesce(nullif(lower(trim(l.email)),''),nullif(m.peer_email,''))
+ WHEN l.submission_id IS NOT NULL THEN 'lead:'||l.submission_id ELSE 'unknown:'||m.channel||':'||m.message_id END thread_key
+ FROM raw_messages m
+ LEFT JOIN LATERAL (
+ SELECT x.submission_id,x.first_name,x.last_name,x.phone,x.email,x.assigned_to,x.pipeline_stage
+ FROM crm_website_leads x WHERE x.deleted_at IS NULL AND (
+ x.submission_id=m.original_lead OR (m.peer_phone<>'' AND ${threadPhoneSql('x.phone')}=m.peer_phone)
+ OR (m.peer_email<>'' AND lower(trim(coalesce(x.email,'')))=m.peer_email))
+ ORDER BY (trim(concat_ws(' ',x.first_name,x.last_name))<>'') DESC,(x.submission_id=m.original_lead) DESC NULLS LAST,x.received_at DESC,x.submission_id LIMIT 1
+ ) l ON true
+ )`}
+router.get('/crm/v1/conversation-threads',...guard,async(req,res)=>{try{await ensureThreadSchema();const days=Math.min(365,Math.max(1,Number(req.query.days)||30)),limit=Math.min(500,Math.max(1,Number(req.query.limit)||300));
+ const channel=['sms','email'].includes(req.query.channel)?req.query.channel:'all',direction=['inbound','outbound'].includes(req.query.direction)?req.query.direction:'all',term=String(req.query.q||'').trim().slice(0,300);
+ const cutoff=new Date(Date.now()-days*86400000).toISOString();const rows=(await q(conversationThreadCte()+`, filtered AS (
+ SELECT * FROM resolved WHERE ($2='all' OR channel=$2) AND ($3='all' OR CASE WHEN $3='inbound' THEN lower(coalesce(direction,'')) LIKE 'inbound%' ELSE lower(coalesce(direction,'')) NOT LIKE 'inbound%' END)
+ AND ($4::text IS NULL OR concat_ws(' ',first_name,last_name,phone,email,peer,subject,body,assigned_to) ILIKE $4)
+ ), ranked AS (
+ SELECT *,row_number() OVER(PARTITION BY thread_key ORDER BY occurred_at DESC,channel,message_id DESC) rn,
+ count(*) OVER(PARTITION BY thread_key)::int message_count,
+ count(*) FILTER(WHERE lower(coalesce(direction,'')) LIKE 'inbound%') OVER(PARTITION BY thread_key)::int inbound_count,
+ count(*) FILTER(WHERE channel='sms') OVER(PARTITION BY thread_key)::int sms_count,
+ max(occurred_at) FILTER(WHERE lower(coalesce(direction,'')) LIKE 'inbound%') OVER(PARTITION BY thread_key) last_inbound_at,
+ count(*) FILTER(WHERE channel='email') OVER(PARTITION BY thread_key)::int email_count
+ FROM filtered)
+ SELECT thread_key,submission_id,first_name,last_name,phone,email,peer,assigned_to,pipeline_stage,channel,direction,subject,left(body,180) body,occurred_at,message_count,inbound_count,sms_count,email_count,last_inbound_at,count(*) OVER()::int total_threads
+ FROM ranked WHERE rn=1 ORDER BY occurred_at DESC,thread_key LIMIT $5`,[cutoff,channel,direction,term?'%'+term+'%':null,limit])).rows;
+ const stats=rows.reduce((a,r)=>{a.total++;a.inbound+=r.inbound_count;a.outbound+=r.message_count-r.inbound_count;a.sms+=r.sms_count;a.email+=r.email_count;a.messages+=r.message_count;return a},{total:0,messages:0,inbound:0,outbound:0,sms:0,email:0});res.json({days,stats,total_threads:rows[0]?.total_threads||0,threads:rows})
+}catch(e){res.status(500).json({error:e.message})}});
+router.get('/crm/v1/conversation-threads/messages',...guard,async(req,res)=>{try{await ensureThreadSchema();const key=String(req.query.key||'');if(!/^(phone|email|lead|unknown):.{1,240}$/.test(key))return res.status(400).json({error:'Choose a valid conversation'});
+ const beforeAt=req.query.before_at?new Date(String(req.query.before_at)):null;if(beforeAt&&!Number.isFinite(beforeAt.getTime()))return res.status(400).json({error:'Invalid history cursor'});
+ const rows=(await q(conversationThreadCte(true)+` SELECT message_id,channel,direction,subject,body,status,occurred_at,submission_id,peer FROM resolved WHERE thread_key=$2 AND ($3::timestamptz IS NULL OR (occurred_at,channel||':'||message_id)<($3::timestamptz,$4::text)) ORDER BY occurred_at DESC,channel||':'||message_id DESC LIMIT 101`,['1970-01-01T00:00:00.000Z',key,beforeAt?.toISOString()||null,String(req.query.before_key||'')])).rows;
+ const hasMore=rows.length>100,items=rows.slice(0,100),last=items.at(-1);res.json({messages:items.reverse(),has_more:hasMore,next:hasMore?{at:last.occurred_at,key:last.channel+':'+last.message_id}:null})
+}catch(e){res.status(500).json({error:e.message})}});
+
+export default router;
++(Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+async function signedPdf(d,id,sign){
+ return new Promise((resolve,reject)=>{
+  const pdf=new PDFDocument({size:'LETTER',margin:44,autoFirstPage:true,info:{Title:'HTFO Executed Sales Agreement '+id,Author:'Hot Tub Factory Outlet'}});
+  const chunks=[];pdf.on('data',chunk=>chunks.push(chunk));pdf.on('error',reject);pdf.on('end',()=>resolve(Buffer.concat(chunks)));
+  const row=(title,value)=>{if(pdf.y>704)pdf.addPage();pdf.font('Helvetica-Bold').fontSize(9).text(title,{continued:true});pdf.font('Helvetica').text('  '+String(value||''));pdf.moveDown(.25)};
+  pdf.font('Helvetica-Bold').fontSize(19).text('HOT TUB FACTORY OUTLET');
+  pdf.fontSize(12).text('EXECUTED SALES AGREEMENT #'+id);pdf.moveDown(.6);
+  row('Executed UTC:',new Date().toISOString());row('Customer:',sign.customer_name);row('Email:',d.customer.email);row('Phone:',d.customer.phone);row('Address:',[d.customer.street,d.customer.city,d.customer.state,d.customer.zip].filter(Boolean).join(', '));
+  row('Salesperson:',sign.salesperson_name);row('Location:',d.location);
+  row('Brand / Model:',[d.spa.brand,d.spa.model].join(' / '));row('Serial:',d.spa.serial);
+  row('Shell / Cabinet:',[d.spa.shell,d.spa.cabinet].join(' / '));row('Factory add-ons:',d.spa.manufacturer_add_ons||'None');
+  row('HTFO list price:',currency(d.msrp));if(d.discount)row('Negotiated discount:',currency(d.discount));
+  row('Spa sale price:',currency(d.msrp-d.discount));
+  for(const item of d.items||[])row('Item:',item.quantity+' x '+item.description+' — '+currency(item.unit_price*item.quantity));
+  row('Subtotal:',currency(d.totals.subtotal));row('Tax:',currency(d.totals.tax));row('Total:',currency(d.totals.total));
+  row('Payments recorded:',currency(d.totals.paid));row('Balance due:',currency(d.totals.balance));
+  row('Financing:',[d.finance?.bank||'None',currency(d.finance?.amount)].join(' — '));
+  if(d.notes)row('Special instructions:',d.notes);
+  pdf.moveDown(1);pdf.font('Helvetica-Bold').fontSize(12).text('AGREED TERMS');
+  pdf.font('Helvetica').fontSize(9).text(sign.terms_text,{width:520});pdf.moveDown(.6);
+  if(pdf.y>610)pdf.addPage();
+  pdf.font('Helvetica-Bold').fontSize(10).text('Customer signature: '+sign.customer_name);
+  pdf.image(sign.customer_png,{fit:[225,85]});pdf.moveDown(.5);
+  if(pdf.y>610)pdf.addPage();
+  pdf.font('Helvetica-Bold').fontSize(10).text('Salesperson signature: '+sign.salesperson_name);
+  pdf.image(sign.salesperson_png,{fit:[225,85]});
+  pdf.font('Helvetica').fontSize(8).text('Electronic consent recorded; terms version '+sign.terms_version);
+  pdf.end();
+ });
+}
+async function sendContractPdf(to,name,subject,body,fileName,pdf,author){
+ const key=String(process.env.BREVO_API_KEY||'').trim(),from=staffEmail(author);
+ if(!key||!from)throw new Error('Email provider or sales sender not configured');
+ const payload={sender:{email:from,name:'Hot Tub Factory Outlet'},to:[{email:to,name:name||to}],subject,textContent:body,attachment:[{name:fileName,content:pdf.toString('base64')}]};
+ const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+ if(!r.ok){const msg=await r.text();throw new Error('Email delivery failed: '+r.status+' '+msg.slice(0,180))}
+}
+router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,res)=>{
+ try{
+  const terms=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),termsVersion=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
+  if(!terms||!termsVersion)return res.status(409).json({error:'Owner-approved final sales terms are not configured; agreement cannot be executed'});
+  if(req.body?.consent!==true)return res.status(400).json({error:'Both signers must affirm the final contract terms'});
+  await ensureSalesDrafts();await ensureExecutedContracts();
+  const draft=(await q('SELECT * FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];
+  if(!draft)return res.status(404).json({error:'Agreement not found'});
+  if(!salesAdmin(req)&&String(draft.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Salesperson must own this agreement'});
+  if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft.id])).rowCount)return res.status(409).json({error:'Agreement is already executed; retrieve the signed copy'});
+  const d=validateSalesDraft(draft.document);
+  if(d.msrp<=0||!d.customer.email||!d.customer.first_name||!d.customer.last_name||!d.spa.brand||!d.spa.model)return res.status(400).json({error:'Complete customer email, name, spa and MSRP before signing'});
+  const customerName=String(req.body.customer_name||'').trim(),salesName=String(req.body.salesperson_name||'').trim();
+  if(customerName.length<3||salesName.length<3)return res.status(400).json({error:'Both printed signer names required'});
+  const customer_png=signatureImage(req.body.customer_signature,'Customer'),salesperson_png=signatureImage(req.body.salesperson_signature,'Salesperson');
+  const ownerEmail='ray@hottubfactoryoutlet.com',salesEmail=staffEmail(req.user);
+  if(!salesEmail||!salesEmail.includes('@'))return res.status(409).json({error:'Salesperson email is not configured'});
+  const pdf=await signedPdf(d,draft.id,{customer_name:customerName,salesperson_name:salesName,customer_png,salesperson_png,terms_text:terms,terms_version:termsVersion});
+  const hash=createHash('sha256').update(pdf).digest('hex');
+  // Customer profile association: retain the CRM lead ID if known, otherwise resolve unambiguously by email.
+  let submissionId=d.submission_id||null;
+  if(!submissionId){
+   const matches=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) ORDER BY received_at DESC LIMIT 2",[d.customer.email])).rows;
+   if(matches.length===1)submissionId=matches[0].submission_id;
+  }
+  await q(`INSERT INTO crm_sales_executed_contracts
+   (draft_id,submission_id,customer_email,salesperson_email,executed_document,customer_name,salesperson_name,customer_signature,salesperson_signature,terms_text,terms_version,pdf_data,pdf_sha256)
+   VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)`,
+   [draft.id,submissionId,d.customer.email,salesEmail,JSON.stringify(d),customerName,salesName,customer_png,salesperson_png,terms,termsVersion,pdf,hash]);
+  res.status(201).json({ok:true,draft_id:draft.id,sha256:hash,stored:true,delivery:'pending'});
+ }catch(e){res.status(400).json({error:e.message||'Could not execute contract'})}
+});
+router.get('/crm/v1/sales-drafts/:id/executed-pdf',...guard,salesIdentity,async(req,res)=>{
+ try{
+  await ensureExecutedContracts();
+  const row=(await q('SELECT c.pdf_data,d.owner_user_id FROM crm_sales_executed_contracts c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1',[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:'Executed contract not found'});
+  if(!salesAdmin(req)&&String(row.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Not authorized'});
+  res.type('application/pdf').set('Content-Disposition','attachment; filename="HTFO-Signed-'+req.params.id+'.pdf"').send(row.pdf_data);
+ }catch(e){res.status(500).json({error:'Unable to read signed contract'})}
+});
+router.post('/crm/v1/sales-drafts/:id/send-executed',...guard,salesIdentity,async(req,res)=>{
+ try{
+  await ensureExecutedContracts();
+  const row=(await q('SELECT c.*,d.owner_user_id FROM crm_sales_executed_contracts c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1',[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:'No executed contract to deliver'});
+  if(!salesAdmin(req)&&String(row.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Not authorized'});
+  const list=[['customer',row.customer_email,row.customer_name,'sent_customer_at'],['salesperson',row.salesperson_email,row.salesperson_name,'sent_salesperson_at'],['owner','ray@hottubfactoryoutlet.com','HTFO Owner','sent_owner_at']];
+  const sent=[];for(const [role,to,name,column] of list){
+   if(row[column]){sent.push(role+': already sent');continue}
+   const author={username:req.user.username,name:req.user.name};
+   await sendContractPdf(to,name,'Signed HTFO Sales Agreement #'+row.draft_id,'Attached is the signed sales agreement for '+row.customer_name+'.', 'HTFO-Signed-'+row.draft_id+'.pdf',row.pdf_data,author);
+   await q('UPDATE crm_sales_executed_contracts SET '+column+'=NOW(),last_error=NULL WHERE draft_id=$1',[row.draft_id]);sent.push(role+': delivered');
+  }
+  res.json({ok:true,deliveries:sent});
+ }catch(e){res.status(502).json({error:e.message||'Email delivery incomplete; retry will skip completed recipients'})}
 });
 router.get('/crm/v1/admin/order-list',...guard,salesIdentity,async(req,res)=>{if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,created_by,updated_at FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 1000')).rows;res.json(rows.map(r=>{const d=r.document,items=d.items||[],lifts=items.filter(x=>/lift|roller|LFSE|CLP100|VSL400|VSLA201/i.test(x.description)),steps=items.filter(x=>/step|STCS|STDS/i.test(x.description));return{id:r.id,status:'Draft',sale_date:d.contract_date||'',salesperson:d.salesperson||r.created_by,brand:d.spa?.brand||'',serial:d.spa?.serial||'',model:d.spa?.model||'',shell:d.spa?.shell||'',cabinet:d.spa?.cabinet||'',manufacturer_add_ons:d.spa?.manufacturer_add_ons||'',other_items:items.filter(x=>!lifts.includes(x)&&!steps.includes(x)).map(x=>x.quantity+' × '+x.description).join('; '),customer_last_name:d.customer?.last_name||'',cover_lift_model:lifts.map(x=>x.quantity+' × '+x.description).join('; '),step_model:steps.map(x=>x.quantity+' × '+x.description).join('; ')}}))}catch(e){res.status(500).json({error:e.message})}});
 router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();res.json((await q('SELECT * FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
