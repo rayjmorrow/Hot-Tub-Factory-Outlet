@@ -1,6 +1,7 @@
 import express from 'express';
 import {randomBytes,createHash} from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import PDFDocument from 'pdfkit';
 import { q } from './service-db.js';
 
 const router=express.Router();
@@ -471,10 +472,146 @@ router.post('/crm/v1/admin/sales-pricebook/import',...guard,salesIdentity,async(
   res.json({ok:true,imported:cleanRows.length});
  }catch(e){res.status(500).json({error:'Unable to import prices'})}
 });
+// Immutable signed agreements. Signed copies are stored separately from editable drafts.
+async function ensureExecutedContracts(){
+ await q(`CREATE TABLE IF NOT EXISTS crm_sales_executed_contracts (
+ id BIGSERIAL PRIMARY KEY, draft_id BIGINT NOT NULL UNIQUE REFERENCES crm_sales_drafts(id),
+ submission_id TEXT, customer_email TEXT NOT NULL, salesperson_email TEXT NOT NULL,
+ executed_document JSONB NOT NULL, customer_name TEXT NOT NULL, salesperson_name TEXT NOT NULL,
+ customer_signature BYTEA NOT NULL, salesperson_signature BYTEA NOT NULL,
+ terms_text TEXT NOT NULL, terms_version TEXT NOT NULL,
+ pdf_data BYTEA NOT NULL, pdf_sha256 TEXT NOT NULL,
+ executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ sent_customer_at TIMESTAMPTZ, sent_salesperson_at TIMESTAMPTZ, sent_owner_at TIMESTAMPTZ,
+ last_error TEXT
+ )`);
+}
+const signatureImage=(value,label)=>{
+ const match=String(value||'').match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+ if(!match)throw new Error(label+' signature image must be PNG');
+ const bytes=Buffer.from(match[1],'base64');
+ if(bytes.length<120||bytes.length>350000||bytes.subarray(0,8).toString('hex')!=='89504e470d0a1a0a')throw new Error('Invalid '+label+' signature');
+ return bytes;
+};
+const currency=c=>'$'+(Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+async function signedPdf(d,id,sign){
+ return new Promise((resolve,reject)=>{
+  const pdf=new PDFDocument({size:'LETTER',margin:44,autoFirstPage:true,info:{Title:'HTFO Executed Sales Agreement '+id,Author:'Hot Tub Factory Outlet'}});
+  const chunks=[];pdf.on('data',chunk=>chunks.push(chunk));pdf.on('error',reject);pdf.on('end',()=>resolve(Buffer.concat(chunks)));
+  const row=(title,value)=>{if(pdf.y>704)pdf.addPage();pdf.font('Helvetica-Bold').fontSize(9).text(title,{continued:true});pdf.font('Helvetica').text('  '+String(value||''));pdf.moveDown(.25)};
+  pdf.font('Helvetica-Bold').fontSize(19).text('HOT TUB FACTORY OUTLET');
+  pdf.fontSize(12).text('EXECUTED SALES AGREEMENT #'+id);pdf.moveDown(.6);
+  row('Executed UTC:',new Date().toISOString());row('Customer:',sign.customer_name);row('Email:',d.customer.email);row('Phone:',d.customer.phone);row('Address:',[d.customer.street,d.customer.city,d.customer.state,d.customer.zip].filter(Boolean).join(', '));
+  row('Salesperson:',sign.salesperson_name);row('Location:',d.location);
+  row('Brand / Model:',[d.spa.brand,d.spa.model].join(' / '));row('Serial:',d.spa.serial);
+  row('Shell / Cabinet:',[d.spa.shell,d.spa.cabinet].join(' / '));row('Factory add-ons:',d.spa.manufacturer_add_ons||'None');
+  row('HTFO list price:',currency(d.msrp));if(d.discount)row('Negotiated discount:',currency(d.discount));
+  row('Spa sale price:',currency(d.msrp-d.discount));
+  for(const item of d.items||[])row('Item:',item.quantity+' x '+item.description+' — '+currency(item.unit_price*item.quantity));
+  row('Subtotal:',currency(d.totals.subtotal));row('Tax:',currency(d.totals.tax));row('Total:',currency(d.totals.total));
+  row('Payments recorded:',currency(d.totals.paid));row('Balance due:',currency(d.totals.balance));
+  row('Financing:',[d.finance?.bank||'None',currency(d.finance?.amount)].join(' — '));
+  if(d.notes)row('Special instructions:',d.notes);
+  pdf.moveDown(1);pdf.font('Helvetica-Bold').fontSize(12).text('AGREED TERMS');
+  pdf.font('Helvetica').fontSize(9).text(sign.terms_text,{width:520});pdf.moveDown(.6);
+  if(pdf.y>610)pdf.addPage();
+  pdf.font('Helvetica-Bold').fontSize(10).text('Customer signature: '+sign.customer_name);
+  pdf.image(sign.customer_png,{fit:[225,85]});pdf.moveDown(.5);
+  if(pdf.y>610)pdf.addPage();
+  pdf.font('Helvetica-Bold').fontSize(10).text('Salesperson signature: '+sign.salesperson_name);
+  pdf.image(sign.salesperson_png,{fit:[225,85]});
+  pdf.font('Helvetica').fontSize(8).text('Electronic consent recorded; terms version '+sign.terms_version);
+  pdf.end();
+ });
+}
+async function sendContractPdf(to,name,subject,body,fileName,pdf,author){
+ const key=String(process.env.BREVO_API_KEY||'').trim(),from=staffEmail(author);
+ if(!key||!from)throw new Error('Email provider or sales sender not configured');
+ const payload={sender:{email:from,name:'Hot Tub Factory Outlet'},to:[{email:to,name:name||to}],subject,textContent:body,attachment:[{name:fileName,content:pdf.toString('base64')}]};
+ const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+ if(!r.ok){const msg=await r.text();throw new Error('Email delivery failed: '+r.status+' '+msg.slice(0,180))}
+}
+router.get('/crm/v1/sales-terms',...guard,salesIdentity,(req,res)=>{
+ const text=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),version=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
+ if(!text||!version)return res.json({ready:false,version:null,text:null});
+ res.json({ready:true,version,text});
+});
+router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,res)=>{
+ try{
+  const terms=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),termsVersion=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
+  if(!terms||!termsVersion)return res.status(409).json({error:'Owner-approved final sales terms are not configured; agreement cannot be executed'});
+  if(req.body?.consent!==true)return res.status(400).json({error:'Both signers must affirm the final contract terms'});
+  if(String(req.body?.terms_version||'')!==termsVersion)return res.status(409).json({error:'Contract terms changed; review the latest version before signing'});
+  await ensureSalesDrafts();await ensureExecutedContracts();
+  const draft=(await q('SELECT * FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];
+  if(!draft)return res.status(404).json({error:'Agreement not found'});
+  if(!salesAdmin(req)&&String(draft.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Salesperson must own this agreement'});
+  if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft.id])).rowCount)return res.status(409).json({error:'Agreement is already executed; retrieve the signed copy'});
+  const d=validateSalesDraft(draft.document);
+  if(d.msrp<=0||!d.customer.email||!d.customer.first_name||!d.customer.last_name||!d.spa.brand||!d.spa.model)return res.status(400).json({error:'Complete customer email, name, spa and MSRP before signing'});
+  const customerName=String(req.body.customer_name||'').trim(),salesName=String(req.body.salesperson_name||'').trim();
+  if(customerName.length<3||salesName.length<3)return res.status(400).json({error:'Both printed signer names required'});
+  const customer_png=signatureImage(req.body.customer_signature,'Customer'),salesperson_png=signatureImage(req.body.salesperson_signature,'Salesperson');
+  const ownerEmail='ray@hottubfactoryoutlet.com',salesEmail=staffEmail(req.user);
+  if(!salesEmail||!salesEmail.includes('@'))return res.status(409).json({error:'Salesperson email is not configured'});
+  const pdf=await signedPdf(d,draft.id,{customer_name:customerName,salesperson_name:salesName,customer_png,salesperson_png,terms_text:terms,terms_version:termsVersion});
+  const hash=createHash('sha256').update(pdf).digest('hex');
+  // Customer profile association: retain the CRM lead ID if known, otherwise resolve unambiguously by email.
+  let submissionId=d.submission_id||null;
+  if(!submissionId){
+   const matches=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) ORDER BY received_at DESC LIMIT 2",[d.customer.email])).rows;
+   if(matches.length===1)submissionId=matches[0].submission_id;
+   else if(matches.length>1)return res.status(409).json({error:'Multiple customer profiles have this email. Open the correct customer profile before executing'});
+  }
+  if(submissionId){
+   const found=(await q('SELECT submission_id FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL',[submissionId])).rows;
+   if(!found.length)return res.status(409).json({error:'Linked customer profile was not found. Reopen the agreement from the customer profile'});
+  }else{
+   await ensure();
+   submissionId='signed-'+randomBytes(10).toString('hex');
+   await q(`INSERT INTO crm_website_leads(submission_id,first_name,last_name,email,phone,source,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,lifecycle_stage,pipeline_stage,has_opportunity,received_at,updated_at)
+     VALUES($1,$2,$3,$4,$5,'Walk-In','Sales agreement customer profile',$6::jsonb,$7,$8,$9,$10,$11,'Customer','Won',true,NOW(),NOW())`,
+    [submissionId,d.customer.first_name,d.customer.last_name,d.customer.email,d.customer.phone,JSON.stringify({created_by_signed_agreement:draft.id}),'Hot Tub',d.spa.brand,d.spa.model,req.user.name||req.user.username,d.location]);
+  }
+  await q(`INSERT INTO crm_sales_executed_contracts
+   (draft_id,submission_id,customer_email,salesperson_email,executed_document,customer_name,salesperson_name,customer_signature,salesperson_signature,terms_text,terms_version,pdf_data,pdf_sha256)
+   VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)`,
+   [draft.id,submissionId,d.customer.email,salesEmail,JSON.stringify(d),customerName,salesName,customer_png,salesperson_png,terms,termsVersion,pdf,hash]);
+  res.status(201).json({ok:true,draft_id:draft.id,sha256:hash,stored:true,delivery:'pending'});
+ }catch(e){res.status(400).json({error:e.message||'Could not execute contract'})}
+});
+router.get('/crm/v1/leads/:submissionId/signed-contracts',...guard,salesIdentity,async(req,res)=>{
+ try{await ensureExecutedContracts();const rows=(await q('SELECT draft_id,customer_name,executed_at,pdf_sha256,sent_customer_at,sent_salesperson_at,sent_owner_at FROM crm_sales_executed_contracts WHERE submission_id=$1 ORDER BY executed_at DESC',[req.params.submissionId])).rows;res.json(rows)}catch(e){res.status(500).json({error:'Could not load signed agreements'})}
+});
+router.get('/crm/v1/sales-drafts/:id/executed-pdf',...guard,salesIdentity,async(req,res)=>{
+ try{
+  await ensureExecutedContracts();
+  const row=(await q('SELECT c.pdf_data,d.owner_user_id FROM crm_sales_executed_contracts c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1',[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:'Executed contract not found'});
+  if(!salesAdmin(req)&&String(row.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Not authorized'});
+  res.type('application/pdf').set('Content-Disposition','attachment; filename="HTFO-Signed-'+req.params.id+'.pdf"').send(row.pdf_data);
+ }catch(e){res.status(500).json({error:'Unable to read signed contract'})}
+});
+router.post('/crm/v1/sales-drafts/:id/send-executed',...guard,salesIdentity,async(req,res)=>{
+ try{
+  await ensureExecutedContracts();
+  const row=(await q('SELECT c.*,d.owner_user_id FROM crm_sales_executed_contracts c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1',[req.params.id])).rows[0];
+  if(!row)return res.status(404).json({error:'No executed contract to deliver'});
+  if(!salesAdmin(req)&&String(row.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Not authorized'});
+  const list=[['customer',row.customer_email,row.customer_name,'sent_customer_at'],['salesperson',row.salesperson_email,row.salesperson_name,'sent_salesperson_at'],['owner','ray@hottubfactoryoutlet.com','HTFO Owner','sent_owner_at']];
+  const sent=[];for(const [role,to,name,column] of list){
+   if(row[column]){sent.push(role+': already sent');continue}
+   const author={username:req.user.username,name:req.user.name};
+   await sendContractPdf(to,name,'Signed HTFO Sales Agreement #'+row.draft_id,'Attached is the signed sales agreement for '+row.customer_name+'.', 'HTFO-Signed-'+row.draft_id+'.pdf',row.pdf_data,author);
+   await q('UPDATE crm_sales_executed_contracts SET '+column+'=NOW(),last_error=NULL WHERE draft_id=$1',[row.draft_id]);sent.push(role+': delivered');
+  }
+  res.json({ok:true,deliveries:sent});
+ }catch(e){res.status(502).json({error:e.message||'Email delivery incomplete; retry will skip completed recipients'})}
+});
 router.get('/crm/v1/admin/order-list',...guard,salesIdentity,async(req,res)=>{if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,created_by,updated_at FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 1000')).rows;res.json(rows.map(r=>{const d=r.document,items=d.items||[],lifts=items.filter(x=>/lift|roller|LFSE|CLP100|VSL400|VSLA201/i.test(x.description)),steps=items.filter(x=>/step|STCS|STDS/i.test(x.description));return{id:r.id,status:'Draft',sale_date:d.contract_date||'',salesperson:d.salesperson||r.created_by,brand:d.spa?.brand||'',serial:d.spa?.serial||'',model:d.spa?.model||'',shell:d.spa?.shell||'',cabinet:d.spa?.cabinet||'',manufacturer_add_ons:d.spa?.manufacturer_add_ons||'',other_items:items.filter(x=>!lifts.includes(x)&&!steps.includes(x)).map(x=>x.quantity+' × '+x.description).join('; '),customer_last_name:d.customer?.last_name||'',cover_lift_model:lifts.map(x=>x.quantity+' × '+x.description).join('; '),step_model:steps.map(x=>x.quantity+' × '+x.description).join('; ')}}))}catch(e){res.status(500).json({error:e.message})}});
 router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();res.json((await q('SELECT * FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
 router.post('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);document.salesperson=req.user.name||req.user.username;await ensureSalesDrafts();const who=String(req.user.name||req.user.username);res.status(201).json((await q('INSERT INTO crm_sales_drafts(document,created_by,updated_by,owner_user_id) VALUES($1::jsonb,$2,$2,$3) RETURNING *',[JSON.stringify(document),who,req.user.sub])).rows[0])}catch(e){res.status(400).json({error:e.message})}});
-router.put('/crm/v1/sales-drafts/:id',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);const version=Number(req.body.version);if(!Number.isInteger(version)||version<1)return res.status(400).json({error:'Draft version is required'});await ensureSalesDrafts();const existing=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!existing||(!salesAdmin(req)&&String(existing.owner_user_id)!==String(req.user.sub)))return res.status(404).json({error:'Agreement not found'});if(commercialChanged(existing.document,document))return res.status(409).json({error:'Agreement changes require a customer-signed change order'});document.salesperson=existing.document.salesperson||'';const who=String(req.user.name||req.user.username);const params=[JSON.stringify(document),who,req.params.id,version];let access='';if(!salesAdmin(req)){params.push(req.user.sub);access=' AND owner_user_id=$5'}const row=(await q('UPDATE crm_sales_drafts SET document=$1::jsonb,version=version+1,updated_by=$2,updated_at=NOW() WHERE id=$3 AND version=$4'+access+' RETURNING *',params)).rows[0];if(!row)return res.status(409).json({error:'This draft changed or no longer exists. Reopen it from the log before saving.'});res.json(row)}catch(e){res.status(400).json({error:e.message})}});
+router.put('/crm/v1/sales-drafts/:id',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);const version=Number(req.body.version);if(!Number.isInteger(version)||version<1)return res.status(400).json({error:'Draft version is required'});await ensureSalesDrafts();const existing=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!existing||(!salesAdmin(req)&&String(existing.owner_user_id)!==String(req.user.sub)))return res.status(404).json({error:'Agreement not found'});await ensureExecutedContracts();if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[req.params.id])).rowCount)return res.status(409).json({error:'Signed agreement is locked; use a customer-authorized change order'});if(commercialChanged(existing.document,document))return res.status(409).json({error:'Agreement changes require a customer-signed change order'});document.salesperson=existing.document.salesperson||'';const who=String(req.user.name||req.user.username);const params=[JSON.stringify(document),who,req.params.id,version];let access='';if(!salesAdmin(req)){params.push(req.user.sub);access=' AND owner_user_id=$5'}const row=(await q('UPDATE crm_sales_drafts SET document=$1::jsonb,version=version+1,updated_by=$2,updated_at=NOW() WHERE id=$3 AND version=$4'+access+' RETURNING *',params)).rows[0];if(!row)return res.status(409).json({error:'This draft changed or no longer exists. Reopen it from the log before saving.'});res.json(row)}catch(e){res.status(400).json({error:e.message})}});
 
 // Customer-authorized revisions. Snapshots are retained; commission ownership is never reassigned.
 let changeSchemaPromise;
