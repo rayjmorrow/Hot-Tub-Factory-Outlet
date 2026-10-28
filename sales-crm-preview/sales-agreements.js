@@ -53,6 +53,24 @@ function calCabinetsForModel(model){
  // Other collections have separate cabinets: don't invent factory choices.
  return [];
 }
+// Innova's 2025 dealer sheet specifies door-panel colors by shell finish.
+function innovaDoorPanels(model,shell){
+ const m=String(model||'').toLowerCase(),s=String(shell||'').toLowerCase();
+ if(!s)return [];
+ if(m.startsWith('stream')||m==='monsoon')return ['Black doors'];
+ if(m==='storm')return [s==='midnight grey'?'Grey doors':'Black doors'];
+ if(m==='fantom')return ['Integrated shell-matched panels'];
+ return [];
+}
+function refreshInnovaDoors(){
+ if(Q('#saBrand').value!=='Innova Spas')return;
+ const field=Q('#saCabinet'),shell=Q('#saShell').value;
+ const colors=innovaDoorPanels(Q('#saModel').value,shell);
+ const current=field.value;
+ field.innerHTML='<option value="">Select panel finish…</option>'+colors.map(v=>'<option value="'+html(v)+'">'+html(v)+'</option>').join('');
+ field.value=colors.includes(current)?current:(colors[0]||'');
+ Q('#saCabinetCustom').hidden=true;
+}
 function populateConfiguration(saved={}){
  const revision=++configurationRevision,brand=Q('#saBrand').value,model=Q('#saModel').value.trim();
  const baseSpec=SPA_CONFIGURATION[brand]||{shell:[],cabinet:[]};
@@ -63,6 +81,7 @@ function populateConfiguration(saved={}){
   field.value=values.includes(value)?value:value?'__custom':'';
   custom.hidden=field.value!=='__custom';custom.value=field.value==='__custom'?value:'';
  }
+ if(brand==='Innova Spas')refreshInnovaDoors();
  const choices=Q('#saFactoryChoices');
  choices.innerHTML='';
  Q('#saFactoryCustom').value=(saved.manufacturer_add_ons||'');
@@ -92,7 +111,7 @@ function syncConfig(){
  for(const id of ['saShell','saCabinet'])Q('#'+id+'Custom').hidden=Q('#'+id).value!=='__custom';
  Q('#saManufacturerAddOns').value=[...Array.from(Q('#saFactoryChoices').querySelectorAll('input[type="checkbox"]:checked'),x=>x.value),...Q('#saFactoryCustom').value.split(',').map(s=>s.trim()).filter(Boolean)].join(', ');
 }
-for(const id of ['saShell','saCabinet'])Q('#'+id).addEventListener('change',()=>{syncConfig();changed()});
+for(const id of ['saShell','saCabinet'])Q('#'+id).addEventListener('change',()=>{if(id==='saShell')refreshInnovaDoors();syncConfig();changed()});
 for(const id of ['saFactoryChoices','saFactoryCustom','saShellCustom','saCabinetCustom'])Q('#'+id).addEventListener('input',()=>{syncConfig();changed()});
 // Factory options are actual quoted line items: retail = 2x 2026 factory cost, no surcharge.
 // Do not modify historical agreements just because their model options load; only reconcile after a salesperson changes selections.
