@@ -73,12 +73,16 @@ function populateConfiguration(saved={}){
  FACTORY_OPTIONS_2026.then(catalog=>{
    if(configurationRevision!==revision||Q('#saBrand').value!==brand||Q('#saModel').value.trim()!==model)return;
    const options=catalog.models[brand+'|'+model]||[];
+   const ecoExtras=brand==='Eco Spas'&&/^E[1-6](?: DLUX)?$/i.test(model)?[
+    ['Wi-Fi control',400],['30-foot 110V GFCI cord',168],
+    ...(/^E[34]$/i.test(model)?[['4 HP pump upgrade',1010]]:[])
+   ]:[];
    const savedOptions=(saved.manufacturer_add_ons||'').split(',').map(x=>x.trim()).filter(Boolean);
-   choices.innerHTML=options.map(i=>{const [label,retail]=catalog.opt[i];const cleanLabel=String(label).replaceAll(',', ';');const checked=savedOptions.includes(cleanLabel)?' checked':'';return '<label><input type="checkbox" value="'+html(cleanLabel)+'" data-retail="'+Number(retail)+'"'+checked+'><span>'+html(cleanLabel)+' — $'+Number(retail).toLocaleString()+'</span></label>';}).join('');
+   choices.innerHTML=[...options.map(i=>catalog.opt[i]),...ecoExtras].map(([label,retail])=>{const cleanLabel=String(label).replaceAll(',', ';');const checked=savedOptions.includes(cleanLabel)?' checked':'';return '<label><input type="checkbox" value="'+html(cleanLabel)+'" data-retail="'+Number(retail)+'"'+checked+'><span>'+html(cleanLabel)+' — $'+Number(retail).toLocaleString()+'</span></label>';}).join('');
    updateFactorySummary();
    const unverified=savedOptions.filter(x=>!Array.from(choices.querySelectorAll('input[type="checkbox"]')).some(o=>o.value===x));
    Q('#saFactoryCustom').value=unverified.join(', ');
-   if(hint)hint.textContent=options.length?'Only the factory-priced options for this exact 2026 model are shown. Verify final factory order.':'No verified factory add-ons found for this model; check with management before quoting upgrades.';
+   if(hint)hint.textContent=(options.length+ecoExtras.length)?'Only the factory-priced options for this exact 2026 model are shown. Verify final factory order.':'No verified factory add-ons found for this model; check with management before quoting upgrades.';
    syncConfig();
    if(brand==='Cal Spas'){window.HTFO_2026_CAL_MODEL_CODES=Object.keys(catalog.models).filter(k=>k.startsWith('Cal Spas|')).map(k=>k.slice('Cal Spas|'.length));modelOptions();}
  }).catch(()=>{if(hint)hint.textContent='Factory options could not load. Do not promise any unverified upgrades.'});
