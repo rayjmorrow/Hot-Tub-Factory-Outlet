@@ -167,20 +167,18 @@ async function uploadCheckPhotos(saved){
 }
 // Approved pricing is keyed by exact factory model number. No invented wholesale values.
 let quoteRequest=0;
-async function applyModelPrice(){
- const brand=Q('#saBrand').value,model=Q('#saModel').value.trim(),request=++quoteRequest;
- if(!brand||!model)return;
- Q('#saPricingNotice').textContent='Checking approved model price…';
- try{
-  const p=await api('/crm/v1/sales-pricebook/quote?brand='+encodeURIComponent(brand)+'&model='+encodeURIComponent(model));
-  if(request!==quoteRequest)return;
-  Q('#saMsrp').value=(p.list_price_cents/100).toFixed(2);
-  synchronizeDiscount();changed();
-  Q('#saPricingNotice').textContent='Price loaded from protected model pricebook. Optional sale price may be entered below.';
- }catch(e){
-  if(request!==quoteRequest)return;
-  Q('#saPricingNotice').textContent='No approved model price found. Administrator must import or approve this model before quoting.';
+function applyModelPrice(){
+ const brand=Q('#saBrand').value,model=Q('#saModel').value.trim();
+ const approved=window.HTFO_APPROVED_MSRP_2026?.[brand];
+ const entry=approved&&Object.entries(approved).find(([k])=>k.toLowerCase()===model.toLowerCase());
+ if(!entry){
+  Q('#saPricingNotice').textContent='No owner-approved 2026 MSRP for this model. Ask management before quoting.';
+  return;
  }
+ Q('#saMsrp').value=Number(entry[1]).toFixed(2);
+ Q('#saSalePrice').value='';
+ synchronizeDiscount();changed();
+ Q('#saPricingNotice').textContent='Owner-approved 2026 MSRP loaded. Optional discounted price may be entered below.';
 }
 function synchronizeDiscount(){
  const msrp=cents(Q('#saMsrp').value);
