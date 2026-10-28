@@ -131,6 +131,28 @@ function renderSmsConversation(){
   $('#smsConversation').innerHTML=list.length?list.map(m=>{const inbound=m.direction==='inbound'||m.direction==='inbound-shadow';return `<div class="bubble ${inbound?'in':'out'}"><div>${esc(m.body||'')}</div><div class="time">${inbound?'Customer':'HTFO'} · ${new Date(m.created_at).toLocaleString()} ${m.status?'· '+esc(m.status):''}</div></div>`}).join(''):'<div class="empty">No text messages yet.</div>';
   const box=$('#smsConversation');if(box)box.scrollTop=box.scrollHeight;
 }
+async function showCustomerSignedContracts(submissionId){
+ let section=document.getElementById('customerSignedContracts');
+ if(!section){section=document.createElement('section');section.id='customerSignedContracts';section.className='section';section.innerHTML='<h3>Signed Sales Agreements</h3><div id="customerSignedContractsList" class="small"></div>';document.querySelector('#drawerWrap .drawer-body').append(section);}
+ const target=document.getElementById('customerSignedContractsList');
+ target.textContent='Checking signed agreements…';
+ if(!submissionId){target.textContent='No linked customer record';return}
+ try{
+  const docs=await api('/crm/v1/leads/'+encodeURIComponent(submissionId)+'/signed-contracts');
+  if(currentDetail?.lead?.submission_id!==submissionId)return;
+  if(!docs.length){target.textContent='No signed agreements yet';return}
+  target.innerHTML=docs.map(x=>'<button type="button" class="btn secondary" data-executed="'+esc(x.draft_id)+'">Signed agreement #'+esc(x.draft_id)+' · '+esc(new Date(x.executed_at).toLocaleDateString())+' · Download PDF</button>').join('');
+  target.querySelectorAll('[data-executed]').forEach(button=>button.onclick=async()=>{
+   button.disabled=true;
+   try{
+    const resp=await fetch(API+'/crm/v1/sales-drafts/'+button.dataset.executed+'/executed-pdf',{headers:{Authorization:'Bearer '+token}});
+    if(!resp.ok)throw Error('Download unavailable ('+resp.status+')');
+    const blob=await resp.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download='HTFO-Signed-'+button.dataset.executed+'.pdf';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+   }catch(e){alert(e.message)}finally{button.disabled=false}
+  });
+ }catch(e){target.textContent='Could not retrieve signed agreements: '+e.message}
+}
 function renderDetail(){
   const l=currentDetail.lead;
   $('#detailName').textContent=[l.first_name,l.last_name].filter(Boolean).join(' ')||'Lead';
@@ -144,6 +166,7 @@ function renderDetail(){
   const rows=flatten(l.payload||{}).slice(0,60);
   $('#payloadBox').innerHTML=rows.length?rows.map(([k,v])=>`<span>${esc(k)}</span><span>${esc(v)}</span>`).join(''):'<span>No additional fields</span><span>—</span>';
   renderHistoryOnly();
+  showCustomerSignedContracts(l.submission_id);
   $('#callBtn').disabled=!l.phone;$('#sendSms').disabled=!l.phone;$('#composeEmail').disabled=!l.email;renderSmsConversation();
 }
 function renderHistoryOnly(){
