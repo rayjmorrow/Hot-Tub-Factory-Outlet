@@ -671,11 +671,17 @@ async function sendContractPdf(to,name,subject,body,fileName,pdf,author){
  const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
  if(!r.ok){const msg=await r.text();throw new Error('Email delivery failed: '+r.status+' '+msg.slice(0,180))}
 }
+router.get('/crm/v1/sales-terms',...guard,salesIdentity,(req,res)=>{
+ const text=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),version=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
+ if(!text||!version)return res.json({ready:false,version:null,text:null});
+ res.json({ready:true,version,text});
+});
 router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,res)=>{
  try{
   const terms=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),termsVersion=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
   if(!terms||!termsVersion)return res.status(409).json({error:'Owner-approved final sales terms are not configured; agreement cannot be executed'});
   if(req.body?.consent!==true)return res.status(400).json({error:'Both signers must affirm the final contract terms'});
+  if(String(req.body?.terms_version||'')!==termsVersion)return res.status(409).json({error:'Contract terms changed; review the latest version before signing'});
   await ensureSalesDrafts();await ensureExecutedContracts();
   const draft=(await q('SELECT * FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];
   if(!draft)return res.status(404).json({error:'Agreement not found'});
@@ -695,6 +701,17 @@ router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,
   if(!submissionId){
    const matches=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) ORDER BY received_at DESC LIMIT 2",[d.customer.email])).rows;
    if(matches.length===1)submissionId=matches[0].submission_id;
+   else if(matches.length>1)return res.status(409).json({error:'Multiple customer profiles have this email. Open the correct customer profile before executing'});
+  }
+  if(submissionId){
+   const found=(await q('SELECT submission_id FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL',[submissionId])).rows;
+   if(!found.length)return res.status(409).json({error:'Linked customer profile was not found. Reopen the agreement from the customer profile'});
+  }else{
+   await ensure();
+   submissionId='signed-'+randomBytes(10).toString('hex');
+   await q(`INSERT INTO crm_website_leads(submission_id,first_name,last_name,email,phone,source,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,lifecycle_stage,pipeline_stage,has_opportunity,received_at,updated_at)
+     VALUES($1,$2,$3,$4,$5,'Walk-In','Sales agreement customer profile',$6::jsonb,$7,$8,$9,$10,$11,'Customer','Won',true,NOW(),NOW())`,
+    [submissionId,d.customer.first_name,d.customer.last_name,d.customer.email,d.customer.phone,JSON.stringify({created_by_signed_agreement:draft.id}),'Hot Tub',d.spa.brand,d.spa.model,req.user.name||req.user.username,d.location]);
   }
   await q(`INSERT INTO crm_sales_executed_contracts
    (draft_id,submission_id,customer_email,salesperson_email,executed_document,customer_name,salesperson_name,customer_signature,salesperson_signature,terms_text,terms_version,pdf_data,pdf_sha256)
