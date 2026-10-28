@@ -2,6 +2,7 @@ import express from 'express';
 import {randomBytes,createHash} from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import PDFDocument from 'pdfkit';
+import { legacySalesTermsReference } from './legacy-sales-terms-reference.js';
 import { q } from './service-db.js';
 
 const router=express.Router();
@@ -533,7 +534,7 @@ async function sendContractPdf(to,name,subject,body,fileName,pdf,author){
 }
 router.get('/crm/v1/sales-terms',...guard,salesIdentity,(req,res)=>{
  const text=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),version=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
- if(!text||!version)return res.json({ready:false,version:null,text:null});
+ if(!text||!version)return res.json({ready:false,version:'legacy-reference',text:legacySalesTermsReference,review_required:true});
  res.json({ready:true,version,text});
 });
 router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,res)=>{
