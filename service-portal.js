@@ -184,11 +184,39 @@ async function sendServiceMessage(id){
     await loadServiceConversation(id);
   }catch(e){status.textContent=e.message}
 }
+async function loadServiceEmails(id){
+  const box=$('#serviceEmailConversation'),status=$('#serviceEmailStatus');
+  if(!box)return;
+  try{
+    const data=await api('/customers/'+id+'/emails');
+    const rows=data.emails||[];
+    box.innerHTML=rows.length?rows.map(m=>{
+      const inbound=m.direction==='inbound';
+      return '<div class="service-message '+(inbound?'in':'out')+'"><div><b>'+esc(m.subject||'(no subject)')+'</b></div><div style="white-space:pre-wrap;margin-top:.35rem">'+esc(m.body||'')+'</div><div class="meta">'+(inbound?'Customer':esc(m.sent_by||'HTFO Service'))+' · '+dt(m.created_at)+(m.status?' · '+esc(m.status):'')+'</div></div>';
+    }).join(''):'<p class="muted">No emails on this customer file yet.</p>';
+    box.scrollTop=box.scrollHeight;
+    if(status)status.textContent='';
+  }catch(e){box.innerHTML='<p class="error">'+esc(e.message)+'</p>'}
+}
+async function sendServiceEmail(id){
+  const subject=$('#serviceEmailSubject'),body=$('#serviceEmailBody'),status=$('#serviceEmailStatus');
+  if(!subject||!body)return;
+  const message=body.value.trim();
+  if(!message)return;
+  status.textContent='Sending…';
+  try{
+    await api('/customers/'+id+'/emails',{method:'POST',body:JSON.stringify({subject:subject.value.trim()||'HTFO Service',body:message})});
+    body.value='';
+    status.textContent='Sent';
+    await loadServiceEmails(id);
+  }catch(e){status.textContent=e.message}
+}
 async function loadCustomer(id){
   activeCustomerId=String(id);
   const x=await api('/customers/'+id),c=x.customer;
   const unassigned=x.workOrders.filter(w=>!w.equipment_id);
-  $('#customerDetail').innerHTML=`<div class="customer-toolbar row between wrap"><div><h2>${esc(customerName(c))}</h2><div>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</div></div><div class="row wrap"><button class="secondary" id="addEquipmentBtn">+ Add Product</button><button class="secondary" id="customerDeliveryBtn">+ Schedule Delivery</button><button id="customerServiceBtn">+ Create Service Call</button></div></div><div class="detail-grid"><div class="card"><h3>Customer Information</h3><p>${esc([c.street,c.street2,c.city,c.state,c.zip].filter(Boolean).join(', '))}</p>${c.notes?`<p>${esc(c.notes)}</p>`:''}<h3>Products / Equipment Owned</h3>${x.equipment.length?x.equipment.map(e=>productCard(e,x.workOrders.filter(w=>String(w.equipment_id)===String(e.id)))).join(''):'<p class="muted">No equipment recorded yet. Add the product once and its model, serial number and service history stay with this customer.</p>'}</div><div class="card"><h3>Complete Service History</h3>${x.workOrders.length?x.workOrders.map(workCard).join(''):'<p class="muted">No service calls yet.</p>'}${unassigned.length?`<p class="muted">${unassigned.length} service call(s) are not tied to a specific product.</p>`:''}<h3>Invoices</h3>${x.invoices.map(i=>`<div class="item"><b>${esc(i.invoice_number)}</b><span>${money(i.total_amount)} · ${esc(i.status)}</span><span class="muted">Paid ${money(i.amount_paid)} · Balance ${money(Number(i.total_amount)-Number(i.amount_paid))}</span></div>`).join('')||'<p class="muted">No invoices yet.</p>'}</div></div><div class="card" style="margin-top:16px"><div class="service-message-head"><div><h3 style="margin:0">Service Text Conversation</h3><p class="muted" id="serviceMessageNumber" style="margin:.3rem 0 0">Service number pending activation</p></div><button type="button" class="secondary" id="refreshServiceMessages">Refresh Messages</button></div><div class="service-conversation" id="serviceConversation"><p class="muted">Loading messages…</p></div><div class="service-message-compose"><textarea id="serviceMessageBody" placeholder="Type a service text to this customer…"></textarea><button type="button" id="sendServiceMessageBtn">Send Text</button></div><div class="muted" id="serviceMessageStatus"></div></div>`;
+  const emailCard=c.email?`<div class="card" style="margin-top:16px"><div class="service-message-head"><div><h3 style="margin:0">Email Conversation</h3><p class="muted" style="margin:.3rem 0 0">Emails sent here and customer replies are stored on this file · ${esc(c.email)}</p></div><button type="button" class="secondary" id="refreshServiceEmails">Refresh Emails</button></div><div class="service-conversation" id="serviceEmailConversation"><p class="muted">Loading emails…</p></div><div class="service-email-compose"><input id="serviceEmailSubject" placeholder="Subject" value="HTFO Service"><textarea id="serviceEmailBody" placeholder="Type an email to this customer…"></textarea><button type="button" id="sendServiceEmailBtn">Send Email</button></div><div class="muted" id="serviceEmailStatus"></div></div>`:`<div class="card" style="margin-top:16px"><h3 style="margin-top:0">Email Conversation</h3><p class="muted">No email address is on this customer file. Add an email address to enable email communication here.</p></div>`;
+  $('#customerDetail').innerHTML=`<div class="customer-toolbar row between wrap"><div><h2>${esc(customerName(c))}</h2><div>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</div></div><div class="row wrap"><button class="secondary" id="addEquipmentBtn">+ Add Product</button><button class="secondary" id="customerDeliveryBtn">+ Schedule Delivery</button><button id="customerServiceBtn">+ Create Service Call</button></div></div><div class="detail-grid"><div class="card"><h3>Customer Information</h3><p>${esc([c.street,c.street2,c.city,c.state,c.zip].filter(Boolean).join(', '))}</p>${c.notes?`<p>${esc(c.notes)}</p>`:''}<h3>Products / Equipment Owned</h3>${x.equipment.length?x.equipment.map(e=>productCard(e,x.workOrders.filter(w=>String(w.equipment_id)===String(e.id)))).join(''):'<p class="muted">No equipment recorded yet. Add the product once and its model, serial number and service history stay with this customer.</p>'}</div><div class="card"><h3>Complete Service History</h3>${x.workOrders.length?x.workOrders.map(workCard).join(''):'<p class="muted">No service calls yet.</p>'}${unassigned.length?`<p class="muted">${unassigned.length} service call(s) are not tied to a specific product.</p>`:''}<h3>Invoices</h3>${x.invoices.map(i=>`<div class="item"><b>${esc(i.invoice_number)}</b><span>${money(i.total_amount)} · ${esc(i.status)}</span><span class="muted">Paid ${money(i.amount_paid)} · Balance ${money(Number(i.total_amount)-Number(i.amount_paid))}</span></div>`).join('')||'<p class="muted">No invoices yet.</p>'}</div></div><div class="card" style="margin-top:16px"><div class="service-message-head"><div><h3 style="margin:0">Service Text Conversation</h3><p class="muted" id="serviceMessageNumber" style="margin:.3rem 0 0">Service number pending activation</p></div><button type="button" class="secondary" id="refreshServiceMessages">Refresh Messages</button></div><div class="service-conversation" id="serviceConversation"><p class="muted">Loading messages…</p></div><div class="service-message-compose"><textarea id="serviceMessageBody" placeholder="Type a service text to this customer…"></textarea><button type="button" id="sendServiceMessageBtn">Send Text</button></div><div class="muted" id="serviceMessageStatus"></div></div>${emailCard}`;
   $('#addEquipmentBtn').onclick=()=>openEquipmentDialog(id);
   $('#customerDeliveryBtn').onclick=()=>openWorkDialog(id,'','delivery');
   $('#customerServiceBtn').onclick=()=>openWorkDialog(id,'','service');
@@ -196,6 +224,11 @@ async function loadCustomer(id){
   $('#refreshServiceMessages').onclick=()=>loadServiceConversation(id);
   $('#sendServiceMessageBtn').onclick=()=>sendServiceMessage(id);
   loadServiceConversation(id);
+  if(c.email){
+    $('#refreshServiceEmails').onclick=()=>loadServiceEmails(id);
+    $('#sendServiceEmailBtn').onclick=()=>sendServiceEmail(id);
+    loadServiceEmails(id);
+  }
   applyRoleUi();
 }
 $('#newCustomerBtn').onclick=()=>$('#customerDialog').showModal();$('#saveCustomer').onclick=async e=>{e.preventDefault();const b=Object.fromEntries(new FormData($('#customerForm')));const c=await api('/customers',{method:'POST',body:JSON.stringify(b)});$('#customerDialog').close();$('#customerForm').reset();await loadCustomers();await loadCustomer(c.id)};
