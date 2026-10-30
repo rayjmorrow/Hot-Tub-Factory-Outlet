@@ -11,3 +11,7 @@
 .msg-toast b{display:block;margin-bottom:4px}
 .msg-toast div{color:#e7eef7}
 @media(max-width:700px){.msg-toast{top:120px;right:12px;width:calc(100vw - 24px)}}
+
+.inline-check{display:flex;align-items:center;gap:.5rem;font-weight:700}
+.inline-check input{width:auto;margin:0}
+.alert-route{margin:14px 0}
