@@ -28,7 +28,7 @@ function showApp(user){currentServiceUser=user||null;window.currentServiceUser=c
 function logout(){currentServiceUser=null;token='';sessionStorage.removeItem('htfoServiceToken');$('#app').hidden=true;$('#login').hidden=false}
 async function boot(){if(!token)return;try{const x=await api('/me');showApp(x.user)}catch{logout()}}
 function applyRoleUi(){const role=String(currentServiceUser?.role||'').toLowerCase(),sales=role==='sales',delivery=role==='delivery';const scheduleNav=$('nav [data-view="schedule"]');if(scheduleNav)scheduleNav.hidden=sales||delivery;if(delivery)$$('nav [data-view]').forEach(el=>el.hidden=el.dataset.view!=='fulfillment');['#newDeliveryBtn','#newWorkOrderBtn','#customerDeliveryBtn','#customerServiceBtn'].forEach(sel=>{const el=$(sel);if(el)el.hidden=sales||delivery});$$('[data-service-equipment]').forEach(el=>{if(sales||delivery)el.hidden=true})}
-function showView(id){if(id==='schedule'&&String(currentServiceUser?.role||'').toLowerCase()==='sales')id='dashboard';$$('.view').forEach(v=>v.hidden=v.id!==id);if(id==='dashboard')loadDashboard();if(id==='messages')refreshServiceInbox(true);if(id==='customers')loadCustomers();if(id==='schedule'||id==='workorders')loadWorkOrders();if(id==='parts')loadParts();if(id==='orders')loadPartsQueue();if(id==='fulfillment'&&window.loadFulfillment)window.loadFulfillment()}
+function showView(id){if(id==='schedule'&&String(currentServiceUser?.role||'').toLowerCase()==='sales')id='dashboard';$$('.view').forEach(v=>v.hidden=v.id!==id);if(id==='dashboard')loadDashboard();if(id==='messages'){refreshServiceInbox(true);loadServiceAlertSettings().catch(()=>{})}if(id==='customers')loadCustomers();if(id==='schedule'||id==='workorders')loadWorkOrders();if(id==='parts')loadParts();if(id==='orders')loadPartsQueue();if(id==='fulfillment'&&window.loadFulfillment)window.loadFulfillment()}
 $$('nav [data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));$('#logout').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const x=await api('/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=x.token;sessionStorage.setItem('htfoServiceToken',token);showApp(x.user)}catch(err){$('#loginError').textContent=err.message}};
 const closeDialog=(id)=>{const d=document.getElementById(id);if(d?.open)d.close()};
@@ -74,6 +74,53 @@ async function refreshServiceInbox(renderAll=false){
   }
   serviceUnreadTotal=total;
   return data;
+}
+async function loadServiceAlertSettings(){
+  const card=$('#serviceAlertSettingsCard');if(!card)return;
+  const role=String(currentServiceUser?.role||'').toLowerCase();
+  if(!['admin','owner','manager','service_manager'].includes(role)){card.hidden=true;return}
+  card.hidden=false;
+  const s=await api('/service-messaging/alert-settings');
+  $('#serviceAlertEnabled').checked=Boolean(s.enabled);
+  $('#serviceAlertPrimaryName').value=s.primary_name||'Rick';
+  $('#serviceAlertPrimaryPhone').value=s.primary_phone||'';
+  $('#serviceAlertBackupName').value=s.backup_name||'Ray';
+  $('#serviceAlertBackupPhone').value=s.backup_phone||'';
+  $('#serviceAlertRouteBackup').checked=Boolean(s.route_to_backup);
+  $('#serviceAlertQuietStart').value=s.quiet_start||'20:00';
+  $('#serviceAlertQuietEnd').value=s.quiet_end||'08:00';
+  renderServiceAlertRouteStatus();
+}
+function renderServiceAlertRouteStatus(){
+  const status=$('#serviceAlertStatus');if(!status)return;
+  const enabled=$('#serviceAlertEnabled')?.checked;
+  const backup=$('#serviceAlertRouteBackup')?.checked;
+  const name=backup?($('#serviceAlertBackupName')?.value||'backup'):($('#serviceAlertPrimaryName')?.value||'primary');
+  status.textContent=enabled?`Alerts currently route to ${name} outside quiet hours.`:'Phone alerts are currently off.';
+}
+async function saveServiceAlertSettings(){
+  const status=$('#serviceAlertStatus');if(status)status.textContent='Saving…';
+  try{
+    await api('/service-messaging/alert-settings',{method:'PATCH',body:JSON.stringify({
+      enabled:$('#serviceAlertEnabled').checked,
+      primary_name:$('#serviceAlertPrimaryName').value,
+      primary_phone:$('#serviceAlertPrimaryPhone').value,
+      backup_name:$('#serviceAlertBackupName').value,
+      backup_phone:$('#serviceAlertBackupPhone').value,
+      route_to_backup:$('#serviceAlertRouteBackup').checked,
+      quiet_start:$('#serviceAlertQuietStart').value,
+      quiet_end:$('#serviceAlertQuietEnd').value
+    })});
+    if(status)status.textContent='Saved.';
+    await loadServiceAlertSettings();
+  }catch(e){if(status)status.textContent=e.message}
+}
+async function testServiceAlert(){
+  const status=$('#serviceAlertStatus');if(status)status.textContent='Sending test…';
+  try{
+    await api('/service-messaging/alert-settings/test',{method:'POST',body:'{}'});
+    if(status)status.textContent='Test alert sent.';
+  }catch(e){if(status)status.textContent=e.message}
 }
 function workCard(w){const isDelivery=String(w.job_type||'').toLowerCase()==='delivery';return `<div class="item"><div class="row between"><b>${isDelivery?'DELIVERY':'SERVICE'} · ${esc(w.work_order_number)}</b><span class="pill">${esc(w.status)}</span></div><div>${esc(w.customer_name||'')} · ${esc(w.phone||'')}</div><div class="muted">${esc([w.equipment_type,w.brand,w.model].filter(Boolean).join(' ')||'No equipment selected')}${w.serial_number?` · S/N ${esc(w.serial_number)}`:''}</div><div><b>${dt(w.scheduled_start)}</b>${w.assigned_to?` · ${esc(w.assigned_to)}`:''}</div><div>${esc(w.complaint||'')}</div></div>`}
 let searchTimer;$('#customerSearch').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadCustomers,250)};
@@ -221,6 +268,9 @@ async function loadParts(){const q=$('#partsSearch').value||'';const rows=await 
 async function loadPartsQueue(){const rows=await api('/part-requests');$('#partsQueue').innerHTML=rows.map(r=>`<div class="item"><div class="row between"><b>${esc(r.work_order_number)} · ${esc(r.customer_name)}</b><span class="pill">${esc(r.status)}</span></div><div>${esc(r.description)}</div><div>Qty ${esc(r.requested_quantity)} · Supplier # ${esc(r.supplier_part_number||'—')} · Cost ${money(r.cost)}</div><div class="muted">Requested by ${esc(r.requested_by||'—')} ${r.manager_approved_by?`· Approved by ${esc(r.manager_approved_by)}`:''}</div>${r.status==='requested'?`<button data-approve="${r.id}">Manager Approve</button>`:''}${r.status==='approved'?`<div class="row"><input data-order-no="${r.id}" placeholder="Supplier order #"><button data-order="${r.id}">Mark Ordered</button></div>`:''}${r.status==='ordered'?`<button data-receive="${r.id}">Mark Received</button>`:''}</div>`).join('')||'<p class="muted">No part requests.</p>';$$('[data-approve]').forEach(b=>b.onclick=async()=>{try{await api(`/part-requests/${b.dataset.approve}/approve`,{method:'PATCH'});loadPartsQueue()}catch(e){alert(e.message)}});$$('[data-order]').forEach(b=>b.onclick=async()=>{try{const input=$(`[data-order-no="${b.dataset.order}"]`);await api(`/part-requests/${b.dataset.order}/order`,{method:'PATCH',body:JSON.stringify({supplier_order_number:input?.value||''})});loadPartsQueue()}catch(e){alert(e.message)}});$$('[data-receive]').forEach(b=>b.onclick=async()=>{try{await api(`/part-requests/${b.dataset.receive}/receive`,{method:'PATCH'});loadPartsQueue()}catch(e){alert(e.message)}})}
 function parseCsv(text){const lines=text.replace(/\r/g,'').split('\n').filter(Boolean);if(!lines.length)return[];const split=line=>{let a=[],s='',q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'){if(q&&line[i+1]==='"'){s+='"';i++}else q=!q}else if(c===','&&!q){a.push(s);s=''}else s+=c}a.push(s);return a};const headers=split(lines.shift()).map(h=>h.trim().toLowerCase());const key=h=>{if(/first.*name/.test(h))return'first_name';if(/last.*name/.test(h))return'last_name';if(/company/.test(h))return'company';if(/e-?mail/.test(h))return'email';if(/phone|mobile|cell/.test(h))return'phone';if(/address 2|street 2|apt|suite/.test(h))return'street2';if(/address|street/.test(h))return'street';if(/city/.test(h))return'city';if(/^state$|province/.test(h))return'state';if(/zip|postal/.test(h))return'zip';if(/note/.test(h))return'notes';return null};const map=headers.map(key);return lines.map(line=>{const vals=split(line),o={};map.forEach((k,i)=>{if(k&&!o[k])o[k]=vals[i]?.trim()||''});return o}).filter(o=>Object.values(o).some(Boolean))}
 $('#importCsvBtn').onclick=async()=>{const f=$('#csvFile').files[0];if(!f)return $('#importResult').textContent='Choose a CSV file first.';try{const rows=parseCsv(await f.text());const x=await api('/customers/import',{method:'POST',body:JSON.stringify({rows})});$('#importResult').textContent=`Imported ${x.inserted} customer(s). Skipped ${x.skipped} likely duplicate(s). ${x.total} row(s) processed.`}catch(e){$('#importResult').textContent=e.message}};
+const saveServiceAlertSettingsBtn=$('#saveServiceAlertSettings');if(saveServiceAlertSettingsBtn)saveServiceAlertSettingsBtn.onclick=saveServiceAlertSettings;
+const testServiceAlertBtn=$('#testServiceAlert');if(testServiceAlertBtn)testServiceAlertBtn.onclick=testServiceAlert;
+['#serviceAlertEnabled','#serviceAlertRouteBackup','#serviceAlertPrimaryName','#serviceAlertBackupName'].forEach(sel=>{const el=$(sel);if(el)el.onchange=renderServiceAlertRouteStatus});
 const refreshServiceInboxBtn=$('#refreshServiceInbox');if(refreshServiceInboxBtn)refreshServiceInboxBtn.onclick=()=>refreshServiceInbox(true);
 setInterval(()=>{if(token&&$('#app')&&!$('#app').hidden)refreshServiceInbox(false).catch(()=>{})},15000);
 boot();
