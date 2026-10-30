@@ -15,3 +15,9 @@
 .inline-check{display:flex;align-items:center;gap:.5rem;font-weight:700}
 .inline-check input{width:auto;margin:0}
 .alert-route{margin:14px 0}
+
+.table-wrap{overflow:auto;margin-top:14px;border:1px solid #dfe5ec;border-radius:12px;background:white}
+.order-log-table{width:100%;border-collapse:collapse;min-width:1450px;font-size:.9rem}
+.order-log-table th,.order-log-table td{padding:.75rem .8rem;border-bottom:1px solid #e5e9ef;text-align:left;vertical-align:top}
+.order-log-table th{position:sticky;top:0;background:#f8fafc;z-index:1;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:#53606b}
+.order-log-table tbody tr:hover{background:#fbfcfe}
