@@ -610,7 +610,78 @@ router.post('/crm/v1/sales-drafts/:id/send-executed',...guard,salesIdentity,asyn
   res.json({ok:true,deliveries:sent});
  }catch(e){res.status(502).json({error:e.message||'Email delivery incomplete; retry will skip completed recipients'})}
 });
-router.get('/crm/v1/admin/order-list',...guard,salesIdentity,async(req,res)=>{if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,created_by,updated_at FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 1000')).rows;res.json(rows.map(r=>{const d=r.document,items=d.items||[],lifts=items.filter(x=>/lift|roller|LFSE|CLP100|VSL400|VSLA201/i.test(x.description)),steps=items.filter(x=>/step|STCS|STDS/i.test(x.description));return{id:r.id,status:'Draft',sale_date:d.contract_date||'',salesperson:d.salesperson||r.created_by,brand:d.spa?.brand||'',serial:d.spa?.serial||'',model:d.spa?.model||'',shell:d.spa?.shell||'',cabinet:d.spa?.cabinet||'',manufacturer_add_ons:d.spa?.manufacturer_add_ons||'',other_items:items.filter(x=>!lifts.includes(x)&&!steps.includes(x)).map(x=>x.quantity+' × '+x.description).join('; '),customer_last_name:d.customer?.last_name||'',cover_lift_model:lifts.map(x=>x.quantity+' × '+x.description).join('; '),step_model:steps.map(x=>x.quantity+' × '+x.description).join('; ')}}))}catch(e){res.status(500).json({error:e.message})}});
+function classifyOrderItems(items=[]){
+ const liftRe=/(?:cover\s*lift|spa\s*lift|lift|roller|LFSE|CLP100|VSL400|VSLA201)/i;
+ const stepRe=/(?:steps?|spa\s*step|STCS|STDS)/i;
+ const lifts=[],steps=[],accessories=[];
+ for(const raw of Array.isArray(items)?items:[]){
+   const x={quantity:Number(raw?.quantity)||1,description:String(raw?.description||'').trim()};
+   if(!x.description)continue;
+   if(liftRe.test(x.description))lifts.push(x);
+   else if(stepRe.test(x.description))steps.push(x);
+   else accessories.push(x);
+ }
+ const fmt=xs=>xs.map(x=>x.quantity+' × '+x.description).join('; ');
+ return {cover_lift_model:fmt(lifts),step_model:fmt(steps),accessories:fmt(accessories)};
+}
+function orderLogRow(r){
+ const d=r.document||{},parts=classifyOrderItems(d.items||[]),customer=d.customer||{},spa=d.spa||{};
+ return {
+   agreement_id:r.id,
+   status:'Signed',
+   sale_date:d.contract_date||String(r.executed_at||'').slice(0,10),
+   executed_at:r.executed_at||null,
+   last_updated:r.updated_at||null,
+   salesperson:d.salesperson||r.created_by||'',
+   customer_name:[customer.first_name,customer.last_name].filter(Boolean).join(' '),
+   customer_last_name:customer.last_name||'',
+   customer_phone:customer.phone||'',
+   brand:spa.brand||'',
+   model:spa.model||'',
+   year:spa.year||'',
+   serial:spa.serial||'',
+   acrylic_color:spa.shell||'',
+   cabinet_color:spa.cabinet||'',
+   manufacturer_add_ons:spa.manufacturer_add_ons||'',
+   cover_lift_model:parts.cover_lift_model,
+   step_model:parts.step_model,
+   accessories:parts.accessories,
+   location:d.location||'',
+   total:Number(d.totals?.total||0)/100,
+   paid:Number(d.totals?.paid||0)/100,
+   balance:Number(d.totals?.balance||0)/100
+ };
+}
+async function signedOrderLogRows(){
+ await ensureSalesDrafts();await ensureExecutedContracts();
+ const rows=(await q(`SELECT d.id,d.document,d.created_by,d.updated_at,e.executed_at
+   FROM crm_sales_drafts d
+   JOIN crm_sales_executed_contracts e ON e.draft_id=d.id
+   ORDER BY e.executed_at DESC,d.id DESC
+   LIMIT 2000`)).rows;
+ return rows.map(orderLogRow);
+}
+router.get('/crm/v1/admin/order-list',...guard,salesIdentity,async(req,res)=>{
+ if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});
+ try{res.json(await signedOrderLogRows())}catch(e){res.status(500).json({error:e.message})}
+});
+router.get('/crm/v1/admin/order-list.csv',...guard,salesIdentity,async(req,res)=>{
+ if(!salesAdmin(req))return res.status(403).json({error:'Order list is restricted to the administrator'});
+ try{
+   const rows=await signedOrderLogRows();
+   const cols=[
+     ['Agreement #','agreement_id'],['Sale Date','sale_date'],['Salesperson','salesperson'],['Customer','customer_name'],
+     ['Brand','brand'],['Model','model'],['Year','year'],['Serial #','serial'],['Acrylic Color','acrylic_color'],
+     ['Cabinet Color','cabinet_color'],['Manufacturer Add-ons','manufacturer_add_ons'],['Cover Lift','cover_lift_model'],
+     ['Steps','step_model'],['Accessories','accessories'],['Location','location'],['Total','total'],['Paid','paid'],['Balance','balance']
+   ];
+   const csvCell=v=>'"'+String(v??'').replaceAll('"','""')+'"';
+   const out=[cols.map(x=>csvCell(x[0])).join(','),...rows.map(row=>cols.map(x=>csvCell(row[x[1]])).join(','))].join('\n');
+   res.setHeader('Content-Type','text/csv; charset=utf-8');
+   res.setHeader('Content-Disposition','attachment; filename="HTFO-Sales-Order-Log.csv"');
+   res.send('\ufeff'+out);
+ }catch(e){res.status(500).json({error:e.message})}
+});
 router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();res.json((await q('SELECT * FROM crm_sales_drafts ORDER BY updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
 router.post('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);document.salesperson=req.user.name||req.user.username;await ensureSalesDrafts();const who=String(req.user.name||req.user.username);res.status(201).json((await q('INSERT INTO crm_sales_drafts(document,created_by,updated_by,owner_user_id) VALUES($1::jsonb,$2,$2,$3) RETURNING *',[JSON.stringify(document),who,req.user.sub])).rows[0])}catch(e){res.status(400).json({error:e.message})}});
 router.put('/crm/v1/sales-drafts/:id',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);const version=Number(req.body.version);if(!Number.isInteger(version)||version<1)return res.status(400).json({error:'Draft version is required'});await ensureSalesDrafts();const existing=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!existing||(!salesAdmin(req)&&String(existing.owner_user_id)!==String(req.user.sub)))return res.status(404).json({error:'Agreement not found'});await ensureExecutedContracts();if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[req.params.id])).rowCount)return res.status(409).json({error:'Signed agreement is locked; use a customer-authorized change order'});if(commercialChanged(existing.document,document))return res.status(409).json({error:'Agreement changes require a customer-signed change order'});document.salesperson=existing.document.salesperson||'';const who=String(req.user.name||req.user.username);const params=[JSON.stringify(document),who,req.params.id,version];let access='';if(!salesAdmin(req)){params.push(req.user.sub);access=' AND owner_user_id=$5'}const row=(await q('UPDATE crm_sales_drafts SET document=$1::jsonb,version=version+1,updated_by=$2,updated_at=NOW() WHERE id=$3 AND version=$4'+access+' RETURNING *',params)).rows[0];if(!row)return res.status(409).json({error:'This draft changed or no longer exists. Reopen it from the log before saving.'});res.json(row)}catch(e){res.status(400).json({error:e.message})}});
