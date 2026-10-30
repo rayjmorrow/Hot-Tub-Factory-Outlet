@@ -35,20 +35,17 @@ function staffEmail(user){
   if(n.startsWith('ray'))return map.ray;
   return String(process.env.CRM_FROM_EMAIL||process.env.FULFILLMENT_FROM_EMAIL||'').trim();
 }
-function safeStaff(user){
-  return String(user?.username||user?.name||'service').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,20)||'service';
-}
 async function sendEmail(customer,user,subject,body){
   const key=String(process.env.BREVO_API_KEY||'').trim(),from=staffEmail(user);
   if(!key||!from)throw new Error('Operations email sender is not configured');
-  const replyDomain=String(process.env.CRM_REPLY_DOMAIN||'reply.hottubfactoryoutlet.com').trim();
   const senderName=String(user?.name||user?.username||'HTFO Service').trim();
-  const replyAddress=`service+${customer.id}+${safeStaff(user)}@${replyDomain}`;
+  const replyAddress=from;
+  const trackingSubject=String(subject||'HTFO Service').replace(/\s*\[HTFO-CID:\d+\]\s*$/i,'').trim()+' [HTFO-CID:'+customer.id+']';
   const payload={
     sender:{email:from,name:senderName},
     replyTo:{email:replyAddress,name:senderName},
     to:[{email:customer.email,name:[customer.first_name,customer.last_name].filter(Boolean).join(' ')||customer.email}],
-    subject,textContent:body,
+    subject:trackingSubject,textContent:body,
     tags:[`htfo-service-customer-${customer.id}`]
   };
   const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -81,7 +78,7 @@ router.post('/customers/:id/emails',auth,async(req,res)=>{
     const sent=await sendEmail(customer,req.user,subject,body);
     await q(`INSERT INTO service_customer_emails(customer_id,direction,from_email,to_email,subject,body,provider_id,status,sent_by)
       VALUES($1,'outbound',$2,$3,$4,$5,$6,'sent',$7)`,
-      [customer.id,sent.from,customer.email,subject,body,sent.messageId||sent.message_id||null,req.user?.name||req.user?.username||'HTFO Staff']);
+      [customer.id,sent.from,customer.email,sent.subject||subject,body,sent.messageId||sent.message_id||null,req.user?.name||req.user?.username||'HTFO Staff']);
     res.json({ok:true,status:'sent'});
   }catch(e){res.status(502).json({error:e.message})}
 });
