@@ -89,7 +89,7 @@ async function loadServiceConversation(id){
     const rows=data.messages||[];
     box.innerHTML=rows.length?rows.map(m=>{
       const inbound=m.direction==='inbound',media=Array.isArray(m.media)?m.media:[];
-      return `<div class="service-message ${inbound?'in':'out'}"><div>${esc(m.body||'')}</div>${media.map(x=>`<div data-service-media data-customer="${id}" data-message="${esc(m.twilio_sid)}" data-media="${esc(x.sid)}" data-type="${esc(x.content_type||'')}"><span class="muted">Loading attachment…</span></div>`).join('')}<div class="meta">${inbound?'Customer':'HTFO Service'} · ${dt(m.created_at)}${m.status?' · '+esc(m.status):''}</div></div>`;
+      return `<div class="service-message ${inbound?'in':'out'}"><div>${esc(m.body||'')}</div>${media.map(x=>`<div data-service-media data-customer="${id}" data-message="${esc(m.twilio_sid)}" data-media="${esc(x.sid)}" data-type="${esc(x.content_type||'')}"><span class="muted">Loading attachment…</span></div>`).join('')}<div class="meta">${inbound?'Customer':esc(m.sent_by||'HTFO Service')} · ${dt(m.created_at)}${m.status?' · '+esc(m.status):''}</div></div>`;
     }).join(''):'<p class="muted">No service text messages yet.</p>';
     box.scrollTop=box.scrollHeight;
     for(const holder of document.querySelectorAll('[data-service-media]')){
