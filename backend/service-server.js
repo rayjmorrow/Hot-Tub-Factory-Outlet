@@ -156,9 +156,11 @@ try{
   await syncTwilioMessages(3,500).catch(e=>console.error('Initial Twilio CRM sync error:',e));
   await syncServiceTwilioMessages(7,500).catch(e=>console.error('Initial service Twilio sync error:',e));
   await ensureBrevoEmailTrackingWebhook().catch(e=>console.error('Brevo tracking webhook setup error:',e));
-  await syncGmailReplies(Number(process.env.GMAIL_SYNC_DAYS||30),500).then(r=>console.log('Initial Gmail reply sync:',r)).catch(e=>console.error('Initial Gmail reply sync error:',e));
   await promoteLatestStagedCustomers();
-  app.listen(port,()=>console.log(`HTFO service backend listening on ${port}`));
+  app.listen(port,()=>{
+    console.log(`HTFO service backend listening on ${port}`);
+    syncGmailReplies(Number(process.env.GMAIL_SYNC_DAYS||30),150).then(r=>console.log('Initial Gmail reply sync:',r)).catch(e=>console.error('Initial Gmail reply sync error:',e));
+  });
   setInterval(()=>runFulfillmentAutomation().catch(e=>console.error('Fulfillment automation error:',e)),60*60*1000).unref();
   setInterval(()=>runCrmScheduledMessages().catch(e=>console.error('CRM scheduled-message error:',e)),60*1000).unref();
   setInterval(()=>syncTwilioMessages(3,500).catch(e=>console.error('Twilio CRM sync error:',e)),60*1000).unref();
