@@ -13,6 +13,7 @@ const clean = v => v == null ? null : String(v).trim();
 const num = v => Number(v || 0);
 const tokenFor = user => jwt.sign({sub:user.id,username:user.username,name:user.display_name,role:user.role}, secret(), {expiresIn:'12h'});
 const canDispatch = req => ['admin','manager','service_manager','owner'].includes(req.user?.role);
+const canViewReceivables = req => { const u=String(req.user?.username||'').trim().toLowerCase(), n=String(req.user?.name||'').trim().toLowerCase(), role=String(req.user?.role||'').toLowerCase(); return role==='owner'||u==='ray'||u==='rick'||n==='ray'||n.startsWith('ray ')||n==='rick'||n.startsWith('rick '); };
 
 async function canonicalDispatchName(value){
   const name=clean(value);
@@ -68,13 +69,73 @@ router.get('/business-rules',auth,(req,res)=>res.json({
 }));
 
 router.get('/dashboard',auth,async(req,res)=>{
-  const [today,open,unpaid,customers]=await Promise.all([
+  const [today,open,customers]=await Promise.all([
     q("SELECT count(*)::int n FROM service_work_orders WHERE scheduled_start::date=CURRENT_DATE"),
     q("SELECT count(*)::int n FROM service_work_orders WHERE status NOT IN ('completed','cancelled')"),
-    q("SELECT coalesce(sum(total_amount-amount_paid),0)::numeric balance FROM service_invoices WHERE status<>'paid'"),
     q('SELECT count(*)::int n FROM service_customers')
   ]);
-  res.json({today:today.rows[0].n,open:open.rows[0].n,unpaid:Number(unpaid.rows[0].balance),customers:customers.rows[0].n});
+  let unpaid=null;
+  if(canViewReceivables(req)){
+    const x=await q("SELECT coalesce(sum(total_amount-amount_paid),0)::numeric balance FROM service_invoices WHERE status<>'paid'");
+    unpaid=Number(x.rows[0].balance);
+  }
+  res.json({today:today.rows[0].n,open:open.rows[0].n,unpaid,customers:customers.rows[0].n,can_view_receivables:canViewReceivables(req)});
+});
+
+router.get('/dashboard/receivables',auth,async(req,res)=>{
+  if(!canViewReceivables(req))return res.status(403).json({error:'Receivables are restricted to Ray and Rick'});
+  const serviceRows=(await q(`
+    SELECT i.id,i.invoice_number,i.total_amount,i.amount_paid,
+      GREATEST(0,i.total_amount-i.amount_paid) balance,
+      i.status,i.created_at,
+      c.id customer_id,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone
+    FROM service_invoices i
+    JOIN service_customers c ON c.id=i.customer_id
+    WHERE i.status<>'paid' AND (i.total_amount-i.amount_paid)>0
+    ORDER BY i.created_at DESC
+    LIMIT 250
+  `)).rows;
+  let salesRows=[];
+  try{
+    salesRows=(await q(`
+      SELECT d.id agreement_id,d.updated_at,e.executed_at,
+        d.document->'customer'->>'first_name' first_name,
+        d.document->'customer'->>'last_name' last_name,
+        d.document->'customer'->>'phone' phone,
+        d.document->'spa'->>'brand' brand,
+        d.document->'spa'->>'model' model,
+        COALESCE((d.document->'totals'->>'total')::bigint,0) total_cents,
+        COALESCE((d.document->'totals'->>'paid')::bigint,0) paid_cents,
+        COALESCE((d.document->'totals'->>'balance')::bigint,0) balance_cents
+      FROM crm_sales_drafts d
+      JOIN crm_sales_executed_contracts e ON e.draft_id=d.id
+      WHERE COALESCE((d.document->'totals'->>'balance')::bigint,0)>0
+      ORDER BY d.updated_at DESC
+      LIMIT 250
+    `)).rows;
+  }catch(e){
+    if(e.code!=='42P01')throw e;
+  }
+  const serviceTotal=serviceRows.reduce((n,x)=>n+Number(x.balance||0),0);
+  const salesTotal=salesRows.reduce((n,x)=>n+Number(x.balance_cents||0)/100,0);
+  res.json({
+    service_total:serviceTotal,
+    sales_agreement_total:salesTotal,
+    total_outstanding:serviceTotal+salesTotal,
+    service_invoices:serviceRows,
+    sales_agreements:salesRows.map(x=>({
+      agreement_id:x.agreement_id,
+      customer_name:[x.first_name,x.last_name].filter(Boolean).join(' ')||'Unnamed customer',
+      phone:x.phone||'',
+      brand:x.brand||'',
+      model:x.model||'',
+      total:Number(x.total_cents||0)/100,
+      paid:Number(x.paid_cents||0)/100,
+      balance:Number(x.balance_cents||0)/100,
+      executed_at:x.executed_at,
+      updated_at:x.updated_at
+    }))
+  });
 });
 
 router.get('/customers',auth,async(req,res)=>{
