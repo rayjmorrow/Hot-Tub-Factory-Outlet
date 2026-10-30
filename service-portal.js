@@ -37,10 +37,30 @@ const equipmentCancel=$('#equipmentForm .secondary');if(equipmentCancel)equipmen
 const workCancel=$('#workForm .secondary');if(workCancel)workCancel.onclick=()=>closeDialog('workDialog');
 async function loadDashboard(){
   const [d,w,u]=await Promise.all([api('/dashboard'),api('/work-orders'),api('/service-messaging/unmatched').catch(()=>[])]);
-  $('#statToday').textContent=d.today;$('#statOpen').textContent=d.open;$('#statCustomers').textContent=d.customers;$('#statUnpaid').textContent=money(d.unpaid);
+  $('#statToday').textContent=d.today;$('#statOpen').textContent=d.open;$('#statCustomers').textContent=d.customers;const arCard=$('#statReceivablesCard');if(arCard)arCard.hidden=!d.can_view_receivables;if(d.can_view_receivables){$('#statUnpaid').textContent=money(d.unpaid);loadReceivables().catch(()=>{})}
   $('#upcoming').innerHTML=w.slice(0,12).map(workCard).join('')||'<p class="muted">No upcoming calls.</p>';
   const box=$('#unmatchedServiceTexts');if(box)box.innerHTML=u.length?u.map(m=>`<div class="item"><b>${esc(m.from_number||'Unknown number')}</b><span>${esc(m.body||'(photo or attachment)')}</span><span class="muted">${dt(m.created_at)}</span></div>`).join(''):'<p class="muted">No unmatched service texts.</p>';
   await refreshServiceInbox(false).catch(()=>{});
+}
+async function loadReceivables(){
+  const panel=$('#receivablesPanel');if(!panel)return;
+  try{
+    const x=await api('/dashboard/receivables');
+    panel.hidden=false;
+    const totals=$('#receivablesTotals');
+    if(totals)totals.innerHTML=
+      '<div class="stat"><b>'+money(x.total_outstanding)+'</b><span>Total Outstanding</span></div>'+
+      '<div class="stat"><b>'+money(x.sales_agreement_total)+'</b><span>Sales Agreements</span></div>'+
+      '<div class="stat"><b>'+money(x.service_total)+'</b><span>Service Invoices</span></div>';
+    const sa=$('#salesAgreementReceivables');
+    if(sa)sa.innerHTML=(x.sales_agreements||[]).map(a=>'<div class="item"><div class="row between wrap"><b>Agreement #'+esc(a.agreement_id)+'</b><span class="pill">'+money(a.balance)+'</span></div><span>'+esc(a.customer_name)+' · '+esc(a.phone||'')+'</span><span class="muted">'+esc([a.brand,a.model].filter(Boolean).join(' '))+' · Total '+money(a.total)+' · Paid '+money(a.paid)+'</span></div>').join('')||'<p class="muted">No signed sales agreements with a balance due.</p>';
+    const si=$('#serviceInvoiceReceivables');
+    if(si)si.innerHTML=(x.service_invoices||[]).map(i=>'<div class="item"><div class="row between wrap"><b>'+esc(i.invoice_number||('Invoice #'+i.id))+'</b><span class="pill">'+money(i.balance)+'</span></div><span>'+esc(i.customer_name||'')+' · '+esc(i.phone||'')+'</span><span class="muted">Total '+money(i.total_amount)+' · Paid '+money(i.amount_paid)+'</span></div>').join('')||'<p class="muted">No unpaid service invoices.</p>';
+  }catch(e){
+    if(e.message&&/403/.test(e.message)){panel.hidden=true;return}
+    panel.hidden=false;
+    const sa=$('#salesAgreementReceivables');if(sa)sa.innerHTML='<p class="error">'+esc(e.message)+'</p>';
+  }
 }
 function renderServiceThreads(rows,targetId,unreadOnly=false){
   const target=$(targetId);if(!target)return;
@@ -271,6 +291,7 @@ $('#importCsvBtn').onclick=async()=>{const f=$('#csvFile').files[0];if(!f)return
 const saveServiceAlertSettingsBtn=$('#saveServiceAlertSettings');if(saveServiceAlertSettingsBtn)saveServiceAlertSettingsBtn.onclick=saveServiceAlertSettings;
 const testServiceAlertBtn=$('#testServiceAlert');if(testServiceAlertBtn)testServiceAlertBtn.onclick=testServiceAlert;
 ['#serviceAlertEnabled','#serviceAlertRouteBackup','#serviceAlertPrimaryName','#serviceAlertBackupName'].forEach(sel=>{const el=$(sel);if(el)el.onchange=renderServiceAlertRouteStatus});
+const refreshReceivablesBtn=$('#refreshReceivables');if(refreshReceivablesBtn)refreshReceivablesBtn.onclick=()=>loadReceivables();
 const refreshServiceInboxBtn=$('#refreshServiceInbox');if(refreshServiceInboxBtn)refreshServiceInboxBtn.onclick=()=>refreshServiceInbox(true);
 setInterval(()=>{if(token&&$('#app')&&!$('#app').hidden)refreshServiceInbox(false).catch(()=>{})},15000);
 boot();
