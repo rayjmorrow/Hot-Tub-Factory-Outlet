@@ -21,3 +21,8 @@
 .order-log-table th,.order-log-table td{padding:.75rem .8rem;border-bottom:1px solid #e5e9ef;text-align:left;vertical-align:top}
 .order-log-table th{position:sticky;top:0;background:#f8fafc;z-index:1;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:#53606b}
 .order-log-table tbody tr:hover{background:#fbfcfe}
+
+.service-email-compose{display:grid;grid-template-columns:minmax(180px,260px) 1fr auto;gap:.7rem;align-items:start;margin-top:.8rem}
+.service-email-compose input,.service-email-compose textarea{width:100%}
+.service-email-compose textarea{min-height:90px;resize:vertical}
+@media(max-width:760px){.service-email-compose{grid-template-columns:1fr}.service-email-compose button{width:100%}}
