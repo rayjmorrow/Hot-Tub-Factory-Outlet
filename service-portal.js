@@ -1,6 +1,6 @@
 const API=(localStorage.getItem('htfoServiceApi')||'').replace(/\/$/,'')+'/api/service';
 let token=sessionStorage.getItem('htfoServiceToken')||'';
-let activeCustomerId=null, workEquipmentRows=[], workCustomerRows=[], workCustomerSearchTimer=null, workSelectedCustomerId='', currentServiceUser=null;
+let activeCustomerId=null, workEquipmentRows=[], workCustomerRows=[], workCustomerSearchTimer=null, workSelectedCustomerId='', currentServiceUser=null, serviceUnreadTotal=null;
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 async function api(path,opts={}){const r=await fetch(API+path,{...opts,headers:{'Content-Type':'application/json',...(opts.headers||{}),...(token?{Authorization:`Bearer ${token}`}:{})}});const j=await r.json().catch(()=>({}));if(!r.ok){if(r.status===401) logout();throw new Error(j.error||`Request failed (${r.status})`)}return j}
 function money(n){return Number(n||0).toLocaleString('en-US',{style:'currency',currency:'USD'})}
@@ -28,14 +28,53 @@ function showApp(user){currentServiceUser=user||null;window.currentServiceUser=c
 function logout(){currentServiceUser=null;token='';sessionStorage.removeItem('htfoServiceToken');$('#app').hidden=true;$('#login').hidden=false}
 async function boot(){if(!token)return;try{const x=await api('/me');showApp(x.user)}catch{logout()}}
 function applyRoleUi(){const role=String(currentServiceUser?.role||'').toLowerCase(),sales=role==='sales',delivery=role==='delivery';const scheduleNav=$('nav [data-view="schedule"]');if(scheduleNav)scheduleNav.hidden=sales||delivery;if(delivery)$$('nav [data-view]').forEach(el=>el.hidden=el.dataset.view!=='fulfillment');['#newDeliveryBtn','#newWorkOrderBtn','#customerDeliveryBtn','#customerServiceBtn'].forEach(sel=>{const el=$(sel);if(el)el.hidden=sales||delivery});$$('[data-service-equipment]').forEach(el=>{if(sales||delivery)el.hidden=true})}
-function showView(id){if(id==='schedule'&&String(currentServiceUser?.role||'').toLowerCase()==='sales')id='dashboard';$$('.view').forEach(v=>v.hidden=v.id!==id);if(id==='dashboard')loadDashboard();if(id==='customers')loadCustomers();if(id==='schedule'||id==='workorders')loadWorkOrders();if(id==='parts')loadParts();if(id==='orders')loadPartsQueue();if(id==='fulfillment'&&window.loadFulfillment)window.loadFulfillment()}
+function showView(id){if(id==='schedule'&&String(currentServiceUser?.role||'').toLowerCase()==='sales')id='dashboard';$$('.view').forEach(v=>v.hidden=v.id!==id);if(id==='dashboard')loadDashboard();if(id==='messages')refreshServiceInbox(true);if(id==='customers')loadCustomers();if(id==='schedule'||id==='workorders')loadWorkOrders();if(id==='parts')loadParts();if(id==='orders')loadPartsQueue();if(id==='fulfillment'&&window.loadFulfillment)window.loadFulfillment()}
 $$('nav [data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));$('#logout').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const x=await api('/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=x.token;sessionStorage.setItem('htfoServiceToken',token);showApp(x.user)}catch(err){$('#loginError').textContent=err.message}};
 const closeDialog=(id)=>{const d=document.getElementById(id);if(d?.open)d.close()};
 const customerCancel=$('#customerForm .secondary');if(customerCancel)customerCancel.onclick=()=>closeDialog('customerDialog');
 const equipmentCancel=$('#equipmentForm .secondary');if(equipmentCancel)equipmentCancel.onclick=()=>closeDialog('equipmentDialog');
 const workCancel=$('#workForm .secondary');if(workCancel)workCancel.onclick=()=>closeDialog('workDialog');
-async function loadDashboard(){const [d,w,u]=await Promise.all([api('/dashboard'),api('/work-orders'),api('/service-messaging/unmatched').catch(()=>[])]);$('#statToday').textContent=d.today;$('#statOpen').textContent=d.open;$('#statCustomers').textContent=d.customers;$('#statUnpaid').textContent=money(d.unpaid);$('#upcoming').innerHTML=w.slice(0,12).map(workCard).join('')||'<p class="muted">No upcoming calls.</p>';const box=$('#unmatchedServiceTexts');if(box)box.innerHTML=u.length?u.map(m=>`<div class="item"><b>${esc(m.from_number||'Unknown number')}</b><span>${esc(m.body||'(photo or attachment)')}</span><span class="muted">${dt(m.created_at)}</span></div>`).join(''):'<p class="muted">No unmatched service texts.</p>'}
+async function loadDashboard(){
+  const [d,w,u]=await Promise.all([api('/dashboard'),api('/work-orders'),api('/service-messaging/unmatched').catch(()=>[])]);
+  $('#statToday').textContent=d.today;$('#statOpen').textContent=d.open;$('#statCustomers').textContent=d.customers;$('#statUnpaid').textContent=money(d.unpaid);
+  $('#upcoming').innerHTML=w.slice(0,12).map(workCard).join('')||'<p class="muted">No upcoming calls.</p>';
+  const box=$('#unmatchedServiceTexts');if(box)box.innerHTML=u.length?u.map(m=>`<div class="item"><b>${esc(m.from_number||'Unknown number')}</b><span>${esc(m.body||'(photo or attachment)')}</span><span class="muted">${dt(m.created_at)}</span></div>`).join(''):'<p class="muted">No unmatched service texts.</p>';
+  await refreshServiceInbox(false).catch(()=>{});
+}
+function renderServiceThreads(rows,targetId,unreadOnly=false){
+  const target=$(targetId);if(!target)return;
+  const list=unreadOnly?rows.filter(x=>Number(x.unread_count||0)>0):rows;
+  target.innerHTML=list.length?list.map(t=>`<button type="button" class="item service-thread-row ${Number(t.unread_count||0)>0?'unread':''}" data-service-thread="${t.customer_id}" style="text-align:left;color:inherit;background:white;width:100%"><div class="row between wrap"><b>${esc(t.customer_name||'Unnamed customer')}</b>${Number(t.unread_count||0)>0?`<span class="msg-count">${Number(t.unread_count)} unread</span>`:''}</div><span>${esc(t.latest_body||'(photo or attachment)')}</span><span class="muted">${t.latest_direction==='inbound'?'Customer':'HTFO Service'} · ${dt(t.latest_at)} · ${esc(t.phone||'')}</span></button>`).join(''):(unreadOnly?'<p class="muted">No unread customer texts.</p>':'<p class="muted">No service text conversations yet.</p>');
+  target.querySelectorAll('[data-service-thread]').forEach(b=>b.onclick=()=>openServiceThread(b.dataset.serviceThread));
+}
+async function openServiceThread(customerId){
+  showView('customers');
+  await loadCustomer(customerId);
+  setTimeout(()=>document.getElementById('serviceConversation')?.scrollIntoView({behavior:'smooth',block:'start'}),50);
+}
+function showServiceToast(thread){
+  const toast=$('#serviceMessageToast');if(!toast)return;
+  const who=thread?.customer_name||'customer';
+  toast.innerHTML=`<b>New service text from ${esc(who)}</b><div>${esc(thread?.latest_body||'(photo or attachment)')}</div>`;
+  toast.hidden=false;
+  clearTimeout(showServiceToast.timer);showServiceToast.timer=setTimeout(()=>{toast.hidden=true},6000);
+}
+async function refreshServiceInbox(renderAll=false){
+  if(!token)return;
+  const data=await api('/service-messaging/inbox');
+  const rows=data.threads||[],total=Number(data.unread_total||0),badge=$('#serviceUnreadBadge');
+  if(badge){badge.textContent=String(total);badge.hidden=total===0}
+  document.title=total>0?`(${total}) HTFO Service Operations`:'HTFO Service Operations';
+  renderServiceThreads(rows,'#unreadServiceThreads',true);
+  if(renderAll||!$('#messages')?.hidden)renderServiceThreads(rows,'#serviceInboxThreads',false);
+  if(serviceUnreadTotal!==null&&total>serviceUnreadTotal){
+    const latestUnread=rows.find(x=>Number(x.unread_count||0)>0);
+    showServiceToast(latestUnread);
+  }
+  serviceUnreadTotal=total;
+  return data;
+}
 function workCard(w){const isDelivery=String(w.job_type||'').toLowerCase()==='delivery';return `<div class="item"><div class="row between"><b>${isDelivery?'DELIVERY':'SERVICE'} · ${esc(w.work_order_number)}</b><span class="pill">${esc(w.status)}</span></div><div>${esc(w.customer_name||'')} · ${esc(w.phone||'')}</div><div class="muted">${esc([w.equipment_type,w.brand,w.model].filter(Boolean).join(' ')||'No equipment selected')}${w.serial_number?` · S/N ${esc(w.serial_number)}`:''}</div><div><b>${dt(w.scheduled_start)}</b>${w.assigned_to?` · ${esc(w.assigned_to)}`:''}</div><div>${esc(w.complaint||'')}</div></div>`}
 let searchTimer;$('#customerSearch').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadCustomers,250)};
 async function loadCustomers(){const rows=await api('/customers?q='+encodeURIComponent($('#customerSearch').value||''));$('#customerList').innerHTML=rows.map(c=>`<button class="item customer-row" data-id="${c.id}" style="text-align:left;color:inherit;background:white"><b>${esc(customerName(c))}</b><span>${esc(c.phone||'')} ${c.email?`· ${esc(c.email)}`:''}</span><span class="muted">${esc([c.street,c.city,c.state,c.zip].filter(Boolean).join(', '))}</span></button>`).join('')||'<p class="muted">No customers found.</p>';$$('.customer-row').forEach(b=>b.onclick=()=>loadCustomer(b.dataset.id))}
@@ -45,6 +84,7 @@ async function loadServiceConversation(id){
   if(!box)return;
   try{
     const data=await api('/customers/'+id+'/messages');
+    await api('/customers/'+id+'/messages/read',{method:'POST'}).catch(()=>{});
     if(number)number.textContent=data.service_number?('Service number: '+data.service_number):'Service number pending activation';
     const rows=data.messages||[];
     box.innerHTML=rows.length?rows.map(m=>{
@@ -61,6 +101,7 @@ async function loadServiceConversation(id){
       }catch{holder.innerHTML='<span class="muted">Attachment unavailable</span>'}
     }
     if(status)status.textContent='';
+    refreshServiceInbox(false).catch(()=>{});
   }catch(e){box.innerHTML='<p class="error">'+esc(e.message)+'</p>'}
 }
 async function sendServiceMessage(id){
@@ -180,4 +221,6 @@ async function loadParts(){const q=$('#partsSearch').value||'';const rows=await 
 async function loadPartsQueue(){const rows=await api('/part-requests');$('#partsQueue').innerHTML=rows.map(r=>`<div class="item"><div class="row between"><b>${esc(r.work_order_number)} · ${esc(r.customer_name)}</b><span class="pill">${esc(r.status)}</span></div><div>${esc(r.description)}</div><div>Qty ${esc(r.requested_quantity)} · Supplier # ${esc(r.supplier_part_number||'—')} · Cost ${money(r.cost)}</div><div class="muted">Requested by ${esc(r.requested_by||'—')} ${r.manager_approved_by?`· Approved by ${esc(r.manager_approved_by)}`:''}</div>${r.status==='requested'?`<button data-approve="${r.id}">Manager Approve</button>`:''}${r.status==='approved'?`<div class="row"><input data-order-no="${r.id}" placeholder="Supplier order #"><button data-order="${r.id}">Mark Ordered</button></div>`:''}${r.status==='ordered'?`<button data-receive="${r.id}">Mark Received</button>`:''}</div>`).join('')||'<p class="muted">No part requests.</p>';$$('[data-approve]').forEach(b=>b.onclick=async()=>{try{await api(`/part-requests/${b.dataset.approve}/approve`,{method:'PATCH'});loadPartsQueue()}catch(e){alert(e.message)}});$$('[data-order]').forEach(b=>b.onclick=async()=>{try{const input=$(`[data-order-no="${b.dataset.order}"]`);await api(`/part-requests/${b.dataset.order}/order`,{method:'PATCH',body:JSON.stringify({supplier_order_number:input?.value||''})});loadPartsQueue()}catch(e){alert(e.message)}});$$('[data-receive]').forEach(b=>b.onclick=async()=>{try{await api(`/part-requests/${b.dataset.receive}/receive`,{method:'PATCH'});loadPartsQueue()}catch(e){alert(e.message)}})}
 function parseCsv(text){const lines=text.replace(/\r/g,'').split('\n').filter(Boolean);if(!lines.length)return[];const split=line=>{let a=[],s='',q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'){if(q&&line[i+1]==='"'){s+='"';i++}else q=!q}else if(c===','&&!q){a.push(s);s=''}else s+=c}a.push(s);return a};const headers=split(lines.shift()).map(h=>h.trim().toLowerCase());const key=h=>{if(/first.*name/.test(h))return'first_name';if(/last.*name/.test(h))return'last_name';if(/company/.test(h))return'company';if(/e-?mail/.test(h))return'email';if(/phone|mobile|cell/.test(h))return'phone';if(/address 2|street 2|apt|suite/.test(h))return'street2';if(/address|street/.test(h))return'street';if(/city/.test(h))return'city';if(/^state$|province/.test(h))return'state';if(/zip|postal/.test(h))return'zip';if(/note/.test(h))return'notes';return null};const map=headers.map(key);return lines.map(line=>{const vals=split(line),o={};map.forEach((k,i)=>{if(k&&!o[k])o[k]=vals[i]?.trim()||''});return o}).filter(o=>Object.values(o).some(Boolean))}
 $('#importCsvBtn').onclick=async()=>{const f=$('#csvFile').files[0];if(!f)return $('#importResult').textContent='Choose a CSV file first.';try{const rows=parseCsv(await f.text());const x=await api('/customers/import',{method:'POST',body:JSON.stringify({rows})});$('#importResult').textContent=`Imported ${x.inserted} customer(s). Skipped ${x.skipped} likely duplicate(s). ${x.total} row(s) processed.`}catch(e){$('#importResult').textContent=e.message}};
+const refreshServiceInboxBtn=$('#refreshServiceInbox');if(refreshServiceInboxBtn)refreshServiceInboxBtn.onclick=()=>refreshServiceInbox(true);
+setInterval(()=>{if(token&&$('#app')&&!$('#app').hidden)refreshServiceInbox(false).catch(()=>{})},15000);
 boot();
