@@ -72,11 +72,10 @@ async function email(to,subject,body,name,user,submissionId,extraTags=[]){
   const key=String(process.env.BREVO_API_KEY||'').trim(),from=staffEmail(user);
   if(!key||!from)throw new Error('CRM email sender is not configured');
   const senderName=String(user?.name||user?.display_name||process.env.CRM_FROM_NAME||'Hot Tub Factory Outlet').trim();
-  const replyDomain=String(process.env.CRM_REPLY_DOMAIN||'reply.hottubfactoryoutlet.com').trim();
-  const safeUser=String(user?.username||user?.name||'sales').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,20)||'sales';
-  const replyAddress=submissionId?`crm+${submissionId}+${safeUser}@${replyDomain}`:from;
-  const tags=[...(submissionId?[`htfo-crm-${submissionId}`]:[]),...(Array.isArray(extraTags)?extraTags:[])];
-  const payload={sender:{email:from,name:senderName},replyTo:{email:replyAddress,name:senderName},to:[{email:to,name:name||to}],subject,textContent:body,tags:tags.length?tags:undefined};
+  const replyAddress=from;
+  const tags=[...(submissionId?[\`htfo-crm-\${submissionId}\`]:[]),...(Array.isArray(extraTags)?extraTags:[])];
+  const trackedSubject=submissionId?(String(subject||'Hot Tub Factory Outlet').replace(/\\s*\\[HTFO-CRM:[^\\]]+\\]\\s*$/i,'').trim()+\` [HTFO-CRM:\${submissionId}]\`):subject;
+  const payload={sender:{email:from,name:senderName},replyTo:{email:replyAddress,name:senderName},to:[{email:to,name:name||to}],subject:trackedSubject,textContent:body,tags:tags.length?tags:undefined};
   const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.message||('Brevo returned '+r.status));
