@@ -73,10 +73,15 @@ async function applyEvent(p){
   const col={accepted:'accepted_at',delivered:'delivered_at',opened:'opened_at',clicked:'clicked_at',unsubscribed:'unsubscribed_at',complained:'complained_at',bounced:'bounced_at',failed:'failed_at'}[kind];
   const status={accepted:'accepted',delivered:'delivered',opened:'opened',clicked:'clicked',unsubscribed:'unsubscribed',complained:'complained',bounced:'bounced',failed:'failed'}[kind];
   if(col){
-    const sql=`UPDATE crm_email_messages SET ${col}=COALESCE(${col},$1),last_event_at=GREATEST(COALESCE(last_event_at,$1),$1),status=$2${kind==='clicked'?',click_url=COALESCE($3,click_url)':''}
-      WHERE direction='outbound' AND ((provider_id IS NOT NULL AND provider_id=$4) OR ($5::text IS NOT NULL AND lower(to_email)=$5 AND created_at BETWEEN $1::timestamptz-interval '2 days' AND $1::timestamptz+interval '2 days'))`;
-    const params=kind==='clicked'?[when.toISOString(),status,url,provider,email]:[when.toISOString(),status,provider,email];
-    await q(sql,params);
+    if(kind==='clicked'){
+      await q(`UPDATE crm_email_messages SET ${col}=COALESCE(${col},$1),last_event_at=GREATEST(COALESCE(last_event_at,$1),$1),status=$2,click_url=COALESCE($3,click_url)
+        WHERE direction='outbound' AND ((provider_id IS NOT NULL AND provider_id=$4) OR ($5::text IS NOT NULL AND lower(to_email)=$5 AND created_at BETWEEN $1::timestamptz-interval '2 days' AND $1::timestamptz+interval '2 days'))`,
+        [when.toISOString(),status,url,provider,email]);
+    }else{
+      await q(`UPDATE crm_email_messages SET ${col}=COALESCE(${col},$1),last_event_at=GREATEST(COALESCE(last_event_at,$1),$1),status=$2
+        WHERE direction='outbound' AND ((provider_id IS NOT NULL AND provider_id=$3) OR ($4::text IS NOT NULL AND lower(to_email)=$4 AND created_at BETWEEN $1::timestamptz-interval '2 days' AND $1::timestamptz+interval '2 days'))`,
+        [when.toISOString(),status,provider,email]);
+    }
   }
   return true;
 }
