@@ -37,7 +37,7 @@ async function accessToken(mailbox){
   const sig=crypto.sign('RSA-SHA256',Buffer.from(signingInput),sa.private_key);
   const assertion=signingInput+'.'+b64url(sig);
   const form=new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion});
-  const r=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form});
+  const r=await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:form,signal:AbortSignal.timeout(15000)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.error_description||j.error||('Google token request returned '+r.status));
   tokenCache.set(mailbox,{token:j.access_token,expiresAt:Date.now()+(Number(j.expires_in)||3600)*1000});
@@ -45,7 +45,7 @@ async function accessToken(mailbox){
 }
 async function gmail(mailbox,path){
   const token=await accessToken(mailbox);
-  const r=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/'+path,{headers:{Authorization:'Bearer '+token}});
+  const r=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/'+path,{headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(15000)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.error?.message||('Gmail returned '+r.status+' for '+mailbox));
   return j;
