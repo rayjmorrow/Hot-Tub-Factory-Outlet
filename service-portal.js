@@ -27,8 +27,8 @@ function customerName(c){return [c.first_name,c.last_name].filter(Boolean).join(
 function showApp(user){currentServiceUser=user||null;window.currentServiceUser=currentServiceUser;const role=String(user?.role||'').toLowerCase();const fulfillmentOnly=new URLSearchParams(location.search).get('fulfillment')==='1';if(role==='delivery'&&!fulfillmentOnly){location.replace('/field');return;}$('#login').hidden=true;$('#app').hidden=false;$('#userName').textContent=user?.name||user?.username||'';applyRoleUi();showView(role==='delivery'&&fulfillmentOnly?'fulfillment':'dashboard')}
 function logout(){currentServiceUser=null;token='';sessionStorage.removeItem('htfoServiceToken');$('#app').hidden=true;$('#login').hidden=false}
 async function boot(){if(!token)return;try{const x=await api('/me');showApp(x.user)}catch{logout()}}
-function applyRoleUi(){const role=String(currentServiceUser?.role||'').toLowerCase(),sales=role==='sales',delivery=role==='delivery';const scheduleNav=$('nav [data-view="schedule"]');if(scheduleNav)scheduleNav.hidden=sales||delivery;if(delivery)$$('nav [data-view]').forEach(el=>el.hidden=el.dataset.view!=='fulfillment');['#newDeliveryBtn','#newWorkOrderBtn','#customerDeliveryBtn','#customerServiceBtn'].forEach(sel=>{const el=$(sel);if(el)el.hidden=sales||delivery});$$('[data-service-equipment]').forEach(el=>{if(sales||delivery)el.hidden=true})}
-function showView(id){if(id==='schedule'&&String(currentServiceUser?.role||'').toLowerCase()==='sales')id='dashboard';$$('.view').forEach(v=>v.hidden=v.id!==id);if(id==='dashboard')loadDashboard();if(id==='messages'){refreshServiceInbox(true);loadServiceAlertSettings().catch(()=>{})}if(id==='customers')loadCustomers();if(id==='schedule'||id==='workorders')loadWorkOrders();if(id==='parts')loadParts();if(id==='orders')loadPartsQueue();if(id==='fulfillment'&&window.loadFulfillment)window.loadFulfillment()}
+function applyRoleUi(){const role=String(currentServiceUser?.role||'').toLowerCase(),sales=role==='sales',delivery=role==='delivery';const salesOrdersNav=$('#salesOrdersNav');if(salesOrdersNav)salesOrdersNav.hidden=!['admin','owner'].includes(role);const scheduleNav=$('nav [data-view="schedule"]');if(scheduleNav)scheduleNav.hidden=sales||delivery;if(delivery)$$('nav [data-view]').forEach(el=>el.hidden=el.dataset.view!=='fulfillment');['#newDeliveryBtn','#newWorkOrderBtn','#customerDeliveryBtn','#customerServiceBtn'].forEach(sel=>{const el=$(sel);if(el)el.hidden=sales||delivery});$$('[data-service-equipment]').forEach(el=>{if(sales||delivery)el.hidden=true})}
+function showView(id){if(id==='schedule'&&String(currentServiceUser?.role||'').toLowerCase()==='sales')id='dashboard';$$('.view').forEach(v=>v.hidden=v.id!==id);if(id==='dashboard')loadDashboard();if(id==='messages'){refreshServiceInbox(true);loadServiceAlertSettings().catch(()=>{})}if(id==='customers')loadCustomers();if(id==='schedule'||id==='workorders')loadWorkOrders();if(id==='parts')loadParts();if(id==='orders')loadPartsQueue();if(id==='salesorders')loadSalesOrderLog();if(id==='fulfillment'&&window.loadFulfillment)window.loadFulfillment()}
 $$('nav [data-view]').forEach(b=>b.onclick=()=>showView(b.dataset.view));$('#logout').onclick=logout;
 $('#loginForm').onsubmit=async e=>{e.preventDefault();$('#loginError').textContent='';try{const x=await api('/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=x.token;sessionStorage.setItem('htfoServiceToken',token);showApp(x.user)}catch(err){$('#loginError').textContent=err.message}};
 const closeDialog=(id)=>{const d=document.getElementById(id);if(d?.open)d.close()};
@@ -286,6 +286,46 @@ $('#saveWork').onclick=async e=>{e.preventDefault();e.stopPropagation();const st
 let partsTimer;$('#partsSearch').oninput=()=>{clearTimeout(partsTimer);partsTimer=setTimeout(loadParts,250)};
 async function loadParts(){const q=$('#partsSearch').value||'';const rows=await api('/parts?q='+encodeURIComponent(q));$('#partsList').innerHTML=rows.map(p=>`<div class="item"><div class="row between"><div><b>${esc(p.description)}</b><div class="muted">${esc(p.brand||'')} ${p.category?`· ${esc(p.category)}`:''}</div></div><strong>${money(p.calculated_sell_price)}</strong></div><div>Supplier #: ${esc(p.supplier_part_number||'—')} · Mfg #: ${esc(p.manufacturer_part_number||'—')}</div><div class="muted">Supplier: ${esc(p.supplier||'—')} · Cost ${money(p.cost)}</div></div>`).join('')||'<p class="muted">No matching parts found.</p>'}
 async function loadPartsQueue(){const rows=await api('/part-requests');$('#partsQueue').innerHTML=rows.map(r=>`<div class="item"><div class="row between"><b>${esc(r.work_order_number)} · ${esc(r.customer_name)}</b><span class="pill">${esc(r.status)}</span></div><div>${esc(r.description)}</div><div>Qty ${esc(r.requested_quantity)} · Supplier # ${esc(r.supplier_part_number||'—')} · Cost ${money(r.cost)}</div><div class="muted">Requested by ${esc(r.requested_by||'—')} ${r.manager_approved_by?`· Approved by ${esc(r.manager_approved_by)}`:''}</div>${r.status==='requested'?`<button data-approve="${r.id}">Manager Approve</button>`:''}${r.status==='approved'?`<div class="row"><input data-order-no="${r.id}" placeholder="Supplier order #"><button data-order="${r.id}">Mark Ordered</button></div>`:''}${r.status==='ordered'?`<button data-receive="${r.id}">Mark Received</button>`:''}</div>`).join('')||'<p class="muted">No part requests.</p>';$$('[data-approve]').forEach(b=>b.onclick=async()=>{try{await api(`/part-requests/${b.dataset.approve}/approve`,{method:'PATCH'});loadPartsQueue()}catch(e){alert(e.message)}});$$('[data-order]').forEach(b=>b.onclick=async()=>{try{const input=$(`[data-order-no="${b.dataset.order}"]`);await api(`/part-requests/${b.dataset.order}/order`,{method:'PATCH',body:JSON.stringify({supplier_order_number:input?.value||''})});loadPartsQueue()}catch(e){alert(e.message)}});$$('[data-receive]').forEach(b=>b.onclick=async()=>{try{await api(`/part-requests/${b.dataset.receive}/receive`,{method:'PATCH'});loadPartsQueue()}catch(e){alert(e.message)}})}
+async function loadSalesOrderLog(){
+  const body=$('#salesOrderLogBody'),summary=$('#salesOrderLogSummary');if(!body)return;
+  body.innerHTML='<tr><td colspan="11" class="muted">Loading signed sales agreements…</td></tr>';
+  try{
+    const rows=await api('/crm/v1/admin/order-list');
+    if(summary){
+      const balance=rows.reduce((n,x)=>n+Number(x.balance||0),0);
+      summary.textContent=rows.length+' signed agreement'+(rows.length===1?'':'s')+' · '+money(balance)+' total balance due';
+    }
+    body.innerHTML=rows.length?rows.map(x=>{
+      const extras=[x.manufacturer_add_ons,x.accessories].filter(Boolean).join('; ');
+      return '<tr>'+
+        '<td><b>#'+esc(x.agreement_id)+'</b><div class="muted">'+esc(x.sale_date||'')+'</div></td>'+
+        '<td>'+esc(x.customer_name||'')+'<div class="muted">'+esc(x.customer_phone||'')+'</div></td>'+
+        '<td>'+esc(x.salesperson||'')+'</td>'+
+        '<td><b>'+esc([x.brand,x.model].filter(Boolean).join(' '))+'</b><div class="muted">'+esc(x.year||'')+'</div></td>'+
+        '<td>'+esc(x.acrylic_color||'')+'</td>'+
+        '<td>'+esc(x.cabinet_color||'')+'</td>'+
+        '<td>'+esc(x.cover_lift_model||'')+'</td>'+
+        '<td>'+esc(x.step_model||'')+'</td>'+
+        '<td>'+esc(extras||'')+'</td>'+
+        '<td>'+esc(x.serial||'')+'</td>'+
+        '<td>'+money(x.balance||0)+'</td>'+
+      '</tr>';
+    }).join(''):'<tr><td colspan="11" class="muted">No signed sales agreements yet.</td></tr>';
+  }catch(e){
+    body.innerHTML='<tr><td colspan="11" class="error">'+esc(e.message)+'</td></tr>';
+    if(summary)summary.textContent='';
+  }
+}
+async function downloadSalesOrderLog(){
+  try{
+    const r=await fetch(API+'/crm/v1/admin/order-list.csv',{headers:{Authorization:'Bearer '+token}});
+    if(!r.ok){const j=await r.json().catch(()=>({}));throw new Error(j.error||'Unable to download order log')}
+    const blob=await r.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download='HTFO-Sales-Order-Log.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(e){alert(e.message)}
+}
+const refreshSalesOrderLogBtn=$('#refreshSalesOrderLog');if(refreshSalesOrderLogBtn)refreshSalesOrderLogBtn.onclick=loadSalesOrderLog;
+const downloadSalesOrderLogBtn=$('#downloadSalesOrderLog');if(downloadSalesOrderLogBtn)downloadSalesOrderLogBtn.onclick=downloadSalesOrderLog;
 function parseCsv(text){const lines=text.replace(/\r/g,'').split('\n').filter(Boolean);if(!lines.length)return[];const split=line=>{let a=[],s='',q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'){if(q&&line[i+1]==='"'){s+='"';i++}else q=!q}else if(c===','&&!q){a.push(s);s=''}else s+=c}a.push(s);return a};const headers=split(lines.shift()).map(h=>h.trim().toLowerCase());const key=h=>{if(/first.*name/.test(h))return'first_name';if(/last.*name/.test(h))return'last_name';if(/company/.test(h))return'company';if(/e-?mail/.test(h))return'email';if(/phone|mobile|cell/.test(h))return'phone';if(/address 2|street 2|apt|suite/.test(h))return'street2';if(/address|street/.test(h))return'street';if(/city/.test(h))return'city';if(/^state$|province/.test(h))return'state';if(/zip|postal/.test(h))return'zip';if(/note/.test(h))return'notes';return null};const map=headers.map(key);return lines.map(line=>{const vals=split(line),o={};map.forEach((k,i)=>{if(k&&!o[k])o[k]=vals[i]?.trim()||''});return o}).filter(o=>Object.values(o).some(Boolean))}
 $('#importCsvBtn').onclick=async()=>{const f=$('#csvFile').files[0];if(!f)return $('#importResult').textContent='Choose a CSV file first.';try{const rows=parseCsv(await f.text());const x=await api('/customers/import',{method:'POST',body:JSON.stringify({rows})});$('#importResult').textContent=`Imported ${x.inserted} customer(s). Skipped ${x.skipped} likely duplicate(s). ${x.total} row(s) processed.`}catch(e){$('#importResult').textContent=e.message}};
 const saveServiceAlertSettingsBtn=$('#saveServiceAlertSettings');if(saveServiceAlertSettingsBtn)saveServiceAlertSettingsBtn.onclick=saveServiceAlertSettings;
