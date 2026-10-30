@@ -35,6 +35,7 @@ import crmHistoryRoutes from './crm-history-routes.js';
 import crmSchedulingRoutes,{runCrmScheduledMessages} from './crm-scheduling-routes.js';
 import crmEmailInboundRoutes from './crm-email-inbound-routes.js';
 import serviceMessagingRoutes,{syncServiceTwilioMessages} from './service-messaging-routes.js';
+import serviceEmailRoutes,{ensureServiceCustomerEmails} from './service-email-routes.js';
 import serviceBillingRoutes from './service-billing-routes.js';
 import serviceDepartmentFinancials from './service-department-financials.js';
 
@@ -110,6 +111,7 @@ app.use('/api/service',crmHistoryRoutes);
 app.use('/api/service',crmSchedulingRoutes);
 app.use('/api/service',crmEmailInboundRoutes);
 app.use('/api/service',serviceMessagingRoutes);
+app.use('/api/service',serviceEmailRoutes);
 app.use('/api/service',serviceBillingRoutes);
 app.use('/api/service',serviceDepartmentFinancials);
 
@@ -142,6 +144,7 @@ try{
   await initServiceAudit();
   await initServiceCustomerImport();
   await initCustomerPrivacy();
+  await ensureServiceCustomerEmails();
   await ensureBootstrapAdmin();
   await q("UPDATE service_users SET role='technician' WHERE active=true AND (lower(username)='bill' OR lower(display_name)='bill' OR lower(display_name) LIKE 'bill %')");
   await runFulfillmentAutomation();
