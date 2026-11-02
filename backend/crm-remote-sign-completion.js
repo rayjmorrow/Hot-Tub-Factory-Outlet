@@ -4,6 +4,16 @@ import {remoteSignaturePage} from './remote-sign-page.js';
 export function remoteSigningCompletion({q,ensureExecutedContracts,validateSalesDraft,signatureImage,signedPdf,sendContractPdf,ensure}){
  const router=express.Router(),sha=s=>createHash('sha256').update(s).digest('hex');
  router.get('/remote-customer',(_req,res)=>res.set('Cache-Control','no-store').set('Referrer-Policy','no-referrer').type('html').send(remoteSignaturePage));
+ router.post('/remote-customer/decline',async(req,res)=>{
+ res.set('Cache-Control','no-store');
+ try{
+  const token=String(req.body?.token||'');if(!/^[a-f0-9]{64}$/.test(token))return res.status(410).json({error:'Invalid link'});
+  const record=(await q("SELECT r.draft_id,r.staff_email FROM crm_sales_remote_signatures r WHERE token_hash=$1 AND status='pending' AND expires_at>NOW()",[sha(token)])).rows[0];
+  if(!record)return res.status(410).json({error:'Link expired or already processed'});
+  await q("UPDATE crm_sales_remote_signatures SET status='declined',feedback='Customer declined agreement' WHERE draft_id=$1 AND status='pending'",[record.draft_id]);
+  res.json({status:'declined'});
+ }catch(e){res.status(500).json({error:'Unable to decline agreement'})}
+ });
  router.post('/remote-customer/sign',async(req,res)=>{
   res.set('Cache-Control','no-store');
   try{
