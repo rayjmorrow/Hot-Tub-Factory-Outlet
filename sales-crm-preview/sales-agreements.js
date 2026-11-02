@@ -367,7 +367,15 @@ Q('#saCheckDelivery').onclick=async()=>{
  retry.hidden=Boolean(r.customer_sent&&r.salesperson_sent&&r.owner_sent);
  }catch(e){status.textContent='Cannot check delivery: '+e.message}
 };
-Q('#saCheckEmailSetup').onclick=async()=>{const status=Q('#saDeliveryStatus');try{const v=await api('/crm/v1/email-configuration');status.textContent='Email setup — Brevo API key: '+(v.api_key_present?'present':'MISSING')+'; sender: '+(v.sender_present?v.sender_address:'MISSING')+(v.ready?'. Ready to attempt delivery.':'. Configuration required before copies can send.')}catch(e){status.textContent='Email setup check failed: '+e.message}};
+Q('#saCheckEmailSetup').onclick=async()=>{
+ const status=Q('#saDeliveryStatus');
+ try{
+  const v=await api('/crm/v1/email-configuration');
+  status.textContent='Email setup — '+v.provider+': Google service account '+(v.google_service_account_present?'present':'MISSING')+
+   '; sender: '+(v.sender_present?v.sender_address:'MISSING')+
+   (v.ready?'. Gmail sending authorization still needs a delivery test.':'. Configuration required before sending.');
+ }catch(e){status.textContent='Email setup check failed: '+e.message}
+};
 Q('#saRetryDelivery').onclick=async()=>{
  if(!record?.id||!confirm('Retry only missing signed agreement emails? Already marked sent recipients will be skipped.'))return;
  const status=Q('#saDeliveryStatus');status.textContent='Attempting missing email deliveries…';
