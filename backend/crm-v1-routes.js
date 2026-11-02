@@ -842,6 +842,7 @@ router.get('/crm/v1/conversation-threads/messages',...guard,async(req,res)=>{try
 router.use('/crm/v1',remoteAgreementRouter({q,guard,salesIdentity,ensureSalesDrafts,validateSalesDraft,signatureImage,staffEmail,email,sms,opted,signedPdf,ensureExecutedContracts,sendContractPdf}));
 
 router.use('/crm/v1',remoteSigningCompletion({q,ensureExecutedContracts,validateSalesDraft,signatureImage,signedPdf,sendContractPdf,ensure}));
+router.post('/crm/v1/sales-drafts/:id/payment-link',(req,res,next)=>{if(process.env.AUTHNET_PAYMENT_LINKS_ENABLED!=='true')return res.status(503).json({error:'Secure payment requests require verified merchant setup and an end-to-end test'});next()});
 router.use('/crm/v1',authorizePaymentLinks({q,guard,salesIdentity,ensureSalesDrafts,validateSalesDraft,email,sms,opted}));
 router.use('/crm/v1',authorizePaymentWebhook({q,validateSalesDraft}));
 export default router;
