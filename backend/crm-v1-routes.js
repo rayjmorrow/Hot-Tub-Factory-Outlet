@@ -2,6 +2,7 @@ import express from 'express';
 import {randomBytes,createHash} from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import PDFDocument from 'pdfkit';
+import {remoteAgreementRouter} from './crm-remote-agreement-routes.js';
 import { proposedSalesTermsReference } from './proposed-sales-terms-inhouse.js';
 import { q } from './service-db.js';
 import { ensureEmailTrackingSchema } from './crm-email-tracking-routes.js';
@@ -834,5 +835,7 @@ router.get('/crm/v1/conversation-threads/messages',...guard,async(req,res)=>{try
  const rows=(await q(conversationThreadCte(true)+` SELECT message_id,channel,direction,subject,body,status,occurred_at,submission_id,peer FROM resolved WHERE thread_key=$2 AND ($3::timestamptz IS NULL OR (occurred_at,channel||':'||message_id)<($3::timestamptz,$4::text)) ORDER BY occurred_at DESC,channel||':'||message_id DESC LIMIT 101`,['1970-01-01T00:00:00.000Z',key,beforeAt?.toISOString()||null,String(req.query.before_key||'')])).rows;
  const hasMore=rows.length>100,items=rows.slice(0,100),last=items.at(-1);res.json({messages:items.reverse(),has_more:hasMore,next:hasMore?{at:last.occurred_at,key:last.channel+':'+last.message_id}:null})
 }catch(e){res.status(500).json({error:e.message})}});
+
+router.use('/crm/v1',remoteAgreementRouter({q,guard,salesIdentity,ensureSalesDrafts,validateSalesDraft,signatureImage,staffEmail,email,sms,opted,signedPdf,ensureExecutedContracts,sendContractPdf}));
 
 export default router;
