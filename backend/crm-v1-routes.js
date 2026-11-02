@@ -613,6 +613,14 @@ router.get('/crm/v1/sales-drafts/:id/executed-pdf',...guard,salesIdentity,async(
   res.type('application/pdf').set('Content-Disposition','attachment; filename="HTFO-Signed-'+req.params.id+'.pdf"').send(row.pdf_data);
  }catch(e){res.status(500).json({error:'Unable to read signed contract'})}
 });
+router.get('/crm/v1/sales-drafts/:id/execution-status',...guard,salesIdentity,async(req,res)=>{try{
+ await ensureSalesDrafts();await ensureExecutedContracts();
+ const d=(await q('SELECT owner_user_id FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];
+ if(!d)return res.status(404).json({error:'Agreement not found'});
+ if(!salesAdmin(req)&&String(d.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Not authorized'});
+ const signed=(await q('SELECT draft_id,executed_at,sent_customer_at,sent_salesperson_at,sent_owner_at,last_error FROM crm_sales_executed_contracts WHERE draft_id=$1',[req.params.id])).rows[0];
+ res.json(signed?{executed:true,executed_at:signed.executed_at,customer_sent:!!signed.sent_customer_at,salesperson_sent:!!signed.sent_salesperson_at,owner_sent:!!signed.sent_owner_at,delivery_error:signed.last_error||null}:{executed:false,customer_sent:false,salesperson_sent:false,owner_sent:false});
+ }catch(e){res.status(500).json({error:'Unable to read signing status'})}});
 router.post('/crm/v1/sales-drafts/:id/send-executed',...guard,salesIdentity,async(req,res)=>{
  try{
   await ensureExecutedContracts();
