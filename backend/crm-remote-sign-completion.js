@@ -1,7 +1,7 @@
 import express from 'express';
-import {createHash} from 'node:crypto';
+import {createHash,randomBytes} from 'node:crypto';
 import {remoteSignaturePage} from './remote-sign-page.js';
-export function remoteSigningCompletion({q,ensureExecutedContracts,validateSalesDraft,signatureImage,signedPdf,sendContractPdf}){
+export function remoteSigningCompletion({q,ensureExecutedContracts,validateSalesDraft,signatureImage,signedPdf,sendContractPdf,ensure}){
  const router=express.Router(),sha=s=>createHash('sha256').update(s).digest('hex');
  router.get('/remote-customer',(_req,res)=>res.set('Cache-Control','no-store').set('Referrer-Policy','no-referrer').type('html').send(remoteSignaturePage));
  router.post('/remote-customer/sign',async(req,res)=>{
@@ -16,7 +16,14 @@ export function remoteSigningCompletion({q,ensureExecutedContracts,validateSales
    const png=signatureImage(req.body.signature,'Customer');await ensureExecutedContracts();
    let id=d.submission_id||null;
    if(id){if(!(await q('SELECT 1 FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL',[id])).rowCount)throw Error('Linked customer profile not found')}
-   else{const matches=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) LIMIT 2",[d.customer.email])).rows;if(matches.length!==1)throw Error('Please contact HTFO to verify your customer profile before signing');id=matches[0].submission_id}
+   else{const matches=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) LIMIT 2",[d.customer.email])).rows;if(matches.length>1)throw Error('Please contact HTFO to verify your customer profile before signing');
+    if(matches.length===1)id=matches[0].submission_id;
+    else{
+      await ensure();id='signed-'+randomBytes(10).toString('hex');
+      await q(`INSERT INTO crm_website_leads(submission_id,first_name,last_name,email,phone,source,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,lifecycle_stage,pipeline_stage,has_opportunity,received_at,updated_at)
+       VALUES($1,$2,$3,$4,$5,'Walk-In','Remote signed agreement',$6::jsonb,'Hot Tub',$7,$8,$9,$10,'Customer','Won',true,NOW(),NOW())`,
+      [id,d.customer.first_name,d.customer.last_name,d.customer.email,d.customer.phone,JSON.stringify({remote_agreement:rec.draft_id}),d.spa.brand,d.spa.model,rec.staff_name,d.location]);
+    }}
    const pdf=await signedPdf(d,rec.draft_id,{customer_name:name,salesperson_name:rec.staff_name,customer_png:png,salesperson_png:rec.staff_signature,terms_text:t,terms_version:v});
    const accepted=await q("UPDATE crm_sales_remote_signatures SET status='signed',signed_at=NOW() WHERE draft_id=$1 AND status='pending' AND version=$2 RETURNING draft_id",[rec.draft_id,rec.current_version]);
    if(!accepted.rowCount)return res.status(409).json({error:'Already processed'});
