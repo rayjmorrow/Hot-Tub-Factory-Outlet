@@ -2,6 +2,7 @@ import express from 'express';
 import {randomBytes,createHash} from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import PDFDocument from 'pdfkit';
+import {sendSignedPdfWithGmail,gmailContractConfigured} from './crm-gmail-contract-send.js';
 import {remoteAgreementRouter} from './crm-remote-agreement-routes.js';
 import {remoteSigningCompletion} from './crm-remote-sign-completion.js';
 import {authorizePaymentLinks} from './crm-authorize-checkout.js';
@@ -546,14 +547,11 @@ async function signedPdf(d,id,sign){
  });
 }
 async function sendContractPdf(to,name,subject,body,fileName,pdf,author){
- const key=String(process.env.BREVO_API_KEY||'').trim(),from=staffEmail(author);
- if(!key)throw new Error('BREVO_API_KEY is missing from the Operations CRM Render environment; signed agreement emails cannot send');
- if(!from)throw new Error('Salesperson sender address is missing; check CRM_FROM_EMAIL or salesperson profile');
- const payload={sender:{email:from,name:'Hot Tub Factory Outlet'},to:[{email:to,name:name||to}],subject,textContent:body,attachment:[{name:fileName,content:pdf.toString('base64')}]};
- const r=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'api-key':key,'Content-Type':'application/json'},body:JSON.stringify(payload)});
- if(!r.ok){const msg=await r.text();throw new Error('Email delivery failed: '+r.status+' '+msg.slice(0,180))}
+ const from=staffEmail(author);
+ if(!from)throw new Error('Salesperson sender address is not configured');
+ return sendSignedPdfWithGmail({from,to,recipient:name,subject,message:body,filename:fileName,pdf});
 }
-router.get('/crm/v1/email-configuration',...guard,salesIdentity,(req,res)=>{const sender=staffEmail(req.user);res.json({provider:'Brevo',api_key_present:Boolean(String(process.env.BREVO_API_KEY||'').trim()),sender_present:Boolean(sender),sender_address:sender||null,ready:Boolean(String(process.env.BREVO_API_KEY||'').trim()&&sender)});});
+router.get('/crm/v1/email-configuration',...guard,salesIdentity,(req,res)=>{const sender=staffEmail(req.user);res.json({provider:'Google Workspace Gmail',google_service_account_present:gmailContractConfigured(),sender_present:Boolean(sender),sender_address:sender||null,ready:gmailContractConfigured()&&Boolean(sender),authorization_tested:false,notes:'Google Workspace gmail.send delegation requires verification'});});
 router.get('/crm/v1/sales-terms',...guard,salesIdentity,(req,res)=>{
  const text=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),version=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
  if(!text||!version)return res.json({ready:false,version:'legacy-reference',text:proposedSalesTermsReference,review_required:true});
