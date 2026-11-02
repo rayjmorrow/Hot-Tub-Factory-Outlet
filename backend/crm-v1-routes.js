@@ -841,7 +841,7 @@ router.get('/crm/v1/conversation-threads/messages',...guard,async(req,res)=>{try
 
 router.use('/crm/v1',remoteAgreementRouter({q,guard,salesIdentity,ensureSalesDrafts,validateSalesDraft,signatureImage,staffEmail,email,sms,opted,signedPdf,ensureExecutedContracts,sendContractPdf}));
 
-router.use('/crm/v1',remoteSigningCompletion({q,ensureExecutedContracts,validateSalesDraft,signatureImage,signedPdf,sendContractPdf}));
+router.use('/crm/v1',remoteSigningCompletion({q,ensureExecutedContracts,validateSalesDraft,signatureImage,signedPdf,sendContractPdf,ensure}));
 router.use('/crm/v1',authorizePaymentLinks({q,guard,salesIdentity,ensureSalesDrafts,validateSalesDraft,email,sms,opted}));
 router.use('/crm/v1',authorizePaymentWebhook({q,validateSalesDraft}));
 export default router;
