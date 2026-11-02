@@ -56,7 +56,7 @@ let record=null,dirty=false,busy=false;
 const customerFields=[['first_name','First name'],['last_name','Last name'],['email','Email'],['phone','Primary phone'],['secondary_phone','Secondary phone'],['street','Street address'],['city','City'],['state','State'],['zip','ZIP code']];
 Q('#saCustomer').innerHTML=customerFields.map(([k,n])=>`<label>${n}<input data-customer="${k}" ${k==='email'?'type="email"':''}></label>`).join('')+`<label>Contract date<input id="saDate" type="date" required></label><label>Salesperson (logged-in account)<input id="saSalesperson" readonly></label><label>Store / event<input id="saLocation" placeholder="Wexford, Monroeville, event name…"></label>`;
 const brands=['Cal Spas','American Whirlpool','Vita Spa','AquaSolus','Eco Spas','Innova Spas'];
-Q('#saSpa').innerHTML=`<label>Brand<select id="saBrand"><option value="">Choose brand</option>${brands.map(x=>`<option>${x}</option>`).join('')}<option>Other</option></select></label><label><span id="saModelLabel">Model</span><input id="saModel" list="saModels" placeholder="Choose model"></label><p class="small" id="saModelHelp" style="grid-column:1/-1"></p><label>Serial number (if known)<input id="saSerial"></label><label>Acrylic / shell color<select id="saShell"></select><input id="saShellCustom" placeholder="Specify another color" hidden></label><label>Cabinet color<select id="saCabinet"></select><input id="saCabinetCustom" placeholder="Specify another color" hidden></label><label class="full">Factory options (choose any)<details id="saFactoryMenu" class="sa-option-menu"><summary id="saFactorySummary">Choose factory add-ons</summary><div id="saFactoryChoices" class="sa-option-list" role="group" aria-label="Available factory add-ons"></div></details><span class="small" id="saFactoryHint">Choose a model first. Checkboxes work on phones, tablets and computers.</span></label><label class="full">Other factory option<input id="saFactoryCustom" placeholder="Optional additional or custom factory option"></label><input type="hidden" id="saManufacturerAddOns">`;
+Q('#saSpa').innerHTML=`<label>Brand<select id="saBrand"><option value="">Choose brand</option>${brands.map(x=>`<option>${x}</option>`).join('')}<option>Other</option></select></label><label><span id="saModelLabel">Model</span><select id="saModel"><option value="">Choose model</option></select><button type="button" class="btn secondary" id="saManualModel" style="margin-top:6px">Enter model manually</button></label><p class="small" id="saModelHelp" style="grid-column:1/-1"></p><label>Serial number (if known)<input id="saSerial"></label><label>Acrylic / shell color<select id="saShell"></select><input id="saShellCustom" placeholder="Specify another color" hidden></label><label>Cabinet color<select id="saCabinet"></select><input id="saCabinetCustom" placeholder="Specify another color" hidden></label><label class="full">Factory options (choose any)<details id="saFactoryMenu" class="sa-option-menu"><summary id="saFactorySummary">Choose factory add-ons</summary><div id="saFactoryChoices" class="sa-option-list" role="group" aria-label="Available factory add-ons"></div></details><span class="small" id="saFactoryHint">Choose a model first. Checkboxes work on phones, tablets and computers.</span></label><label class="full">Other factory option<input id="saFactoryCustom" placeholder="Optional additional or custom factory option"></label><input type="hidden" id="saManufacturerAddOns">`;
 
 // Product configuration starter lists, not guaranteed for every model/year.
 // Explicit custom entry keeps the salesperson from being blocked on uncommon configurations.
@@ -254,14 +254,25 @@ function update(){const d=data(),t=totals(d);Q('#saMsrp').setCustomValidity(d.di
 function changed(){dirty=true;Q('#saSaved').textContent='Unsaved changes';update()}
 const CAL_VERIFIED_CODES=[{code:'EC-855B',name:'Cancun — Escape Plus'},{code:'EC-849B',name:'Cancun — Escape'},{code:'EC-867BX',name:'Cancun — Escape X-Series'}];
 function modelOptions(){
- const cal=Q('#saBrand').value==='Cal Spas';
+ const brand=Q('#saBrand').value,cal=brand==='Cal Spas',field=Q('#saModel');
+ const previous=field.value;
  Q('#saModelLabel').textContent=cal?'Cal Spas model number':'Model';
- Q('#saModel').placeholder=cal?'Select or enter exact factory model number':'Choose model';
- Q('#saModels').innerHTML=cal
-  ?(window.HTFO_2026_CAL_MODEL_CODES||CAL_VERIFIED_CODES.map(x=>x.code)).map(x=>`<option value="${html(x)}"></option>`).join('')
-  :(window.HTFO_AGREEMENT_MODELS?.[Q('#saBrand').value]||[]).map(x=>`<option value="${html(x)}"></option>`).join('');
- Q('#saModelHelp').textContent=cal?'Use the exact Cal Spas model number on the dealer order. Cancun examples: EC-855B (Escape Plus), EC-849B (Escape), EC-867BX (Escape X). Other numbers can be entered manually until the dealer catalog is complete.':'';
+ const list=cal?(window.HTFO_2026_CAL_MODEL_CODES||CAL_VERIFIED_CODES.map(x=>x.code)):(window.HTFO_AGREEMENT_MODELS?.[brand]||[]);
+ const codes=[...new Set(list.map(x=>String(typeof x==='string'?x:(x?.code||'')).trim()).filter(Boolean))];
+ if(previous&&!codes.includes(previous))codes.push(previous);
+ field.innerHTML='<option value="">Choose model</option>'+codes.map(x=>'<option value="'+html(x)+'">'+html(x)+'</option>').join('');
+ field.value=previous||'';
+ Q('#saManualModel').hidden=!brand;
+ Q('#saModelHelp').textContent=cal?'Choose the exact Cal Spas factory model code. Use “Enter model manually” if the code is not listed.':'Choose a model, or enter one manually if it is missing.';
 }
+Q('#saManualModel').onclick=()=>{
+ const val=prompt('Enter the exact factory model name or code:','');
+ if(!val||!val.trim())return;
+ const model=val.trim().slice(0,100),field=Q('#saModel');
+ if(![...field.options].some(o=>o.value===model)){const o=document.createElement('option');o.value=model;o.textContent=model;field.append(o)}
+ field.value=model;field.dispatchEvent(new Event('change',{bubbles:true}));
+};
+
 function fill(row){signaturePads.saCustomerPad.clear();signaturePads.saStaffPad.clear();dialog.querySelector('#saTermsAck').checked=false;for(const id of ['Customer','Staff']){dialog.querySelector('#sa'+id+'Method').value='draw';dialog.querySelector('#sa'+id+'StyleWrap').hidden=true;dialog.querySelector('#saAdopt'+id).hidden=true;dialog.querySelector('#sa'+id+'Pad').style.pointerEvents='auto'}dialog.querySelector('#saCustomerSigner').value='';dialog.querySelector('#saStaffSigner').value=user?.name||user?.username||'';record=row;const d=row?.document||{customer:{},spa:{},msrp:0,discount:0,tax_rate:0,items:[],payments:[],finance:{}};Q('#saForm').reset();refreshSigningMethod();Q('#saStaffSigner').value=user?.name||user?.username||'';dialog.querySelectorAll('[data-customer]').forEach(e=>e.value=d.customer?.[e.dataset.customer]||'');for(const [id,v]of Object.entries({saDate:d.contract_date||today(),saSalesperson:d.salesperson||user?.name||user?.username||'',saLocation:d.location||'',saBrand:d.spa?.brand||'',saModel:d.spa?.model||'',saSerial:d.spa?.serial||'',saShell:d.spa?.shell||'',saCabinet:d.spa?.cabinet||'',saManufacturerAddOns:d.spa?.manufacturer_add_ons||'',saMsrp:(d.msrp||0)/100,saDiscount:(d.discount||0)/100,saSalePrice:d.discount>0?(d.msrp-d.discount)/100:'',saTaxRate:(d.tax_rate||0)/100,saBank:d.finance?.bank||'',saFinanced:(d.finance?.amount||0)/100,saNotes:d.notes||''}))Q('#'+id).value=v;populateConfiguration(d.spa||{});synchronizeDiscount();Q('#saFinanceComplete').checked=!!d.finance?.complete;Q('#saAccessoryQty').value='1';accessoryOptions();Q('#saItems').innerHTML='';Q('#saPayments').innerHTML='';(d.items||[]).forEach(itemRow);(d.payments||[]).forEach((p,i)=>paymentRow(p,i));Q('#saNumber').textContent=row?.id?'DRAFT-'+String(row.id).padStart(5,'0'):'Unsaved draft';Q('#saSaved').textContent=row?.id?'Saved '+new Date(row.updated_at).toLocaleString():'';Q('#saLogList').innerHTML='';modelOptions();dirty=false;update();agreementEditingMode()}
 function discard(){return !dirty||confirm('Discard unsaved changes to this agreement?')}
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
