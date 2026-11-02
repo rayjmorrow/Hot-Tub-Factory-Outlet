@@ -2,7 +2,7 @@ import express from 'express';
 import {randomBytes,createHash} from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import PDFDocument from 'pdfkit';
-import {sendSignedPdfWithGmail,gmailContractConfigured} from './crm-gmail-contract-send.js';
+import {sendSignedPdfWithGmail,gmailContractConfigured,verifyGmailSendAccess} from './crm-gmail-contract-send.js';
 import {remoteAgreementRouter} from './crm-remote-agreement-routes.js';
 import {remoteSigningCompletion} from './crm-remote-sign-completion.js';
 import {authorizePaymentLinks} from './crm-authorize-checkout.js';
@@ -551,6 +551,12 @@ async function sendContractPdf(to,name,subject,body,fileName,pdf,author){
  if(!from)throw new Error('Salesperson sender address is not configured');
  return sendSignedPdfWithGmail({from,to,recipient:name,subject,message:body,filename:fileName,pdf});
 }
+router.get('/crm/v1/email-authorization-test',...guard,salesIdentity,async(req,res)=>{try{
+ const sender=staffEmail(req.user);if(!sender)throw Error('Salesperson sender address unavailable');
+ await verifyGmailSendAccess(sender);
+ res.json({authorized:true,sender,provider:'Google Workspace Gmail',message:'gmail.send token obtained; no email was sent'});
+ }catch(e){res.status(409).json({authorized:false,error:String(e.message||'Gmail send authorization failed')})}
+});
 router.get('/crm/v1/email-configuration',...guard,salesIdentity,(req,res)=>{const sender=staffEmail(req.user);res.json({provider:'Google Workspace Gmail',google_service_account_present:gmailContractConfigured(),sender_present:Boolean(sender),sender_address:sender||null,ready:gmailContractConfigured()&&Boolean(sender),authorization_tested:false,notes:'Google Workspace gmail.send delegation requires verification'});});
 router.get('/crm/v1/sales-terms',...guard,salesIdentity,(req,res)=>{
  const text=String(process.env.HTFO_APPROVED_SALES_TERMS||'').trim(),version=String(process.env.HTFO_SALES_TERMS_VERSION||'').trim();
