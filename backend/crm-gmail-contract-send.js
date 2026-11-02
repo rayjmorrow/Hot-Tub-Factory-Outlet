@@ -24,6 +24,7 @@ async function gmailSendToken(mailbox){
  if(!response.ok||!data.access_token)throw Error('Google Gmail sending authorization failed: '+String(data.error||'token unavailable')+'. Confirm Workspace domain-wide delegation includes gmail.send');
  return data.access_token;
 }
+export async function verifyGmailSendAccess(mailbox){await gmailSendToken(mailbox);return true;}
 export async function sendSignedPdfWithGmail({from,to,recipient,subject,message,filename,pdf}){
  const sender=cleanHeader(from),destination=cleanHeader(to);
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(sender)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(destination))throw Error('Sender or recipient email is invalid');
