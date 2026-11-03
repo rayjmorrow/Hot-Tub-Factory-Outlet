@@ -2,6 +2,7 @@ import express from 'express';
 import {randomBytes,createHash} from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import PDFDocument from 'pdfkit';
+import {renderProfessionalSignedAgreement} from './crm-signed-pdf-layout.js';
 import {sendSignedPdfWithGmail,gmailContractConfigured,verifyGmailSendAccess} from './crm-gmail-contract-send.js';
 import {remoteAgreementRouter} from './crm-remote-agreement-routes.js';
 import {remoteSigningCompletion} from './crm-remote-sign-completion.js';
@@ -515,37 +516,7 @@ const signatureImage=(value,label)=>{
  return bytes;
 };
 const currency=c=>'$'+(Number(c||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-async function signedPdf(d,id,sign){
- return new Promise((resolve,reject)=>{
-  const pdf=new PDFDocument({size:'LETTER',margin:44,autoFirstPage:true,info:{Title:'HTFO Executed Sales Agreement '+id,Author:'Hot Tub Factory Outlet'}});
-  const chunks=[];pdf.on('data',chunk=>chunks.push(chunk));pdf.on('error',reject);pdf.on('end',()=>resolve(Buffer.concat(chunks)));
-  const row=(title,value)=>{if(pdf.y>704)pdf.addPage();pdf.font('Helvetica-Bold').fontSize(9).text(title,{continued:true});pdf.font('Helvetica').text('  '+String(value||''));pdf.moveDown(.25)};
-  pdf.font('Helvetica-Bold').fontSize(19).text('HOT TUB FACTORY OUTLET');
-  pdf.font('Helvetica').fontSize(10).text('Monroeville & Wexford');
-  pdf.font('Helvetica-Bold').fontSize(12).text('EXECUTED SALES AGREEMENT #'+id);pdf.moveDown(.6);
-  row('Executed UTC:',new Date().toISOString());row('Customer:',sign.customer_name);row('Email:',d.customer.email);row('Phone:',d.customer.phone);row('Address:',[d.customer.street,d.customer.city,d.customer.state,d.customer.zip].filter(Boolean).join(', '));
-  row('Salesperson:',sign.salesperson_name);row('Location:',d.location);
-  row('Brand / Model:',[d.spa.brand,d.spa.model].join(' / '));row('Serial:',d.spa.serial);
-  row('Shell / Cabinet:',[d.spa.shell,d.spa.cabinet].join(' / '));row('Factory add-ons:',d.spa.manufacturer_add_ons||'None');
-  row('HTFO list price:',currency(d.msrp));if(d.discount)row('Negotiated discount:',currency(d.discount));
-  row('Spa sale price:',currency(d.msrp-d.discount));
-  for(const item of d.items||[])row('Item:',item.quantity+' x '+item.description+' — '+currency(item.unit_price*item.quantity));
-  row('Subtotal:',currency(d.totals.subtotal));row('Tax:',currency(d.totals.tax));row('Total:',currency(d.totals.total));
-  row('Payments recorded:',currency(d.totals.paid));row('Balance due:',currency(d.totals.balance));
-  row('Financing:',[d.finance?.bank||'None',currency(d.finance?.amount)].join(' — '));
-  if(d.notes)row('Special instructions:',d.notes);
-  pdf.moveDown(1);pdf.font('Helvetica-Bold').fontSize(12).text('AGREED TERMS');
-  pdf.font('Helvetica').fontSize(9).text(sign.terms_text,{width:520});pdf.moveDown(.6);
-  if(pdf.y>610)pdf.addPage();
-  pdf.font('Helvetica-Bold').fontSize(10).text('Customer signature: '+sign.customer_name);
-  pdf.image(sign.customer_png,{fit:[225,85]});pdf.moveDown(.5);
-  if(pdf.y>610)pdf.addPage();
-  pdf.font('Helvetica-Bold').fontSize(10).text('Salesperson signature: '+sign.salesperson_name);
-  pdf.image(sign.salesperson_png,{fit:[225,85]});
-  pdf.font('Helvetica').fontSize(8).text('Electronic consent recorded; terms version '+sign.terms_version);
-  pdf.end();
- });
-}
+const signedPdf=renderProfessionalSignedAgreement;
 async function sendContractPdf(to,name,subject,body,fileName,pdf,author){
  const from=staffEmail(author);
  if(!from)throw new Error('Salesperson sender address is not configured');
