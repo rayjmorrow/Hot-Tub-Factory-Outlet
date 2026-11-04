@@ -322,7 +322,7 @@ async function loadPartsQueue(){const rows=await api('/part-requests');$('#parts
  const qty=prompt('Quantity actually used on this service call (maximum '+b.dataset.maxQty+')','1');
  if(qty===null)return;const loc=prompt('Stock location: Monroeville, Wexford or Warehouse','Warehouse');if(!loc)return;
  if(!confirm('Deduct '+qty+' unit(s) from '+loc+' for this approved service part request?'))return;
- try{await api('/htfo-inventory/service-part-requests/'+b.dataset.issueStock+'/issue',{method:'POST',body:JSON.stringify({quantity:Number(qty),location:loc})});await loadPartsQueue();alert('Part usage recorded and stock deducted.')}catch(e){alert(e.message)}
+ try{await api('/htfo-inventory/service-part-requests/'+b.dataset.issueStock+'/issue',{method:'POST',body:JSON.stringify({quantity:Number(qty),location:loc,reference_key:crypto.randomUUID()})});await loadPartsQueue();alert('Part usage recorded and stock deducted.')}catch(e){alert(e.message)}
  })}
 async function loadSalesOrderLog(){
   const body=$('#salesOrderLogBody'),summary=$('#salesOrderLogSummary');if(!body)return;
