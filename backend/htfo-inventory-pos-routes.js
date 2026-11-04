@@ -51,6 +51,17 @@ export async function ensureInventory(){
  payment_status TEXT NOT NULL DEFAULT 'unpaid',
  created_by BIGINT NOT NULL REFERENCES service_users(id),
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+ CREATE TABLE IF NOT EXISTS htfo_inventory_part_locations(
+ part_id BIGINT NOT NULL REFERENCES service_parts(id),location TEXT NOT NULL,
+ on_hand NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK(on_hand>=0),
+ PRIMARY KEY(part_id,location));
+ CREATE TABLE IF NOT EXISTS htfo_inventory_part_movements(
+ id BIGSERIAL PRIMARY KEY,part_id BIGINT NOT NULL REFERENCES service_parts(id),
+ location TEXT NOT NULL,delta NUMERIC(10,2) NOT NULL,reason TEXT NOT NULL,
+ actor_id BIGINT NOT NULL REFERENCES service_users(id),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+ CREATE TABLE IF NOT EXISTS htfo_pos_part_lines(
+ id BIGSERIAL PRIMARY KEY,receipt_id BIGINT NOT NULL REFERENCES htfo_pos_receipts(id),
+ part_id BIGINT NOT NULL REFERENCES service_parts(id),qty INTEGER NOT NULL,price_cents INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS htfo_pos_lines(
  id BIGSERIAL PRIMARY KEY,receipt_id BIGINT NOT NULL REFERENCES htfo_pos_receipts(id),
  sku_id BIGINT NOT NULL REFERENCES htfo_inventory_sku(id),qty INTEGER NOT NULL,
@@ -105,31 +116,52 @@ router.post('/retail/customers',permit(RETAIL),handle(async(req,res)=>{
 }));
 router.get('/skus',permit(SERVICE),handle(async(req,res)=>{
  await ensureInventory();
- const rows=await q(`SELECT s.id,s.sku,s.name,s.category,s.price_cents,s.reorder_point,
- COALESCE(sum(i.on_hand),0)::int AS on_hand,COALESCE(sum(i.committed),0)::int AS committed,
- (COALESCE(sum(i.on_hand),0)-COALESCE(sum(i.committed),0))::int AS available
- FROM htfo_inventory_sku s LEFT JOIN htfo_inventory_quantity i ON i.sku_id=s.id
- WHERE s.active=true GROUP BY s.id ORDER BY s.category,s.name LIMIT 500`);
- res.json(rows.rows.map(r=>MANAGEMENT.has(req.stockUser.role)?r:{...r}));
+ const rows=await q(`SELECT p.id,COALESCE(NULLIF(p.supplier_part_number,''),NULLIF(p.manufacturer_part_number,''),'PART-'||p.id::text) AS sku,
+ p.description AS name,COALESCE(p.category,'Supplies') AS category,
+ ROUND(COALESCE(NULLIF(p.sell_price,0),p.list_price,0)*100)::int AS price_cents,
+ COALESCE(p.reorder_point,0)::int AS reorder_point,
+ COALESCE(p.quantity_on_hand,0)::numeric AS on_hand,
+ COALESCE(p.quantity_committed,0)::numeric AS committed,
+ (COALESCE(p.quantity_on_hand,0)-COALESCE(p.quantity_committed,0))::numeric AS available
+ FROM service_parts p WHERE p.active=true ORDER BY p.category,p.description LIMIT 500`);
+ res.json(rows.rows);
 }));
 router.post('/skus',permit(MANAGEMENT),handle(async(req,res)=>{
  await ensureInventory();const b=req.body||{};
- if(!code(b.sku)||!code(b.name))throw Error('SKU and description required');
- const r=await q(`INSERT INTO htfo_inventory_sku(sku,name,category,price_cents,cost_cents,reorder_point)
- VALUES($1,$2,$3,$4,$5,$6)
- ON CONFLICT(sku) DO UPDATE SET name=EXCLUDED.name,category=EXCLUDED.category,price_cents=EXCLUDED.price_cents,cost_cents=EXCLUDED.cost_cents,reorder_point=EXCLUDED.reorder_point
- RETURNING id,sku,name,category,price_cents,reorder_point`,
- [code(b.sku),code(b.name),code(b.category)||'Supplies',integer(b.price_cents,'price'),integer(b.cost_cents,'cost'),integer(b.reorder_point??0,'reorder point',0,100000)]);
+ const sku=code(b.sku),name=code(b.name),category=code(b.category)||'Supplies';
+ if(!sku||!name)throw Error('SKU and description required');
+ const price=integer(b.price_cents,'price'),cost=integer(b.cost_cents,'cost'),reorder=integer(b.reorder_point??0,'reorder point',0,100000);
+ const matches=(await q('SELECT id FROM service_parts WHERE lower(supplier_part_number)=lower($1) LIMIT 2',[sku])).rows;
+ if(matches.length>1)throw Error('Duplicate supplier part numbers found; manager must resolve before updating');
+ let r;
+ if(matches.length){
+  r=await q(`UPDATE service_parts SET description=$2,category=$3,sell_price=$4,cost=$5,reorder_point=$6,updated_at=NOW()
+   WHERE id=$1 RETURNING id,supplier_part_number AS sku,description AS name,category,ROUND(COALESCE(sell_price,0)*100)::int AS price_cents`,
+   [matches[0].id,name,category,price/100,cost/100,reorder]);
+ }else{
+  r=await q(`INSERT INTO service_parts(supplier_part_number,description,category,sell_price,cost,reorder_point)
+   VALUES($1,$2,$3,$4,$5,$6) RETURNING id,supplier_part_number AS sku,description AS name,category,ROUND(COALESCE(sell_price,0)*100)::int AS price_cents`,
+   [sku,name,category,price/100,cost/100,reorder]);
+ }
  res.json(r.rows[0]);
 }));
 router.post('/skus/:id/receive',permit(MANAGEMENT),handle(async(req,res)=>{
- await ensureInventory();const id=integer(Number(req.params.id),'sku',1),qty=integer(req.body.qty,'quantity',1,100000),location=code(req.body.location);
+ await ensureInventory();
+ const id=integer(Number(req.params.id),'part ID',1),qty=integer(req.body.qty,'quantity',1,100000),location=code(req.body.location);
  if(!location)throw Error('Select a location');
- await q(`WITH inserted AS (INSERT INTO htfo_inventory_quantity(sku_id,location,on_hand)
- VALUES($1,$2,$3) ON CONFLICT(sku_id,location) DO UPDATE SET on_hand=htfo_inventory_quantity.on_hand+EXCLUDED.on_hand RETURNING sku_id),
- log AS (INSERT INTO htfo_inventory_movements(sku_id,location,delta,reason,actor_id)
- SELECT sku_id,$2,$3,'receive',$4 FROM inserted RETURNING id) SELECT COUNT(*)::int AS receipts FROM log`,
- [id,location,qty,req.stockUser.id]);res.json({received:qty,location});
+ const r=await q(`WITH changed AS (
+  UPDATE service_parts SET quantity_on_hand=COALESCE(quantity_on_hand,0)+$3,updated_at=NOW() WHERE id=$1 RETURNING id
+ ),loc AS (
+  INSERT INTO htfo_inventory_part_locations(part_id,location,on_hand)
+  SELECT id,$2,$3 FROM changed
+  ON CONFLICT(part_id,location) DO UPDATE SET on_hand=htfo_inventory_part_locations.on_hand+EXCLUDED.on_hand RETURNING part_id
+ ),audit AS (
+  INSERT INTO htfo_inventory_part_movements(part_id,location,delta,reason,actor_id)
+  SELECT part_id,$2,$3,'receive',$4 FROM loc RETURNING id
+ ) SELECT count(*)::int AS recorded FROM audit`,
+ [id,location,qty,req.stockUser.id]);
+ if(!r.rows[0]?.recorded)return res.status(404).json({error:'Part not found'});
+ res.json({received:qty,location,part_id:id});
 }));
 router.get('/spas',permit(SALES),handle(async(req,res)=>{
  await ensureInventory();
@@ -172,12 +204,16 @@ router.get('/receipts',permit(RETAIL),handle(async(req,res)=>{
 router.post('/receipts',permit(RETAIL),handle(async(req,res)=>{
  await ensureInventory();const lines=req.body?.items;
  if(!Array.isArray(lines)||!lines.length||lines.length>30)throw Error('Add 1–30 retail items');
- const items=[];for(const l of lines){const id=integer(l.sku_id,'SKU',1),qty=integer(l.qty,'quantity',1,99);const s=(await q('SELECT id,price_cents FROM htfo_inventory_sku WHERE id=$1 AND active=true',[id])).rows[0];if(!s)throw Error('SKU not found');items.push({id,qty,price:s.price_cents})}
- // No stock deduction or card authorization occurs here. Draft receipt only until transactional checkout is verified.
- const subtotal=items.reduce((n,x)=>n+x.qty*x.price,0);const tax=0;
- const customer=req.body.customer_id?integer(req.body.customer_id,'customer ID',1):null;
- const receipt=(await q('INSERT INTO htfo_pos_receipts(customer_id,subtotal_cents,tax_cents,total_cents,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id,total_cents,payment_status',[customer,subtotal,tax,subtotal+tax,req.stockUser.id])).rows[0];
- for(const it of items)await q('INSERT INTO htfo_pos_lines(receipt_id,sku_id,qty,price_cents) VALUES($1,$2,$3,$4)',[receipt.id,it.id,it.qty,it.price]);
- res.status(201).json({...receipt,note:'Unpaid retail draft. Card collection and inventory deduction are not enabled.'});
+ const items=[];for(const l of lines){
+  const id=integer(l.sku_id,'part ID',1),qty=integer(l.qty,'quantity',1,99);
+  const p=(await q(`SELECT id,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents
+  FROM service_parts WHERE id=$1 AND active=true`,[id])).rows[0];
+  if(!p)throw Error('Product no longer available');items.push({id,qty,price:p.price_cents});
+ }
+ // Unpaid draft only: do not reduce stock or claim a terminal payment succeeded.
+ const subtotal=items.reduce((n,x)=>n+x.qty*x.price,0),customer=req.body.customer_id?integer(req.body.customer_id,'customer ID',1):null;
+ const receipt=(await q('INSERT INTO htfo_pos_receipts(customer_id,subtotal_cents,tax_cents,total_cents,created_by) VALUES($1,$2,0,$3,$4) RETURNING id,total_cents,payment_status',[customer,subtotal,subtotal,req.stockUser.id])).rows[0];
+ for(const it of items)await q('INSERT INTO htfo_pos_part_lines(receipt_id,part_id,qty,price_cents) VALUES($1,$2,$3,$4)',[receipt.id,it.id,it.qty,it.price]);
+ res.status(201).json({...receipt,note:'Unpaid retail draft; inventory is unchanged. Payment and tax checkout not yet enabled.'});
 }));
 export default router;
