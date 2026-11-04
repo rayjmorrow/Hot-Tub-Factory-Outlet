@@ -151,20 +151,20 @@ router.get('/skus/scan',permit(RETAIL),handle(async(req,res)=>{
 }));
 router.post('/skus',permit(MANAGEMENT),handle(async(req,res)=>{
  await ensureInventory();const b=req.body||{};
- const sku=code(b.sku),name=code(b.name),category=code(b.category)||'Supplies';
+ const sku=code(b.sku),name=code(b.name),category=code(b.category)||'Supplies',barcode=code(b.barcode)||null;
  if(!sku||!name)throw Error('SKU and description required');
  const price=integer(b.price_cents,'price'),cost=integer(b.cost_cents,'cost'),reorder=integer(b.reorder_point??0,'reorder point',0,100000);
  const matches=(await q('SELECT id FROM service_parts WHERE lower(supplier_part_number)=lower($1) LIMIT 2',[sku])).rows;
  if(matches.length>1)throw Error('Duplicate supplier part numbers found; manager must resolve before updating');
  let r;
  if(matches.length){
-  r=await q(`UPDATE service_parts SET description=$2,category=$3,sell_price=$4,cost=$5,reorder_point=$6,updated_at=NOW()
+  r=await q(`UPDATE service_parts SET description=$2,category=$3,sell_price=$4,cost=$5,reorder_point=$6,barcode=$7,updated_at=NOW()
    WHERE id=$1 RETURNING id,supplier_part_number AS sku,description AS name,category,ROUND(COALESCE(sell_price,0)*100)::int AS price_cents`,
-   [matches[0].id,name,category,price/100,cost/100,reorder]);
+   [matches[0].id,name,category,price/100,cost/100,reorder,barcode]);
  }else{
-  r=await q(`INSERT INTO service_parts(supplier_part_number,description,category,sell_price,cost,reorder_point)
-   VALUES($1,$2,$3,$4,$5,$6) RETURNING id,supplier_part_number AS sku,description AS name,category,ROUND(COALESCE(sell_price,0)*100)::int AS price_cents`,
-   [sku,name,category,price/100,cost/100,reorder]);
+  r=await q(`INSERT INTO service_parts(supplier_part_number,description,category,sell_price,cost,reorder_point,barcode)
+   VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,supplier_part_number AS sku,description AS name,category,ROUND(COALESCE(sell_price,0)*100)::int AS price_cents`,
+   [sku,name,category,price/100,cost/100,reorder,barcode]);
  }
  res.json(r.rows[0]);
 }));
