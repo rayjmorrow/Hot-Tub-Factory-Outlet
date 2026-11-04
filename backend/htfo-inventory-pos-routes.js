@@ -224,6 +224,8 @@ router.post('/spas/:id/release',permit(MANAGEMENT),handle(async(req,res)=>{
  if(current?.reserved_draft_id){
   const signed=(await q('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[current.reserved_draft_id])).rows[0];
   if(signed){
+   const currentDraft=(await q('SELECT document FROM crm_sales_drafts WHERE id=$1',[current.reserved_draft_id])).rows[0];
+   if(String(currentDraft?.document?.spa?.inventory_unit_id||'')===String(req.params.id)&&currentDraft?.document?.spa?.inventory_mode==='in_stock')return res.status(409).json({error:'Signed agreement still specifies this serial; customer-approved change order required'});
    const approved=(await q("SELECT c.id FROM crm_sales_change_orders c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1 AND c.status='approved' AND (COALESCE(d.document #>> '{spa,inventory_mode}','')<>'in_stock' OR COALESCE(d.document #>> '{spa,inventory_unit_id}','')<>$2::text) ORDER BY c.id DESC LIMIT 1",[current.reserved_draft_id,String(req.params.id)])).rows[0];
    if(!approved)return res.status(409).json({error:'Signed agreement requires an approved change order that removes this serial before release'});
   }
