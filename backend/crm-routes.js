@@ -105,14 +105,17 @@ async function sendTwilioSms(to,body){
   if(!r.ok)throw new Error(j.message||`Twilio returned ${r.status}`);
   return j;
 }
-function auth(req,res,next){
+async function auth(req,res,next){
   try{
     const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
     if(!raw)return res.status(401).json({error:'Login required'});
-    req.user=jwt.verify(raw,secret());
-    if(!['admin','owner','manager','service_manager','sales'].includes(String(req.user.role||'').toLowerCase()))return res.status(403).json({error:'Sales CRM access requires a sales or management login'});
+    const claims=jwt.verify(raw,secret());
+    const staff=(await q('SELECT id,username,display_name,role FROM service_users WHERE id=$1 AND active=true',[claims.sub])).rows[0];
+    if(!staff)return res.status(401).json({error:'Active employee login required'});
+    if(!['admin','owner','manager','service_manager','sales'].includes(String(staff.role||'').toLowerCase()))return res.status(403).json({error:'Sales CRM access requires a sales or management login'});
+    req.user={...claims,role:staff.role,sub:staff.id,username:staff.username,name:staff.display_name};
     next();
-  }catch{res.status(401).json({error:'Session expired or invalid'})}
+  }catch{return res.status(401).json({error:'Session expired or invalid'})}
 }
 
 
