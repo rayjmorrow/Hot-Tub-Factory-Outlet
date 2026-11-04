@@ -76,6 +76,27 @@ router.post('/spas/:id/location',permit(manager),wrap(async(req,res)=>{
   return {id,location,event_id:log.id}
  }))
 }));
+router.post('/spas/:id/status',permit(manager),wrap(async(req,res)=>{
+ await ensure();
+ await q('ALTER TABLE htfo_inventory_spa ADD COLUMN IF NOT EXISTS sold_draft_id BIGINT REFERENCES crm_sales_drafts(id)');
+ const id=whole(req.params.id,'spa ID',1),state=txt(req.body?.status),reason=txt(req.body?.reason,400);
+ if(reason.length<8)fail('A reason of at least 8 characters is required');
+ const next={available:['hold','in_transit'],hold:['available','in_transit'],in_transit:['available','hold'],reserved:['sold'],sold:['delivered'],delivered:[]};
+ res.json(await transaction(async run=>{
+  const current=(await run('SELECT id,serial,status,reserved_draft_id,sold_draft_id FROM htfo_inventory_spa WHERE id=$1 FOR UPDATE',[id])).rows[0];
+  if(!current)fail('Spa not found');
+  if(!next[current.status]?.includes(state))fail('Unsupported status change. Reservation releases must use the dedicated workflow.');
+  let draft=current.sold_draft_id;
+  if(state==='sold'){
+   draft=current.reserved_draft_id;
+   const agreement=(await run('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft])).rows[0];
+   if(!agreement)fail('Cannot mark sold until the reserved agreement is signed and executed');
+  }
+  await run('UPDATE htfo_inventory_spa SET status=$2,reserved_draft_id=NULL,sold_draft_id=$3,updated_at=NOW() WHERE id=$1',[id,state,draft]);
+  const event=(await run('INSERT INTO htfo_spa_events(spa_id,before_status,after_status,reason,actor_id) VALUES($1,$2,$3,$4,$5) RETURNING id',[id,current.status,state,reason,req.operator.id])).rows[0];
+  return {id,serial:current.serial,status:state,agreement_id:draft,event_id:event.id}
+ }))
+}));
 router.get('/suppliers',permit(manager),wrap(async(req,res)=>{await ensure();res.json((await q('SELECT id,name,email FROM htfo_suppliers WHERE active=true ORDER BY name')).rows)}));
 router.post('/suppliers',permit(manager),wrap(async(req,res)=>{await ensure();const name=txt(req.body?.name);if(!name)fail('Name required');res.status(201).json((await q('INSERT INTO htfo_suppliers(name,email) VALUES($1,$2) ON CONFLICT(name) DO UPDATE SET email=EXCLUDED.email RETURNING id,name,email',[name,txt(req.body?.email)])).rows[0])}));
 router.post('/purchase-orders',permit(manager),wrap(async(req,res)=>{
