@@ -62,6 +62,12 @@ export async function ensureInventory(){
  CREATE TABLE IF NOT EXISTS htfo_pos_part_lines(
  id BIGSERIAL PRIMARY KEY,receipt_id BIGINT NOT NULL REFERENCES htfo_pos_receipts(id),
  part_id BIGINT NOT NULL REFERENCES service_parts(id),qty INTEGER NOT NULL,price_cents INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS htfo_dealer_settings(
+ dealer_key TEXT PRIMARY KEY,display_name TEXT NOT NULL,
+ tax_rate_bps INTEGER NOT NULL DEFAULT 700 CHECK(tax_rate_bps BETWEEN 0 AND 1500),
+ updated_by BIGINT REFERENCES service_users(id),updated_at TIMESTAMPTZ DEFAULT NOW());
+ INSERT INTO htfo_dealer_settings(dealer_key,display_name,tax_rate_bps)
+ VALUES('htfo','Hot Tub Factory Outlet',700) ON CONFLICT(dealer_key) DO NOTHING;
  CREATE TABLE IF NOT EXISTS htfo_pos_lines(
  id BIGSERIAL PRIMARY KEY,receipt_id BIGINT NOT NULL REFERENCES htfo_pos_receipts(id),
  sku_id BIGINT NOT NULL REFERENCES htfo_inventory_sku(id),qty INTEGER NOT NULL,
@@ -206,13 +212,16 @@ router.post('/receipts',permit(RETAIL),handle(async(req,res)=>{
  if(!Array.isArray(lines)||!lines.length||lines.length>30)throw Error('Add 1–30 retail items');
  const items=[];for(const l of lines){
   const id=integer(l.sku_id,'part ID',1),qty=integer(l.qty,'quantity',1,99);
-  const p=(await q(`SELECT id,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents
+  const p=(await q(`SELECT id,taxable,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents
   FROM service_parts WHERE id=$1 AND active=true`,[id])).rows[0];
-  if(!p)throw Error('Product no longer available');items.push({id,qty,price:p.price_cents});
+  if(!p)throw Error('Product no longer available');items.push({id,qty,price:p.price_cents,taxable:p.taxable});
  }
  // Unpaid draft only: do not reduce stock or claim a terminal payment succeeded.
  const subtotal=items.reduce((n,x)=>n+x.qty*x.price,0),customer=req.body.customer_id?integer(req.body.customer_id,'customer ID',1):null;
- const receipt=(await q('INSERT INTO htfo_pos_receipts(customer_id,subtotal_cents,tax_cents,total_cents,created_by) VALUES($1,$2,0,$3,$4) RETURNING id,total_cents,payment_status',[customer,subtotal,subtotal,req.stockUser.id])).rows[0];
+ const settings=(await q("SELECT tax_rate_bps FROM htfo_dealer_settings WHERE dealer_key='htfo'")).rows[0];
+ const taxable=items.filter(x=>x.taxable).reduce((n,x)=>n+x.qty*x.price,0);
+ const tax=Math.round(taxable*Number(settings?.tax_rate_bps??700)/10000);
+ const receipt=(await q('INSERT INTO htfo_pos_receipts(customer_id,subtotal_cents,tax_cents,total_cents,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id,total_cents,tax_cents,payment_status',[customer,subtotal,tax,subtotal+tax,req.stockUser.id])).rows[0];
  for(const it of items)await q('INSERT INTO htfo_pos_part_lines(receipt_id,part_id,qty,price_cents) VALUES($1,$2,$3,$4)',[receipt.id,it.id,it.qty,it.price]);
  res.status(201).json({...receipt,note:'Unpaid retail draft; inventory is unchanged. Payment and tax checkout not yet enabled.'});
 }));
