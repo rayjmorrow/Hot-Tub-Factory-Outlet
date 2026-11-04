@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import {q,transaction} from './service-db.js';
+import {createUnpaidRetailDraft} from './htfo-retail-draft.js';
 
 const router=express.Router();
 const MANAGEMENT=new Set(['owner','admin','manager']);
@@ -220,21 +221,8 @@ router.get('/receipts',permit(RETAIL),handle(async(req,res)=>{
  await ensureInventory();const rows=await q('SELECT id,customer_id,total_cents,payment_status,created_at FROM htfo_pos_receipts ORDER BY id DESC LIMIT 50');res.json(rows.rows);
 }));
 router.post('/receipts',permit(RETAIL),handle(async(req,res)=>{
- await ensureInventory();const lines=req.body?.items;
- if(!Array.isArray(lines)||!lines.length||lines.length>30)throw Error('Add 1–30 retail items');
- const items=[];for(const l of lines){
-  const id=integer(l.sku_id,'part ID',1),qty=integer(l.qty,'quantity',1,99);
-  const p=(await q(`SELECT id,taxable,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents
-  FROM service_parts WHERE id=$1 AND active=true`,[id])).rows[0];
-  if(!p)throw Error('Product no longer available');items.push({id,qty,price:p.price_cents,taxable:p.taxable});
- }
- // Unpaid draft only: do not reduce stock or claim a terminal payment succeeded.
- const subtotal=items.reduce((n,x)=>n+x.qty*x.price,0),customer=req.body.customer_id?integer(req.body.customer_id,'customer ID',1):null;
- const settings=(await q("SELECT tax_rate_bps FROM htfo_dealer_settings WHERE dealer_key='htfo'")).rows[0];
- const taxable=items.filter(x=>x.taxable).reduce((n,x)=>n+x.qty*x.price,0);
- const tax=Math.round(taxable*Number(settings?.tax_rate_bps??700)/10000);
- const receipt=(await q('INSERT INTO htfo_pos_receipts(customer_id,subtotal_cents,tax_cents,total_cents,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id,total_cents,tax_cents,payment_status',[customer,subtotal,tax,subtotal+tax,req.stockUser.id])).rows[0];
- for(const it of items)await q('INSERT INTO htfo_pos_part_lines(receipt_id,part_id,qty,price_cents) VALUES($1,$2,$3,$4)',[receipt.id,it.id,it.qty,it.price]);
- res.status(201).json({...receipt,note:'Unpaid retail draft; inventory is unchanged. Payment and tax checkout not yet enabled.'});
+ await ensureInventory();
+ const receipt=await createUnpaidRetailDraft(req.body,req.stockUser.id);
+ res.status(201).json({...receipt,note:'Unpaid draft. Tax captured; no inventory deducted and no card charge.'});
 }));
 export default router;
