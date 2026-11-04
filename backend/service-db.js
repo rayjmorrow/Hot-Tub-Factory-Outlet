@@ -234,3 +234,14 @@ export async function initServiceDb(){
 }
 
 export async function q(text, params=[]){ return pool.query(text, params); }
+
+export async function transaction(fn){
+ const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  const result=await fn(client.query.bind(client));
+  await client.query('COMMIT');
+  return result;
+ }catch(e){await client.query('ROLLBACK');throw e}
+ finally{client.release()}
+}
