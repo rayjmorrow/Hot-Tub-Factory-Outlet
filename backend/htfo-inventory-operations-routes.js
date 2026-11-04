@@ -175,9 +175,20 @@ router.post('/service-part-requests/:id/issue',permit(allowed),wrap(async(req,re
 }));
 router.get('/reports/valuation.csv',permit(manager),wrap(async(req,res)=>{const r=await q('SELECT supplier_part_number,description,quantity_on_hand,quantity_committed,cost,ROUND(quantity_on_hand*cost,2) AS value FROM service_parts WHERE active=true ORDER BY supplier_part_number');sendCsv(res,'inventory-valuation.csv',['SKU','Description','On Hand','Committed','Cost USD','Value USD'],r.rows.map(x=>[x.supplier_part_number,x.description,x.quantity_on_hand,x.quantity_committed,x.cost,x.value]))}));
 router.get('/reports/retail.csv',permit(manager),wrap(async(req,res)=>{
- await ensure();const from=txt(req.query.from,10),to=txt(req.query.to,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to))fail('Specify from/to YYYY-MM-DD');
- const r=await q('SELECT r.id,r.created_at,r.payment_status,r.customer_id,p.supplier_part_number,l.qty,l.price_cents,r.tax_cents,r.total_cents FROM htfo_pos_receipts r JOIN htfo_pos_part_lines l ON l.receipt_id=r.id JOIN service_parts p ON p.id=l.part_id WHERE r.created_at >= $1::date AND r.created_at < $2::date + INTERVAL \'1 day\' ORDER BY r.id,l.id',[from,to]);
- sendCsv(res,'retail-'+from+'-'+to+'.csv',['Receipt ID','Date UTC','Payment Status','Customer ID','SKU','Quantity','Unit Price USD','Receipt Tax USD','Receipt Total USD'],r.rows.map(x=>[x.id,x.created_at,x.payment_status,x.customer_id,x.supplier_part_number,x.qty,(x.price_cents/100).toFixed(2),(x.tax_cents/100).toFixed(2),(x.total_cents/100).toFixed(2)]))
+ await ensure();
+ const from=txt(req.query.from,10),to=txt(req.query.to,10);
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)fail('Valid from/to dates required');
+ const rows=(await q("SELECT id,created_at,payment_status,customer_id,subtotal_cents,tax_rate_bps,tax_cents,total_cents FROM htfo_pos_receipts WHERE created_at >= $1::date AND created_at < $2::date + INTERVAL '1 day' ORDER BY id",[from,to])).rows;
+ sendCsv(res,'retail-receipts-'+from+'-'+to+'.csv',['Receipt','Created UTC','Status','Customer ID','Subtotal USD','Tax Rate %','Tax USD','Total USD'],
+ rows.map(x=>[x.id,x.created_at,x.payment_status,x.customer_id,(x.subtotal_cents/100).toFixed(2),(x.tax_rate_bps/100).toFixed(2),(x.tax_cents/100).toFixed(2),(x.total_cents/100).toFixed(2)]))
+}));
+router.get('/reports/retail-lines.csv',permit(manager),wrap(async(req,res)=>{
+ await ensure();
+ const from=txt(req.query.from,10),to=txt(req.query.to,10);
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)fail('Valid from/to dates required');
+ const rows=(await q("SELECT r.id,r.created_at,r.payment_status,l.sku_at_sale,l.description_at_sale,l.qty,l.price_cents,l.taxable_at_sale FROM htfo_pos_receipts r JOIN htfo_pos_part_lines l ON l.receipt_id=r.id WHERE r.created_at >= $1::date AND r.created_at < $2::date + INTERVAL '1 day' ORDER BY r.id,l.id",[from,to])).rows;
+ sendCsv(res,'retail-items-'+from+'-'+to+'.csv',['Receipt','Created UTC','Status','SKU At Sale','Description At Sale','Quantity','Unit Price USD','Line Amount USD','Taxable'],
+ rows.map(x=>[x.id,x.created_at,x.payment_status,x.sku_at_sale,x.description_at_sale,x.qty,(x.price_cents/100).toFixed(2),(x.price_cents*x.qty/100).toFixed(2),x.taxable_at_sale]))
 }));
 router.get('/reports/purchasing.csv',permit(manager),wrap(async(req,res)=>{
  await ensure();const r=await q('SELECT o.id,o.created_at,s.name AS supplier,o.location,o.status,p.supplier_part_number,l.quantity_ordered,l.quantity_received,l.unit_cost_cents FROM htfo_purchase_orders o JOIN htfo_suppliers s ON s.id=o.supplier_id JOIN htfo_purchase_order_lines l ON l.order_id=o.id JOIN service_parts p ON p.id=l.part_id ORDER BY o.id,l.id');
