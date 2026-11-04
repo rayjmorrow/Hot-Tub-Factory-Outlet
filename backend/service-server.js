@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import jwt from 'jsonwebtoken';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import serviceRoutes,{ensureBootstrapAdmin} from './service-routes.js';
@@ -89,6 +90,22 @@ setInterval(()=>{const cutoff=Date.now()-15*60*1000;for(const [k,v] of loginAtte
 app.get('/health',(req,res)=>res.json({ok:true,servicePortal:true,crm:true,liveWebsiteLeads:true,parts:true,quickSpaParts:true,estimates:true,tripCharges:true,warrantyReceivables:true,dispatchCalendar:true,fieldService:true,fieldPayments:true,cardOnFile:true,paymentAuthorization:true,paymentSchedulingGuard:true,operationsViews:true,publicServiceIntake:true,staffAdmin:true,auditTrail:true,customerValueHistory:true,invoiceLineItems:true,controlledDiscounts:true,customerOrders:true,autoShipManagement:true,orderPricebook:true,presetDiscountCodes:true,roleControlledOrderPricing:true,partsMargin50:true,diagnosticRepairWaiver:true,singleServiceOperationsLocation:true,protectedPortal:true,tenancyFoundation:true,secureCustomerImportStaging:true,customerPrivacyControls:true,customerProfileEditing:true,equipmentProfileEditing:true,workOrderDetailAndDelete:true,fulfillment:true,autoshipFulfillment:true,pirateShipExport:true}));
 app.get('/ready',async(req,res)=>{try{await q('SELECT 1');res.json({ok:true,database:true})}catch(e){res.status(503).json({ok:false,database:false,error:'Database unavailable'})}});
 
+// Cashier permissions belong to the employee, never the physical workstation.
+// Existing service and sales endpoints predate this role and must not be exposed to it.
+app.use('/api/service',async(req,res,next)=>{
+ const bearer=String(req.get('authorization')||'').match(/^Bearer\s+(.+)$/i);
+ if(!bearer)return next();
+ try{
+  const claims=jwt.verify(bearer[1],process.env.SERVICE_JWT_SECRET);
+  const row=(await q('SELECT role,active FROM service_users WHERE id=$1',[claims.sub])).rows[0];
+  if(!row||!row.active)return res.status(401).json({error:'Active employee account required'});
+  if(['cashier','retail'].includes(String(row.role).toLowerCase())){
+   const permitted=req.path==='/auth/me'||req.path.startsWith('/htfo-pos/');
+   if(!permitted)return res.status(403).json({error:'Retail cashier accounts cannot access sales leads, service administration or spa agreements'});
+  }
+  next();
+ }catch(e){return res.status(401).json({error:'Session expired or invalid'})}
+});
 app.use('/api/service',publicServiceRoutes);
 app.use('/api/service',commercialRulesRoutes);
 app.use('/api/service',customerPrivacyRoutes);
