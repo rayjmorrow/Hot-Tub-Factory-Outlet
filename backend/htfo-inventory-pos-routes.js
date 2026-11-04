@@ -221,7 +221,13 @@ router.post('/spas/:id/release',permit(MANAGEMENT),handle(async(req,res)=>{
  const reason=code(req.body?.reason);
  if(reason.length<8)return res.status(400).json({error:'Manager release reason is required (8+ characters)'});
  const current=(await q('SELECT reserved_draft_id FROM htfo_inventory_spa WHERE id=$1 AND status=$2',[integer(Number(req.params.id),'spa',1),'reserved'])).rows[0];
- if(current?.reserved_draft_id){const signed=(await q('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[current.reserved_draft_id])).rows[0];if(signed)return res.status(409).json({error:'Signed agreement requires approved change order before releasing this spa'});}
+ if(current?.reserved_draft_id){
+  const signed=(await q('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[current.reserved_draft_id])).rows[0];
+  if(signed){
+   const approved=(await q("SELECT c.id FROM crm_sales_change_orders c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1 AND c.status='approved' AND (COALESCE(d.document #>> '{spa,inventory_mode}','')<>'in_stock' OR COALESCE(d.document #>> '{spa,inventory_unit_id}','')<>$2::text) ORDER BY c.id DESC LIMIT 1",[current.reserved_draft_id,String(req.params.id)])).rows[0];
+   if(!approved)return res.status(409).json({error:'Signed agreement requires an approved change order that removes this serial before release'});
+  }
+ }
 const result=await q(`WITH changed AS (UPDATE htfo_inventory_spa SET status='available',reserved_draft_id=NULL,updated_at=NOW()
  WHERE id=$1 AND status='reserved' RETURNING id,serial,status), logged AS (INSERT INTO htfo_inventory_movements(spa_id,reason,actor_id)
  SELECT id,$2,$3 FROM changed RETURNING id) SELECT changed.* FROM changed JOIN logged ON true`,[integer(Number(req.params.id),'spa',1),'Manager release: '+reason,req.stockUser.id]);
