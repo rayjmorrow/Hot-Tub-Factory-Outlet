@@ -159,4 +159,5 @@ router.get('/reports/purchasing.csv',permit(manager),wrap(async(req,res)=>{
  sendCsv(res,'purchasing.csv',['PO ID','Date UTC','Supplier','Location','Status','SKU','Ordered','Received','Unit Cost USD'],r.rows.map(x=>[x.id,x.created_at,x.supplier,x.location,x.status,x.supplier_part_number,x.quantity_ordered,x.quantity_received,(x.unit_cost_cents/100).toFixed(2)]))
 }));
 router.get('/audit',permit(manager),wrap(async(req,res)=>{await ensure();res.json({adjustments:(await q('SELECT * FROM htfo_stock_adjustments ORDER BY id DESC LIMIT 100')).rows,transfers:(await q('SELECT * FROM htfo_stock_transfers ORDER BY id DESC LIMIT 100')).rows})}));
+export {ensure as ensureInventoryOperations};
 export default router;
