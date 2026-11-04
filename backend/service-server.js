@@ -31,6 +31,7 @@ import {initServiceAudit} from './service-audit.js';
 import {initServicePaymentGuard} from './service-payment-guard.js';
 import crmRoutes,{syncTwilioMessages} from './crm-routes.js';
 import crmV1Routes from './crm-v1-routes.js';
+import htfoInventoryPosRoutes from './htfo-inventory-pos-routes.js';
 import crmHistoryRoutes from './crm-history-routes.js';
 import crmSchedulingRoutes,{runCrmScheduledMessages} from './crm-scheduling-routes.js';
 import crmEmailInboundRoutes from './crm-email-inbound-routes.js';
@@ -109,6 +110,7 @@ app.use('/api/service',fulfillmentRoutes);
 app.use('/api/service',customerImportRoutes);
 app.use('/api/service',crmRoutes);
 app.use('/api/service',crmV1Routes);
+app.use('/api/service/htfo-pos',htfoInventoryPosRoutes);
 app.use('/api/service',crmHistoryRoutes);
 app.use('/api/service',crmSchedulingRoutes);
 app.use('/api/service',crmEmailInboundRoutes);
@@ -123,6 +125,7 @@ const portalAssets=new Set([
   'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js','service-workorder-detail-ui.js',
   'service-field.css','service-field.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js','fulfillment-ui.js','service-calendar-hotfix.js'
 ]);
+app.get('/retail-pos',(req,res)=>res.sendFile(path.join(portalRoot,'htfo-retail-pos.html')));
 app.get(['/', '/service-portal.html'],(req,res)=>res.sendFile(path.join(portalRoot,'service-portal.html')));
 app.get('/field',(req,res)=>res.sendFile(path.join(portalRoot,'service-field.html')));
 app.get('/:asset',(req,res,next)=>{
