@@ -75,6 +75,8 @@ export async function ensureInventory(){
  ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS sku_at_sale TEXT;
  ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS description_at_sale TEXT;
  ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS taxable_at_sale BOOLEAN;
+ ALTER TABLE service_parts ADD COLUMN IF NOT EXISTS barcode TEXT;
+ CREATE UNIQUE INDEX IF NOT EXISTS htfo_parts_barcode_unique ON service_parts(barcode) WHERE barcode IS NOT NULL AND barcode<>'';
  CREATE TABLE IF NOT EXISTS htfo_pos_lines(
  id BIGSERIAL PRIMARY KEY,receipt_id BIGINT NOT NULL REFERENCES htfo_pos_receipts(id),
  sku_id BIGINT NOT NULL REFERENCES htfo_inventory_sku(id),qty INTEGER NOT NULL,
@@ -138,6 +140,14 @@ router.get('/skus',permit(SERVICE),handle(async(req,res)=>{
  (COALESCE(p.quantity_on_hand,0)-COALESCE(p.quantity_committed,0))::numeric AS available
  FROM service_parts p WHERE p.active=true ORDER BY p.category,p.description LIMIT 500`);
  res.json(rows.rows);
+}));
+router.get('/skus/scan',permit(RETAIL),handle(async(req,res)=>{
+ await ensureInventory();
+ const lookup=code(req.query.code);
+ if(!lookup)throw Error('Enter or scan barcode/SKU');
+ const rows=(await q("SELECT id,description AS name,COALESCE(NULLIF(supplier_part_number,''),NULLIF(manufacturer_part_number,''),'PART-'||id::text) AS sku,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents,(quantity_on_hand-quantity_committed) AS available FROM service_parts WHERE active=true AND (lower(barcode)=lower($1) OR lower(supplier_part_number)=lower($1) OR lower(manufacturer_part_number)=lower($1)) LIMIT 3",[lookup])).rows;
+ if(rows.length!==1)return res.status(rows.length?409:404).json({error:rows.length?'Multiple matching SKUs. Ask a manager to correct the catalog.':'Product barcode or SKU not found'});
+ res.json(rows[0]);
 }));
 router.post('/skus',permit(MANAGEMENT),handle(async(req,res)=>{
  await ensureInventory();const b=req.body||{};
