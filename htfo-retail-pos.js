@@ -10,7 +10,30 @@ async function refresh(){skus=await request(POS+'/skus');const selectors=[$('#co
 $('#skuTable').replaceChildren();for(const s of skus){const row=document.createElement('div');row.className='cardrow';text(row,s.sku+' · '+s.name+' | On hand '+s.on_hand+' | Committed '+s.committed+' | Available '+s.available);$('#skuTable').append(row)}
 if(permissions.sales){spas=await request(POS+'/spas');$('#spaTable').replaceChildren();for(const s of spas){const row=document.createElement('div');row.className='cardrow';text(row,s.brand+' '+s.model+' · '+s.shell+' / '+s.cabinet+' · Serial '+s.serial+' · '+s.location+' · '+s.status);$('#spaTable').append(row)}}
 }
-$('#customerQuery').oninput=async()=>{const query=$('#customerQuery').value.trim();$('#customerResults').replaceChildren();if(query.length<2)return;try{const results=await request(POS+'/retail/customers?q='+encodeURIComponent(query));for(const r of results){const b=document.createElement('button');text(b,(r.first_name||'')+' '+(r.last_name||'')+' · '+(r.phone||r.email||''));b.onclick=()=>{customerId=r.id;text($('#selectedCustomer'),'Customer: '+r.first_name+' '+r.last_name);$('#customerResults').replaceChildren()};$('#customerResults').append(b)}}catch(e){text($('#saleStatus'),e.message)}};
+$('#customerQuery').oninput=async()=>{
+ const query=$('#customerQuery').value.trim(),target=$('#customerResults');target.replaceChildren();
+ if(query.length<2)return;
+ try{
+  const [service,signed]=await Promise.all([
+   request(POS+'/retail/customers?q='+encodeURIComponent(query)),
+   request(POS+'/retail/signed-customers?q='+encodeURIComponent(query))
+  ]);
+  for(const r of service){
+   const b=document.createElement('button');text(b,(r.first_name||'')+' '+(r.last_name||'')+' · '+(r.phone||r.email||''));
+   b.onclick=()=>{customerId=r.id;text($('#selectedCustomer'),'Customer: '+r.first_name+' '+r.last_name);target.replaceChildren()};
+   target.append(b)
+  }
+  for(const r of signed){
+   if(r.retail_customer_id&&service.some(x=>x.id===r.retail_customer_id))continue;
+   const b=document.createElement('button');text(b,r.name+' · '+(r.phone||r.email||'')+' (signed spa customer)');
+   b.onclick=async()=>{b.disabled=true;try{
+    const linked=await request(POS+'/retail/signed-customers/'+r.signed_agreement_id+'/link',{method:'POST',body:'{}'});
+    customerId=linked.id;text($('#selectedCustomer'),'Customer: '+linked.first_name+' '+linked.last_name);target.replaceChildren()
+   }catch(e){b.disabled=false;text($('#saleStatus'),e.message)}};
+   target.append(b)
+  }
+ }catch(e){text($('#saleStatus'),e.message)}
+};
 $('#addToCart').onclick=()=>{const p=skus.find(x=>x.id===Number($('#counterSku').value));const qty=Number($('#counterQty').value);if(!p||!Number.isInteger(qty)||qty<1||qty>99)return text($('#saleStatus'),'Choose a valid item and quantity');cart.push({p,qty});renderCart()};
 function renderCart(){$('#cartBody').replaceChildren();cart.forEach((x,i)=>{const tr=document.createElement('tr');for(const val of [x.p.name,x.qty,money(x.qty*x.p.price_cents)]){const td=document.createElement('td');text(td,val);tr.append(td)}const td=document.createElement('td'),b=document.createElement('button');text(b,'Remove');b.onclick=()=>{cart.splice(i,1);renderCart()};td.append(b);tr.append(td);$('#cartBody').append(tr)});text($('#cartTotal'),'Subtotal: '+money(cart.reduce((n,x)=>n+x.qty*x.p.price_cents,0)))}
 $('#saveReceipt').onclick=async()=>{if(!cart.length)return text($('#saleStatus'),'Add a product first');try{const receipt=await request(POS+'/receipts',{method:'POST',body:JSON.stringify({customer_id:customerId,items:cart.map(x=>({sku_id:x.p.id,qty:x.qty}))})});text($('#saleStatus'),'Retail draft #'+receipt.id+' saved — UNPAID. No stock deducted.');cart=[];renderCart()}catch(e){text($('#saleStatus'),e.message)}};
