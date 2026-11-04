@@ -87,6 +87,12 @@ router.post('/purchase-orders',permit(manager),wrap(async(req,res)=>{
  }))
 }));
 router.get('/purchase-orders',permit(manager),wrap(async(req,res)=>{await ensure();res.json((await q('SELECT p.id,p.location,p.status,p.created_at,s.name AS supplier_name FROM htfo_purchase_orders p JOIN htfo_suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC LIMIT 200')).rows)}));
+router.get('/purchase-orders/:id',permit(manager),wrap(async(req,res)=>{await ensure();const id=whole(req.params.id,'PO',1);
+ const header=(await q('SELECT id,location,status FROM htfo_purchase_orders WHERE id=$1',[id])).rows[0];
+ if(!header)fail('PO not found');
+ const lines=(await q('SELECT l.id,l.part_id,p.description,p.supplier_part_number,l.quantity_ordered,l.quantity_received,l.unit_cost_cents FROM htfo_purchase_order_lines l JOIN service_parts p ON p.id=l.part_id WHERE l.order_id=$1 ORDER BY l.id',[id])).rows;
+ res.json({...header,lines})
+}));
 router.post('/purchase-orders/:id/receive',permit(manager),wrap(async(req,res)=>{
  await ensure();const id=whole(req.params.id,'PO',1),input=req.body?.lines;if(!Array.isArray(input)||!input.length)fail('Receipt lines required');
  const lines=input.map(l=>({id:whole(l.line_id,'line',1),qty:whole(l.quantity,'quantity',1)}));if(new Set(lines.map(l=>l.id)).size!==lines.length)fail('Duplicate PO line');
