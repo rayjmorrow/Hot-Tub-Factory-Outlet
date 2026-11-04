@@ -119,6 +119,7 @@ router.post('/spas/:id/reserve',permit(SALES),handle(async(req,res)=>{
  await ensureInventory();const id=integer(Number(req.params.id),'spa',1),draft=integer(req.body.draft_id,'agreement',1);
  const owner=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[draft])).rows[0];
  if(!owner)return res.status(404).json({error:'Agreement not found'});
+ if(owner.document?.spa?.inventory_mode!=='in_stock'||Number(owner.document?.spa?.inventory_unit_id)!==id)return res.status(409).json({error:'This exact serial must be selected and saved on the agreement before reservation'});
  if(!MANAGEMENT.has(req.stockUser.role)&&String(owner.owner_user_id)!==String(req.stockUser.id))return res.status(403).json({error:'Not your agreement'});
  const unit=(await q(`UPDATE htfo_inventory_spa SET status='reserved',reserved_draft_id=$2,updated_at=NOW()
  WHERE id=$1 AND status='available' AND reserved_draft_id IS NULL
