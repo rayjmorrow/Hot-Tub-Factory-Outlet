@@ -19,6 +19,7 @@ async function ensure(){
  await q('INSERT INTO htfo_dealer_settings(dealer_key,display_name,tax_rate_bps) VALUES ($1,$2,700) ON CONFLICT(dealer_key) DO NOTHING',['htfo','Hot Tub Factory Outlet']);
  await q('CREATE TABLE IF NOT EXISTS htfo_stock_adjustments(id BIGSERIAL PRIMARY KEY,part_id BIGINT REFERENCES service_parts(id),location TEXT,delta INTEGER NOT NULL,reason TEXT NOT NULL,performed_by BIGINT REFERENCES service_users(id),occurred_at TIMESTAMPTZ DEFAULT NOW()); CREATE TABLE IF NOT EXISTS htfo_stock_transfers(id BIGSERIAL PRIMARY KEY,part_id BIGINT REFERENCES service_parts(id),source_location TEXT,destination_location TEXT,quantity INTEGER NOT NULL,performed_by BIGINT REFERENCES service_users(id),created_at TIMESTAMPTZ DEFAULT NOW()); CREATE TABLE IF NOT EXISTS htfo_spa_events(id BIGSERIAL PRIMARY KEY,spa_id BIGINT REFERENCES htfo_inventory_spa(id),before_status TEXT,after_status TEXT,reason TEXT,actor_id BIGINT REFERENCES service_users(id),created_at TIMESTAMPTZ DEFAULT NOW())');
  await q("CREATE TABLE IF NOT EXISTS htfo_suppliers(id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL UNIQUE,email TEXT,active BOOLEAN DEFAULT TRUE); CREATE TABLE IF NOT EXISTS htfo_purchase_orders(id BIGSERIAL PRIMARY KEY,supplier_id BIGINT REFERENCES htfo_suppliers(id),location TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',created_by BIGINT REFERENCES service_users(id),created_at TIMESTAMPTZ DEFAULT NOW()); CREATE TABLE IF NOT EXISTS htfo_purchase_order_lines(id BIGSERIAL PRIMARY KEY,order_id BIGINT REFERENCES htfo_purchase_orders(id),part_id BIGINT REFERENCES service_parts(id),quantity_ordered INTEGER NOT NULL,quantity_received INTEGER NOT NULL DEFAULT 0,unit_cost_cents INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS htfo_import_batches(batch_key TEXT PRIMARY KEY,created_by BIGINT REFERENCES service_users(id),unit_count INTEGER NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW())");
+ await q('CREATE TABLE IF NOT EXISTS htfo_po_receiving_batches(reference_key TEXT PRIMARY KEY,order_id BIGINT NOT NULL REFERENCES htfo_purchase_orders(id),status_after TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
 }
 router.use(auth);
 router.get('/settings',permit(allowed),wrap(async(req,res)=>{await ensure();res.json((await q("SELECT dealer_key,display_name,tax_rate_bps FROM htfo_dealer_settings WHERE dealer_key='htfo'")).rows[0])}));
@@ -132,8 +133,11 @@ router.get('/purchase-orders/:id',permit(manager),wrap(async(req,res)=>{await en
 router.post('/purchase-orders/:id/receive',permit(manager),wrap(async(req,res)=>{
  await ensure();const id=whole(req.params.id,'PO',1),input=req.body?.lines;if(!Array.isArray(input)||!input.length)fail('Receipt lines required');
  const lines=input.map(l=>({id:whole(l.line_id,'line',1),qty:whole(l.quantity,'quantity',1)}));if(new Set(lines.map(l=>l.id)).size!==lines.length)fail('Duplicate PO line');
+ const key=txt(req.body?.reference_key,120);if(!key)fail('Unique receiving reference required');
  res.json(await transaction(async run=>{
   const po=(await run('SELECT location,status FROM htfo_purchase_orders WHERE id=$1 FOR UPDATE',[id])).rows[0];
+  const duplicate=(await run('SELECT order_id,status_after FROM htfo_po_receiving_batches WHERE reference_key=$1',[key])).rows[0];
+  if(duplicate){if(Number(duplicate.order_id)!==id)fail('Receiving reference already used for another PO');return {id,status:duplicate.status_after,already_received:true}};
   if(!po||['received','cancelled'].includes(po.status))fail('PO missing or closed');
   for(const item of lines){
    const line=(await run('SELECT part_id,quantity_ordered,quantity_received FROM htfo_purchase_order_lines WHERE order_id=$1 AND id=$2 FOR UPDATE',[id,item.id])).rows[0];if(!line)fail('Invalid PO line');
@@ -145,7 +149,7 @@ router.post('/purchase-orders/:id/receive',permit(manager),wrap(async(req,res)=>
   }
   const complete=(await run('SELECT bool_and(quantity_received=quantity_ordered) AS done FROM htfo_purchase_order_lines WHERE order_id=$1',[id])).rows[0]?.done;
   const status=complete?'received':'partially_received';
-  await run('UPDATE htfo_purchase_orders SET status=$2 WHERE id=$1',[id,status]);return {id,status}
+  await run('UPDATE htfo_purchase_orders SET status=$2 WHERE id=$1',[id,status]);await run('INSERT INTO htfo_po_receiving_batches(reference_key,order_id,status_after) VALUES($1,$2,$3)',[key,id,status]);return {id,status}
  }))
 }));
 router.post('/service-part-requests/:id/issue',permit(allowed),wrap(async(req,res)=>{
