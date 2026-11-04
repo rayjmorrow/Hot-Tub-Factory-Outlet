@@ -155,11 +155,14 @@ router.post('/purchase-orders/:id/receive',permit(manager),wrap(async(req,res)=>
 router.post('/service-part-requests/:id/issue',permit(allowed),wrap(async(req,res)=>{
  await ensure();
  await q('CREATE TABLE IF NOT EXISTS htfo_service_part_issues(id BIGSERIAL PRIMARY KEY,part_request_id BIGINT NOT NULL REFERENCES service_part_requests(id),part_id BIGINT NOT NULL REFERENCES service_parts(id),location TEXT NOT NULL,quantity NUMERIC(10,2) NOT NULL,actor_id BIGINT NOT NULL REFERENCES service_users(id),created_at TIMESTAMPTZ DEFAULT NOW())');
- const id=whole(req.params.id,'part request ID',1),quantity=whole(req.body?.quantity,'quantity',1),location=txt(req.body?.location);
- if(!location)fail('Location required');
+ await q('ALTER TABLE htfo_service_part_issues ADD COLUMN IF NOT EXISTS reference_key TEXT UNIQUE');
+ const id=whole(req.params.id,'part request ID',1),quantity=whole(req.body?.quantity,'quantity',1),location=txt(req.body?.location),key=txt(req.body?.reference_key,120);
+ if(!location||!key)fail('Location and unique issue reference required');
  const result=await transaction(async run=>{
   const reqPart=(await run('SELECT pr.id,pr.part_id,pr.requested_quantity,pr.status,pr.work_order_id,w.assigned_to,w.assigned_team FROM service_part_requests pr JOIN service_work_orders w ON w.id=pr.work_order_id WHERE pr.id=$1 FOR UPDATE OF pr',[id])).rows[0];
   if(!reqPart)fail('Part request not found');
+  const duplicate=(await run('SELECT id,part_request_id,quantity,location FROM htfo_service_part_issues WHERE reference_key=$1',[key])).rows[0];
+  if(duplicate){if(Number(duplicate.part_request_id)!==id)fail('Issue reference already used on another part request');return {issue_id:duplicate.id,part_request_id:id,quantity:Number(duplicate.quantity),location:duplicate.location,already_issued:true}}
   if(!['approved','received'].includes(reqPart.status))fail('Only approved or received part requests can be issued');
   const who=[req.operator.display_name,req.operator.username].map(x=>txt(x).toLowerCase());
   const isAssigned=[reqPart.assigned_to,reqPart.assigned_team].some(x=>who.includes(txt(x).toLowerCase()));
@@ -172,7 +175,7 @@ router.post('/service-part-requests/:id/issue',permit(allowed),wrap(async(req,re
   if(Number(p.quantity_on_hand)-Number(p.quantity_committed)<quantity)fail('Not enough uncommitted inventory');
   await run('UPDATE service_parts SET quantity_on_hand=quantity_on_hand-$2,updated_at=NOW() WHERE id=$1',[reqPart.part_id,quantity]);
   await run('UPDATE htfo_inventory_part_locations SET on_hand=on_hand-$3 WHERE part_id=$1 AND location=$2',[reqPart.part_id,location,quantity]);
-  const issue=(await run('INSERT INTO htfo_service_part_issues(part_request_id,part_id,location,quantity,actor_id) VALUES($1,$2,$3,$4,$5) RETURNING id',[id,reqPart.part_id,location,quantity,req.operator.id])).rows[0];
+  const issue=(await run('INSERT INTO htfo_service_part_issues(part_request_id,part_id,location,quantity,actor_id,reference_key) VALUES($1,$2,$3,$4,$5,$6) RETURNING id',[id,reqPart.part_id,location,quantity,req.operator.id,key])).rows[0];
   await run('INSERT INTO htfo_inventory_part_movements(part_id,location,delta,reason,actor_id) VALUES($1,$2,$3,$4,$5)',[reqPart.part_id,location,-quantity,'service part issue '+issue.id+' / work order '+reqPart.work_order_id,req.operator.id]);
   return {issue_id:issue.id,part_request_id:id,quantity,location}
  });res.json(result);
