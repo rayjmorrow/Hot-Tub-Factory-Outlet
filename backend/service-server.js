@@ -33,7 +33,7 @@ import {initServicePaymentGuard} from './service-payment-guard.js';
 import crmRoutes,{syncTwilioMessages} from './crm-routes.js';
 import crmV1Routes from './crm-v1-routes.js';
 import htfoInventoryPosRoutes from './htfo-inventory-pos-routes.js';
-import htfoInventoryOperationsRoutes from './htfo-inventory-operations-routes.js';
+import htfoInventoryOperationsRoutes,{ensureInventoryOperations} from './htfo-inventory-operations-routes.js';
 import crmHistoryRoutes from './crm-history-routes.js';
 import crmSchedulingRoutes,{runCrmScheduledMessages} from './crm-scheduling-routes.js';
 import crmEmailInboundRoutes from './crm-email-inbound-routes.js';
@@ -172,6 +172,7 @@ try{
   await ensureServiceCustomerEmails();
   await ensureEmailTrackingSchema();
   await ensureBootstrapAdmin();
+  await ensureInventoryOperations().then(()=>console.log('HTFO inventory schema checked')).catch(e=>console.error('HTFO inventory schema needs attention:',e));
   await q("UPDATE service_users SET role='technician' WHERE active=true AND (lower(username)='bill' OR lower(display_name)='bill' OR lower(display_name) LIKE 'bill %')");
   await runFulfillmentAutomation();
   await runCrmScheduledMessages();
