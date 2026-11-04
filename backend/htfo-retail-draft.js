@@ -1,0 +1,25 @@
+import {q,transaction} from './service-db.js';
+const number=(x,min,max,label)=>{if(!Number.isSafeInteger(x)||x<min||x>max)throw Error('Invalid '+label);return x};
+export async function createUnpaidRetailDraft(body,actor){
+ const lines=body?.items;if(!Array.isArray(lines)||lines.length<1||lines.length>30)throw Error('Add 1–30 retail items');
+ const products=[];
+ for(const item of lines){
+  const id=number(item.sku_id,1,100000000,'SKU'),qty=number(item.qty,1,99,'quantity');
+  const p=(await q("SELECT id,description,taxable,COALESCE(NULLIF(supplier_part_number,''),NULLIF(manufacturer_part_number,''),'PART-'||id::text) AS sku,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents FROM service_parts WHERE id=$1 AND active=true",[id])).rows[0];
+  if(!p)throw Error('Item no longer exists');
+  products.push({id,qty,sku:p.sku,name:p.description,price:p.price_cents,taxable:p.taxable});
+ }
+ const subtotal=products.reduce((n,p)=>n+p.qty*p.price,0),taxable=products.filter(x=>x.taxable).reduce((n,p)=>n+p.qty*p.price,0);
+ const settings=(await q("SELECT tax_rate_bps FROM htfo_dealer_settings WHERE dealer_key='htfo'")).rows[0];
+ const rate=Number(settings?.tax_rate_bps??700),tax=Math.round(taxable*rate/10000),total=subtotal+tax;
+ const customer=body?.customer_id?number(body.customer_id,1,100000000,'customer ID'):null;
+ const ref=String(body?.reference_key||'').trim().slice(0,120)||null;
+ return transaction(async run=>{
+  if(ref){const existing=(await run('SELECT id,total_cents,tax_cents,payment_status FROM htfo_pos_receipts WHERE reference_key=$1',[ref])).rows[0];
+   if(existing){if(Number(existing.total_cents)!==total)throw Error('Draft reference was reused with a different total');return {...existing,already_exists:true}}}
+  const created=(await run('INSERT INTO htfo_pos_receipts(customer_id,subtotal_cents,tax_cents,total_cents,tax_rate_bps,reference_key,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(reference_key) DO NOTHING RETURNING id,total_cents,tax_cents,payment_status',[customer,subtotal,tax,total,rate,ref,actor])).rows[0];
+  if(!created){const old=(await run('SELECT id,total_cents,tax_cents,payment_status FROM htfo_pos_receipts WHERE reference_key=$1',[ref])).rows[0];if(Number(old.total_cents)!==total)throw Error('Reference belongs to another draft');return {...old,already_exists:true}}
+  for(const p of products)await run('INSERT INTO htfo_pos_part_lines(receipt_id,part_id,qty,price_cents,sku_at_sale,description_at_sale,taxable_at_sale) VALUES($1,$2,$3,$4,$5,$6,$7)',[created.id,p.id,p.qty,p.price,p.sku,p.name,p.taxable]);
+  return created;
+ });
+}
