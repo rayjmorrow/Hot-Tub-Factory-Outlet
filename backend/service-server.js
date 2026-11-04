@@ -140,7 +140,7 @@ app.use('/api/service',serviceBillingRoutes);
 app.use('/api/service',serviceDepartmentFinancials);
 
 const portalAssets=new Set([
-  'service-portal.css','service-portal.js','htfo-retail-pos.js','htfo-retail-pos.css','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
+  'service-portal.css','service-portal.js','htfo-retail-pos.js','htfo-retail-pos.css','htfo-inventory-admin.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
   'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js','service-workorder-detail-ui.js',
   'service-field.css','service-field.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js','fulfillment-ui.js','service-calendar-hotfix.js'
 ]);
