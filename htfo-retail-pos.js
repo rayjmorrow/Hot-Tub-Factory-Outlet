@@ -8,7 +8,19 @@ $('#logout').onclick=()=>{token='';user=null;cart=[];$('#workspace').hidden=true
 $('#loginForm').onsubmit=async e=>{e.preventDefault();try{const session=await request(API+'/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=session.token;const me=await request(POS+'/me');user=me.user;permissions=me.permissions;$('#openSpaSales').hidden=!permissions.sales;if(!permissions.retail&&!permissions.service)throw Error('No retail or inventory permissions');$('#workspace').hidden=false;$('#login').hidden=true;$('#logout').hidden=false;text($('#welcome'),'Hello, '+(user.name||user.username));text($('#role'),user.role);document.querySelectorAll('.manager').forEach(x=>x.hidden=!permissions.manage);document.querySelectorAll('.sales').forEach(x=>x.hidden=!permissions.sales);await refresh();tab(permissions.retail?'counter':'inventory')}catch(err){text($('#loginStatus'),err.message)}};
 async function refresh(){skus=await request(POS+'/skus');const selectors=[$('#counterSku'),$('#receiveSku')];for(const select of selectors){select.replaceChildren(option('','Select product'));for(const p of skus)select.append(option(p.id,p.sku+' · '+p.name+' — '+money(p.price_cents)+' ('+p.available+' available)'))}
 $('#skuTable').replaceChildren();for(const s of skus){const row=document.createElement('div');row.className='cardrow';text(row,s.sku+' · '+s.name+' | On hand '+s.on_hand+' | Committed '+s.committed+' | Available '+s.available);$('#skuTable').append(row)}
-if(permissions.sales){spas=await request(POS+'/spas');$('#spaTable').replaceChildren();for(const s of spas){const row=document.createElement('div');row.className='cardrow';text(row,s.brand+' '+s.model+' · '+s.shell+' / '+s.cabinet+' · Serial '+s.serial+' · '+s.location+' · '+s.status);$('#spaTable').append(row)}}
+if(permissions.sales){spas=await request(POS+'/spas');$('#spaTable').replaceChildren();for(const unit of spas){const row=document.createElement('div');row.className='cardrow';text(row,unit.brand+' '+unit.model+' · '+unit.shell+' / '+unit.cabinet+' · Serial '+unit.serial+' · '+unit.location+' · '+unit.status);
+ if(permissions.manage){
+  const change=(caption,fn)=>{const button=document.createElement('button');button.textContent=caption;button.style.margin='4px';button.onclick=async()=>{try{await fn();await refresh()}catch(e){alert(e.message)}};row.append(button)};
+  if(unit.status==='reserved'){
+   change('Release reservation',async()=>{const reason=prompt('Reason for releasing this reserved spa (required)','');if(!reason)return;await request(POS+'/spas/'+unit.id+'/release',{method:'POST',body:JSON.stringify({reason})})});
+   change('Mark sold (signed only)',async()=>{const reason=prompt('Sale confirmation / reason','Executed customer agreement');if(!reason)return;await request('/api/service/htfo-inventory/spas/'+unit.id+'/status',{method:'POST',body:JSON.stringify({status:'sold',reason})})});
+  }else if(unit.status==='sold'){
+   change('Mark delivered',async()=>{const reason=prompt('Delivery confirmation reference','Delivered and oriented');if(!reason)return;await request('/api/service/htfo-inventory/spas/'+unit.id+'/status',{method:'POST',body:JSON.stringify({status:'delivered',reason})})});
+  }else if(['available','hold','in_transit'].includes(unit.status)){
+   change('Move location',async()=>{const location=prompt('New location','Warehouse'),reason=prompt('Reason for move','Store inventory transfer');if(!location||!reason)return;await request('/api/service/htfo-inventory/spas/'+unit.id+'/location',{method:'POST',body:JSON.stringify({location,reason})})});
+  }
+ }
+ $('#spaTable').append(row)}}
 }
 $('#customerQuery').oninput=async()=>{
  const query=$('#customerQuery').value.trim(),target=$('#customerResults');target.replaceChildren();
