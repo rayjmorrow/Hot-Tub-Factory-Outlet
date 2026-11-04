@@ -9,7 +9,7 @@ const txt=(v,n=160)=>String(v??'').trim().slice(0,n);
 const whole=(v,label,min=0)=>{const n=Number(v);if(!Number.isSafeInteger(n)||n<min||n>100000000)throw Error('Invalid '+label);return n};
 const fail=(v)=>{throw Error(v)};
 const wrap=fn=>(req,res)=>Promise.resolve().then(()=>fn(req,res)).catch(e=>res.status(/not found/i.test(e.message)?404:400).json({error:e.message}));
-async function auth(req,res,next){try{const token=String(req.get('authorization')||'').replace(/^Bearer\s+/i,'');const user=jwt.verify(token,process.env.SERVICE_JWT_SECRET);const r=(await q('SELECT id,role FROM service_users WHERE id=$1 AND active=true',[user.sub])).rows[0];if(!r)return res.status(401).json({error:'Employee inactive'});req.operator=r;next()}catch{return res.status(401).json({error:'Login required'})}}
+async function auth(req,res,next){try{const token=String(req.get('authorization')||'').replace(/^Bearer\s+/i,'');const user=jwt.verify(token,process.env.SERVICE_JWT_SECRET);const r=(await q('SELECT id,role,username,display_name FROM service_users WHERE id=$1 AND active=true',[user.sub])).rows[0];if(!r)return res.status(401).json({error:'Employee inactive'});req.operator=r;next()}catch{return res.status(401).json({error:'Login required'})}}
 const permit=roles=>(req,res,next)=>roles.has(req.operator.role)?next():res.status(403).json({error:'Manager permission required'});
 const csv=x=>'"'+String(x??'').replace(/"/g,'""').replace(/^[=+\-@\t\r]/,' $&')+'"';
 const sendCsv=(res,name,header,rows)=>{res.set('Content-Type','text/csv; charset=utf-8');res.set('Content-Disposition','attachment; filename="'+name+'"');res.set('Cache-Control','no-store');res.send('\uFEFF'+[header,...rows].map(row=>row.map(csv).join(',')).join('\r\n')+'\r\n')};
@@ -147,6 +147,31 @@ router.post('/purchase-orders/:id/receive',permit(manager),wrap(async(req,res)=>
   const status=complete?'received':'partially_received';
   await run('UPDATE htfo_purchase_orders SET status=$2 WHERE id=$1',[id,status]);return {id,status}
  }))
+}));
+router.post('/service-part-requests/:id/issue',permit(allowed),wrap(async(req,res)=>{
+ await ensure();
+ await q('CREATE TABLE IF NOT EXISTS htfo_service_part_issues(id BIGSERIAL PRIMARY KEY,part_request_id BIGINT NOT NULL REFERENCES service_part_requests(id),part_id BIGINT NOT NULL REFERENCES service_parts(id),location TEXT NOT NULL,quantity NUMERIC(10,2) NOT NULL,actor_id BIGINT NOT NULL REFERENCES service_users(id),created_at TIMESTAMPTZ DEFAULT NOW())');
+ const id=whole(req.params.id,'part request ID',1),quantity=whole(req.body?.quantity,'quantity',1),location=txt(req.body?.location);
+ if(!location)fail('Location required');
+ const result=await transaction(async run=>{
+  const reqPart=(await run('SELECT pr.id,pr.part_id,pr.requested_quantity,pr.status,pr.work_order_id,w.assigned_to,w.assigned_team FROM service_part_requests pr JOIN service_work_orders w ON w.id=pr.work_order_id WHERE pr.id=$1 FOR UPDATE OF pr',[id])).rows[0];
+  if(!reqPart)fail('Part request not found');
+  if(!['approved','received'].includes(reqPart.status))fail('Only approved or received part requests can be issued');
+  const who=[req.operator.display_name,req.operator.username].map(x=>txt(x).toLowerCase());
+  const isAssigned=[reqPart.assigned_to,reqPart.assigned_team].some(x=>who.includes(txt(x).toLowerCase()));
+  if(!manager.has(req.operator.role)&&req.operator.role!=='service_manager'&&!isAssigned)fail('Only the assigned technician or manager can issue this part');
+  const prior=(await run('SELECT COALESCE(SUM(quantity),0) AS issued FROM htfo_service_part_issues WHERE part_request_id=$1',[id])).rows[0];
+  if(Number(prior.issued)+quantity>Number(reqPart.requested_quantity))fail('Cannot issue more parts than requested');
+  const p=(await run('SELECT quantity_on_hand,quantity_committed FROM service_parts WHERE id=$1 FOR UPDATE',[reqPart.part_id])).rows[0];
+  const loc=(await run('SELECT on_hand FROM htfo_inventory_part_locations WHERE part_id=$1 AND location=$2 FOR UPDATE',[reqPart.part_id,location])).rows[0];
+  if(!loc||Number(loc.on_hand)<quantity)fail('Not enough inventory at selected location');
+  if(Number(p.quantity_on_hand)-Number(p.quantity_committed)<quantity)fail('Not enough uncommitted inventory');
+  await run('UPDATE service_parts SET quantity_on_hand=quantity_on_hand-$2,updated_at=NOW() WHERE id=$1',[reqPart.part_id,quantity]);
+  await run('UPDATE htfo_inventory_part_locations SET on_hand=on_hand-$3 WHERE part_id=$1 AND location=$2',[reqPart.part_id,location,quantity]);
+  const issue=(await run('INSERT INTO htfo_service_part_issues(part_request_id,part_id,location,quantity,actor_id) VALUES($1,$2,$3,$4,$5) RETURNING id',[id,reqPart.part_id,location,quantity,req.operator.id])).rows[0];
+  await run('INSERT INTO htfo_inventory_part_movements(part_id,location,delta,reason,actor_id) VALUES($1,$2,$3,$4,$5)',[reqPart.part_id,location,-quantity,'service part issue '+issue.id+' / work order '+reqPart.work_order_id,req.operator.id]);
+  return {issue_id:issue.id,part_request_id:id,quantity,location}
+ });res.json(result);
 }));
 router.get('/reports/valuation.csv',permit(manager),wrap(async(req,res)=>{const r=await q('SELECT supplier_part_number,description,quantity_on_hand,quantity_committed,cost,ROUND(quantity_on_hand*cost,2) AS value FROM service_parts WHERE active=true ORDER BY supplier_part_number');sendCsv(res,'inventory-valuation.csv',['SKU','Description','On Hand','Committed','Cost USD','Value USD'],r.rows.map(x=>[x.supplier_part_number,x.description,x.quantity_on_hand,x.quantity_committed,x.cost,x.value]))}));
 router.get('/reports/retail.csv',permit(manager),wrap(async(req,res)=>{
