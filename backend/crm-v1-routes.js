@@ -375,6 +375,7 @@ function validateSalesDraft(input){
  const cents=(v,label)=>{if(!Number.isSafeInteger(v)||v<0||v>100000000)throw new Error('Invalid '+label);return v};
  const customer={};for(const k of ['first_name','last_name','email','phone','secondary_phone','street','city','state','zip'])customer[k]=text(input.customer?.[k]);
  const spa={};for(const k of ['brand','model','year','shell','cabinet','serial','manufacturer_add_ons'])spa[k]=text(input.spa?.[k]);
+ spa.inventory_mode=input.spa?.inventory_mode==='in_stock'?'in_stock':'special_order';spa.inventory_unit_id=spa.inventory_mode==='in_stock'?(Number.isSafeInteger(Number(input.spa?.inventory_unit_id))?Number(input.spa.inventory_unit_id):0):0;
  const msrp=cents(input.msrp,'MSRP'),discount=cents(input.discount,'discount');
  if(discount>msrp)throw new Error('Spa discount cannot exceed MSRP');
  if(!Array.isArray(input.items)||input.items.length>40)throw new Error('Use no more than 40 accessory lines');
@@ -546,6 +547,7 @@ router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,
   if(!salesAdmin(req)&&String(draft.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Salesperson must own this agreement'});
   if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft.id])).rowCount)return res.status(409).json({error:'Agreement is already executed; retrieve the signed copy'});
   const d=validateSalesDraft(draft.document);
+  if(d.spa.inventory_mode==='in_stock'){const chosen=(await q("SELECT 1 FROM htfo_inventory_spa WHERE id=$1 AND reserved_draft_id=$2 AND status='reserved' AND serial=$3",[d.spa.inventory_unit_id,draft.id,d.spa.serial])).rowCount;if(!chosen)return res.status(409).json({error:'The selected stock spa must be reserved to this agreement before signing'});}
   if(d.msrp<=0||!d.customer.email||!d.customer.first_name||!d.customer.last_name||!d.spa.brand||!d.spa.model)return res.status(400).json({error:'Complete customer email, name, spa and MSRP before signing'});
   const customerName=String(req.body.customer_name||'').trim(),salesName=String(req.body.salesperson_name||'').trim();
   if(customerName.length<3||salesName.length<3)return res.status(400).json({error:'Both printed signer names required'});
