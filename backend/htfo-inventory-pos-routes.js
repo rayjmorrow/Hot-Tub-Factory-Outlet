@@ -156,7 +156,8 @@ router.post('/spas/:id/reserve',permit(SALES),handle(async(req,res)=>{
  WHERE id=$1 AND status='available' AND reserved_draft_id IS NULL
  AND brand=$3 AND model=$4 AND COALESCE(shell,'')=COALESCE($5,'')
  AND COALESCE(cabinet,'')=COALESCE($6,'')
- RETURNING id,serial,status`,[id,draft,owner.document?.spa?.brand,owner.document?.spa?.model,owner.document?.spa?.shell,owner.document?.spa?.cabinet])).rows[0];
+ AND serial=$7 AND COALESCE(options,'')=COALESCE($8,'')
+ RETURNING id,serial,status`,[id,draft,owner.document?.spa?.brand,owner.document?.spa?.model,owner.document?.spa?.shell,owner.document?.spa?.cabinet,owner.document?.spa?.serial,owner.document?.spa?.manufacturer_add_ons])).rows[0];
  if(!unit)return res.status(409).json({error:'Spa not available, already reserved, or configuration differs'});
  res.json(unit);
 }));
