@@ -1,6 +1,6 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import {q} from './service-db.js';
+import {q,transaction} from './service-db.js';
 
 const router=express.Router();
 const MANAGEMENT=new Set(['owner','admin','manager']);
@@ -68,6 +68,12 @@ export async function ensureInventory(){
  updated_by BIGINT REFERENCES service_users(id),updated_at TIMESTAMPTZ DEFAULT NOW());
  INSERT INTO htfo_dealer_settings(dealer_key,display_name,tax_rate_bps)
  VALUES('htfo','Hot Tub Factory Outlet',700) ON CONFLICT(dealer_key) DO NOTHING;
+ ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS tax_rate_bps INTEGER NOT NULL DEFAULT 700;
+ ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS reference_key TEXT;
+ CREATE UNIQUE INDEX IF NOT EXISTS htfo_pos_receipt_ref ON htfo_pos_receipts(reference_key);
+ ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS sku_at_sale TEXT;
+ ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS description_at_sale TEXT;
+ ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS taxable_at_sale BOOLEAN;
  CREATE TABLE IF NOT EXISTS htfo_pos_lines(
  id BIGSERIAL PRIMARY KEY,receipt_id BIGINT NOT NULL REFERENCES htfo_pos_receipts(id),
  sku_id BIGINT NOT NULL REFERENCES htfo_inventory_sku(id),qty INTEGER NOT NULL,
