@@ -109,7 +109,9 @@ function auth(req,res,next){
   try{
     const raw=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
     if(!raw)return res.status(401).json({error:'Login required'});
-    req.user=jwt.verify(raw,secret());next();
+    req.user=jwt.verify(raw,secret());
+    if(!['admin','owner','manager','service_manager','sales'].includes(String(req.user.role||'').toLowerCase()))return res.status(403).json({error:'Sales CRM access requires a sales or management login'});
+    next();
   }catch{res.status(401).json({error:'Session expired or invalid'})}
 }
 
