@@ -39,6 +39,20 @@ router.post('/parts/:id/adjust',permit(manager),wrap(async(req,res)=>{
   return {adjustment_id:row.id,part_id:id,on_hand:total};
  });res.json(output)
 }));
+router.post('/parts/:id/allocate-existing',permit(manager),wrap(async(req,res)=>{
+ await ensure();
+ const id=whole(req.params.id,'part',1),quantity=whole(req.body?.quantity,'quantity',1),location=txt(req.body?.location),reason=txt(req.body?.reason,400);
+ if(!location||reason.length<8)fail('Location and explanation required');
+ res.json(await transaction(async run=>{
+  const part=(await run('SELECT quantity_on_hand FROM service_parts WHERE id=$1 FOR UPDATE',[id])).rows[0];if(!part)fail('Part not found');
+  const located=(await run('SELECT COALESCE(SUM(on_hand),0) AS assigned FROM htfo_inventory_part_locations WHERE part_id=$1',[id])).rows[0];
+  const unassigned=Number(part.quantity_on_hand)-Number(located.assigned);
+  if(quantity>unassigned)fail('Cannot allocate more than unassigned existing stock');
+  await run('INSERT INTO htfo_inventory_part_locations(part_id,location,on_hand) VALUES($1,$2,$3) ON CONFLICT(part_id,location) DO UPDATE SET on_hand=htfo_inventory_part_locations.on_hand+EXCLUDED.on_hand',[id,location,quantity]);
+  const log=(await run('INSERT INTO htfo_stock_adjustments(part_id,location,delta,reason,performed_by) VALUES($1,$2,0,$3,$4) RETURNING id',[id,location,'Existing stock allocation '+quantity+': '+reason,req.operator.id])).rows[0];
+  return {part_id:id,location,quantity,global_on_hand_unchanged:true,audit_id:log.id}
+ }))
+}));
 router.post('/parts/:id/transfer',permit(manager),wrap(async(req,res)=>{
  await ensure();const id=whole(req.params.id,'part',1),quantity=whole(req.body?.quantity,'quantity',1),from=txt(req.body?.from),to=txt(req.body?.to);
  if(!from||!to||from===to)fail('Different source/destination locations required');
