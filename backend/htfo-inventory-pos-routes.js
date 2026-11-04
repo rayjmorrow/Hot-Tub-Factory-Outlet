@@ -65,6 +65,37 @@ router.get('/retail/customers',permit(RETAIL),handle(async(req,res)=>{
  WHERE concat_ws(' ',first_name,last_name,phone,email) ILIKE $1 ORDER BY last_name,first_name LIMIT 20`,['%'+term+'%']);
  res.json(rows.rows);
 }));
+router.get('/retail/signed-customers',permit(RETAIL),handle(async(req,res)=>{
+ const term=code(req.query.q).slice(0,80);
+ if(term.length<2)return res.json([]);
+ // Only people with executed contracts are visible. Unconverted CRM leads are never returned.
+ const r=await q(`SELECT DISTINCT ON (lower(e.customer_email))
+  e.draft_id AS signed_agreement_id,
+  e.customer_name AS name,e.customer_email AS email,
+  COALESCE(e.executed_document->'customer'->>'phone','') AS phone,
+  s.id AS retail_customer_id
+ FROM crm_sales_executed_contracts e
+ LEFT JOIN service_customers s ON lower(s.email)=lower(e.customer_email)
+ WHERE concat_ws(' ',e.customer_name,e.customer_email,e.executed_document->'customer'->>'phone') ILIKE $1
+ ORDER BY lower(e.customer_email),e.draft_id DESC LIMIT 20`,['%'+term+'%']);
+ res.json(r.rows);
+}));
+router.post('/retail/signed-customers/:id/link',permit(RETAIL),handle(async(req,res)=>{
+ const draft=integer(Number(req.params.id),'signed agreement',1);
+ const c=(await q(`SELECT executed_document->'customer' AS customer FROM crm_sales_executed_contracts WHERE draft_id=$1`,[draft])).rows[0]?.customer;
+ if(!c)return res.status(404).json({error:'No signed customer found'});
+ const email=code(c.email),phone=code(c.phone);
+ const prior=(await q(`SELECT id,first_name,last_name,email,phone FROM service_customers
+ WHERE (lower(email)=lower($1) AND $1<>'') OR (phone=$2 AND $2<>'')
+ ORDER BY id LIMIT 2`,[email,phone])).rows;
+ if(prior.length>1)return res.status(409).json({error:'Multiple customer profiles match. Manager must review duplicates.'});
+ if(prior.length===1)return res.json(prior[0]);
+ const created=(await q(`INSERT INTO service_customers(first_name,last_name,email,phone,street,city,state,zip,source)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,'signed_sales_agreement')
+ RETURNING id,first_name,last_name,email,phone`,
+ [code(c.first_name),code(c.last_name),email,phone,code(c.street),code(c.city),code(c.state),code(c.zip)])).rows[0];
+ res.status(201).json(created);
+}));
 router.post('/retail/customers',permit(RETAIL),handle(async(req,res)=>{
  const {first_name,last_name,phone,email}=req.body||{};
  if(!code(last_name))throw Error('Last name is required');
