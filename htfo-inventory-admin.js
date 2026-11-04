@@ -6,7 +6,7 @@
  const put=(path,data,method='POST')=>request(ROOT+path,{method,body:JSON.stringify(data)});
  function val(form){return Object.fromEntries(new FormData(form))}
  function dollars(v){const n=Math.round(Number(v)*100);if(!Number.isSafeInteger(n)||n<0)throw Error('Invalid amount');return n}
- function setProducts(){for(const id of ['adjustSku','transferSku','poSku']){const field=$('#'+id);field.replaceChildren();for(const p of skus){const o=document.createElement('option');o.value=p.id;o.textContent=p.sku+' · '+p.name;field.append(o)}}}
+ function setProducts(){for(const id of ['adjustSku','allocateSku','transferSku','poSku']){const field=$('#'+id);field.replaceChildren();for(const p of skus){const o=document.createElement('option');o.value=p.id;o.textContent=p.sku+' · '+p.name;field.append(o)}}}
  async function loadConfig(){try{
   setProducts();
   const [settings,low,suppliers]=await Promise.all([request(ROOT+'/settings'),request(ROOT+'/low-stock'),request(ROOT+'/suppliers')]);
@@ -16,6 +16,7 @@
  document.querySelector('[data-tab="receiving"]').addEventListener('click',loadConfig);
  $('#taxSettingsForm').onsubmit=async e=>{e.preventDefault();try{const n=Math.round(Number($('#htfoTaxRate').value)*100);await put('/settings',{tax_rate_bps:n},'PUT');status('Tax rate saved: '+(n/100).toFixed(2)+'%')}catch(e){status(e.message)}};
  $('#adjustPartForm').onsubmit=async e=>{e.preventDefault();const x=val(e.target);if(!confirm('Record manager inventory correction: '+x.delta+' units at '+x.location+'?'))return;try{await put('/parts/'+x.part_id+'/adjust',{location:x.location,delta:Number(x.delta),reason:x.reason});status('Inventory correction recorded with audit entry');await refresh();setProducts()}catch(e){status(e.message)}};
+ $('#allocateExistingForm').onsubmit=async e=>{e.preventDefault();const x=val(e.target);try{const r=await put('/parts/'+x.part_id+'/allocate-existing',{location:x.location,quantity:Number(x.quantity),reason:x.reason});status('Assigned '+r.quantity+' existing units to '+r.location+' without changing total inventory');await refresh();setProducts()}catch(err){status(err.message)}};
  $('#transferPartForm').onsubmit=async e=>{e.preventDefault();const x=val(e.target);if(!confirm('Transfer '+x.quantity+' units from '+x.from+' to '+x.to+'?'))return;try{await put('/parts/'+x.part_id+'/transfer',{from:x.from,to:x.to,quantity:Number(x.quantity)});status('Transfer completed and audited');await refresh();setProducts()}catch(e){status(e.message)}};
  function showLow(rows){const el=$('#lowStockList');el.replaceChildren();if(!rows.length){el.textContent='No products below reorder threshold';return}
   for(const r of rows.slice(0,100)){const p=document.createElement('p');p.textContent=(r.sku||r.id)+' · '+r.description+' | available '+r.available+' | reorder at '+r.reorder_point;el.append(p)}}
