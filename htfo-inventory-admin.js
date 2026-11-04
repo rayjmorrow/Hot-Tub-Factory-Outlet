@@ -41,7 +41,7 @@
   }
   if(!lines.length)return status('No units received');
   if(!confirm('Confirm physical receipt of '+lines.reduce((a,x)=>a+x.quantity,0)+' units on PO '+id+'?'))return;
-  const saved=await put('/purchase-orders/'+id+'/receive',{lines});status('PO '+id+' updated to '+saved.status);await refresh();await loadOrders()
+  const saved=await put('/purchase-orders/'+id+'/receive',{lines,reference_key:crypto.randomUUID()});status('PO '+id+' updated to '+saved.status);await refresh();await loadOrders()
  }catch(e){status(e.message)}}
  $('#refreshPurchaseOrders').onclick=()=>loadOrders().catch(e=>status(e.message));
  // Standard CSV parser including quoted fields, escaped quotes and line endings.
