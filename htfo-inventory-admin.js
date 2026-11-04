@@ -79,7 +79,7 @@
  async function exportReport(kind){let endpoint,filename;
   if(kind==='valuation'){endpoint='/reports/valuation.csv';filename='inventory-valuation.csv'}
   else if(kind==='purchasing'){endpoint='/reports/purchasing.csv';filename='purchase-orders.csv'}
-  else{const from=$('#reportFrom').value,to=$('#reportTo').value;if(!from||!to)throw Error('Select a start and end date');endpoint='/reports/retail.csv?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);filename='retail-'+from+'-'+to+'.csv'}
+  else{const from=$('#reportFrom').value,to=$('#reportTo').value;if(!from||!to)throw Error('Select a start and end date');endpoint=(kind==='retail-lines'?'/reports/retail-lines.csv':'/reports/retail.csv')+'?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);filename=(kind==='retail-lines'?'retail-items-':'retail-receipts-')+from+'-'+to+'.csv'}
   const response=await fetch(ROOT+endpoint,{headers:{Authorization:'Bearer '+token}});
   if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(body.error||'Report failed')}
   const data=await response.blob(),url=URL.createObjectURL(data),a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
