@@ -2,10 +2,10 @@ const API='/api/service',POS=API+'/htfo-pos';let token='',user=null,permissions=
 const $=s=>document.querySelector(s),text=(el,value)=>el.textContent=String(value),money=c=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Number(c||0)/100);
 async function request(path,options={}){const res=await fetch(path,{...options,headers:{'Content-Type':'application/json',Authorization:'Bearer '+token,...(options.headers||{})}});const data=await res.json().catch(()=>({}));if(!res.ok)throw Error(data.error||'Request failed ('+res.status+')');return data}
 function option(value,name){const o=document.createElement('option');o.value=value;o.textContent=name;return o}
-function tab(name){for(const p of ['counter','inventory','receiving'])$('#'+p).hidden=p!==name}
+function tab(name){for(const p of ['counter','inventory','receiving','commissions'])$('#'+p).hidden=p!==name}
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
 $('#logout').onclick=()=>{token='';user=null;cart=[];$('#workspace').hidden=true;$('#login').hidden=false;$('#logout').hidden=true;$('#password').value=''};
-$('#loginForm').onsubmit=async e=>{e.preventDefault();try{const session=await request(API+'/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=session.token;const me=await request(POS+'/me');user=me.user;permissions=me.permissions;$('#openSpaSales').hidden=!permissions.sales;if(!permissions.retail&&!permissions.service)throw Error('No retail or inventory permissions');$('#workspace').hidden=false;$('#login').hidden=true;$('#logout').hidden=false;text($('#welcome'),'Hello, '+(user.name||user.username));text($('#role'),user.role);$('#departmentReport').hidden=!['owner','admin'].includes(user.role);$('#departmentReportRows').replaceChildren();text($('#departmentReportStatus'),'');document.querySelectorAll('.manager').forEach(x=>x.hidden=!permissions.manage);document.querySelectorAll('.sales').forEach(x=>x.hidden=!permissions.sales);await refresh();tab(permissions.retail?'counter':'inventory')}catch(err){text($('#loginStatus'),err.message)}};
+$('#loginForm').onsubmit=async e=>{e.preventDefault();try{const session=await request(API+'/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=session.token;const me=await request(POS+'/me');user=me.user;permissions=me.permissions;$('#openSpaSales').hidden=!permissions.sales;if(!permissions.retail&&!permissions.service)throw Error('No retail or inventory permissions');$('#workspace').hidden=false;$('#login').hidden=true;$('#logout').hidden=false;text($('#welcome'),'Hello, '+(user.name||user.username));text($('#role'),user.role);$('#departmentReport').hidden=!['owner','admin'].includes(user.role);$('#commissionRows').replaceChildren();text($('#commissionStatus'),'');$('#departmentReportRows').replaceChildren();text($('#departmentReportStatus'),'');document.querySelectorAll('.manager').forEach(x=>x.hidden=!permissions.manage);document.querySelectorAll('.sales').forEach(x=>x.hidden=!permissions.sales);await refresh();tab(permissions.retail?'counter':'inventory')}catch(err){text($('#loginStatus'),err.message)}};
 async function refresh(){skus=await request(POS+'/skus');const selectors=[$('#counterSku'),$('#receiveSku')];for(const select of selectors){select.replaceChildren(option('','Select product'));for(const p of skus)select.append(option(p.id,p.sku+' · '+p.name+' — '+money(p.price_cents)+' ('+p.available+' available)'))}
 $('#skuTable').replaceChildren();for(const s of skus){const row=document.createElement('div');row.className='cardrow';text(row,s.sku+' · '+s.name+' | On hand '+s.on_hand+' | Committed '+s.committed+' | Available '+s.available);$('#skuTable').append(row)}
 if(permissions.sales){spas=await request(POS+'/spas');$('#spaTable').replaceChildren();for(const unit of spas){const row=document.createElement('div');row.className='cardrow';text(row,unit.brand+' '+unit.model+' · '+unit.shell+' / '+unit.cabinet+' · Serial '+unit.serial+' · '+unit.location+' · '+unit.status);
@@ -48,7 +48,7 @@ $('#customerQuery').oninput=async()=>{
 };
 async function scanToCart(){const field=$('#counterBarcode'),code=field.value.trim();if(!code)return;try{const product=await request(POS+'/skus/scan?code='+encodeURIComponent(code));cart.push({p:product,qty:1});retailDraftReference=null;renderCart();field.value='';field.focus();text($('#saleStatus'),product.name+' added from scan. Draft remains unpaid.')}catch(e){text($('#saleStatus'),e.message)}}
 $('#scanToCart').onclick=scanToCart;$('#counterBarcode').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();scanToCart()}};
-$('#addToCart').onclick=()=>{const p=skus.find(x=>x.id===Number($('#counterSku').value));const qty=Number($('#counterQty').value);if(!p||!Number.isInteger(qty)||qty<1||qty>99)return text($('#saleStatus'),'Choose a valid item and quantity');cart.push({p,qty});retailDraftReference=null;renderCart()};
+$('#addToCart').onclick=()=>{const p=skus.find(x=>String(x.id)===$('#counterSku').value);const qty=Number($('#counterQty').value);if(!p||!Number.isInteger(qty)||qty<1||qty>99)return text($('#saleStatus'),'Choose a valid item and quantity');cart.push({p,qty});retailDraftReference=null;renderCart()};
 function renderCart(){$('#cartBody').replaceChildren();cart.forEach((x,i)=>{const tr=document.createElement('tr');for(const val of [x.p.name,x.qty,money(x.qty*x.p.price_cents)]){const td=document.createElement('td');text(td,val);tr.append(td)}const td=document.createElement('td'),b=document.createElement('button');text(b,'Remove');b.onclick=()=>{cart.splice(i,1);retailDraftReference=null;renderCart()};td.append(b);tr.append(td);$('#cartBody').append(tr)});text($('#cartTotal'),'Subtotal: '+money(cart.reduce((n,x)=>n+x.qty*x.p.price_cents,0)))}
 $('#saveReceipt').onclick=async()=>{if(!cart.length)return text($('#saleStatus'),'Add a product first');const department=$('#retailDepartment').value;if(!['monroeville_sales','wexford_sales'].includes(department))return text($('#saleStatus'),'Select the showroom for this counter sale');const button=$('#saveReceipt');button.disabled=true;try{retailDraftReference ||= crypto.randomUUID();const receipt=await request(POS+'/receipts',{method:'POST',body:JSON.stringify({customer_id:customerId,department,reference_key:retailDraftReference,items:cart.map(x=>({sku_id:x.p.id,qty:x.qty}))})});text($('#saleStatus'),'Retail draft #'+receipt.id+' saved — UNPAID. Tax '+money(receipt.tax_cents)+', total '+money(receipt.total_cents)+'. No stock deducted.');cart=[];retailDraftReference=null;renderCart()}catch(e){text($('#saleStatus'),e.message)}finally{button.disabled=false}};
 
@@ -101,4 +101,71 @@ $('#departmentReportForm').onsubmit=async e=>{
   }
   text(status,report.from+' through '+report.to+' · '+report.notes.join(' '));
  }catch(error){text(status,error.message)}
+};
+
+$('#createAutoShipLink').onclick=async()=>{
+ const button=$('#createAutoShipLink'),result=$('#autoShipLinkResult');
+ if(!customerId||!cart.length)return text(result,'Select a customer and add AutoShip products first.');
+ const quantities=new Map();
+ for(const {p,qty} of cart)quantities.set(String(p.id),(quantities.get(String(p.id))||0)+qty);
+ button.disabled=true;result.replaceChildren();
+ try{
+  const enrollment=await request(POS+'/retail/autoship-link',{method:'POST',body:JSON.stringify({
+   customer_id:customerId,department:$('#retailDepartment').value,
+   frequency_months:Number($('#autoShipInterval').value),items:[...quantities].map(([sku_id,qty])=>({sku_id,qty}))
+  })});
+  const link=document.createElement('input');link.readOnly=true;link.value=enrollment.url;
+  link.setAttribute('aria-label','Customer AutoShip link');
+  result.append('Share this link with the selected customer. Expires in 24 hours. ',link);
+  link.select();
+ }catch(error){text(result,error.message)}
+ finally{button.disabled=false}
+};
+
+async function showCommissions(){
+ const status=$('#commissionStatus'),rows=$('#commissionRows'),month=$('#commissionReportForm').elements.month.value;
+ rows.replaceChildren();text(status,'Loading commissions…');
+ try{
+  const report=await request(API+'/crm/v1/commissions'+(month?'?month='+encodeURIComponent(month):''));
+  for(const commission of report.rows){
+   const row=document.createElement('tr'),state=document.createElement('td');
+   const department=Object.hasOwn(departmentLabels,commission.department)?departmentLabels[commission.department]:commission.department;
+   for(const value of [commission.draft_id,commission.salesperson,department,commission.eligible_on,money(commission.amount_cents)]){
+    const cell=document.createElement('td');text(cell,value);row.append(cell);
+   }
+   text(state,commission.status.replaceAll('_',' '));row.append(state);
+   if(permissions.manage&&commission.status==='approved'){
+    const button=document.createElement('button');text(button,'Record external payroll');
+    button.onclick=async()=>{
+     const reference=prompt('Enter the payroll reference for the '+money(commission.amount_cents)+' already paid.');
+     if(!reference)return;
+     button.disabled=true;
+     try{
+      await request(API+'/crm/v1/admin/commissions/'+commission.draft_id+'/record-paid',{method:'POST',body:JSON.stringify({
+       payroll_reference:reference,amount_cents:Number(commission.amount_cents),confirmed_external_payroll:true
+      })});await showCommissions();
+     }catch(error){text(status,error.message);button.disabled=false}
+    };
+    state.append(' ',button);
+   }
+   rows.append(row);
+  }
+  text(status,report.month+' · '+report.rows.length+' reviewed commission(s)');
+ }catch(error){text(status,error.message)}
+}
+$('#commissionReportForm').onsubmit=event=>{event.preventDefault();showCommissions()};
+$('#commissionReviewForm').onsubmit=async event=>{
+ event.preventDefault();
+ const form=event.currentTarget,values=new FormData(form),button=form.querySelector('button'),status=$('#commissionStatus');
+ button.disabled=true;
+ try{
+  const reviewed=await request(API+'/crm/v1/admin/commissions/'+Number(values.get('agreement'))+'/review',{method:'POST',body:JSON.stringify({
+   verified:values.has('verified'),finance_fee_verified:values.has('fee'),
+   delivery_work_order_id:Number(values.get('delivery'))||null,
+   innova_map_cents:values.get('innova')?Math.round(Number(values.get('innova'))*100):null
+  })});
+  $('#commissionReportForm').elements.month.value=reviewed.eligible_on.slice(0,7);
+  await showCommissions();
+ }catch(error){text(status,error.message)}
+ finally{button.disabled=false}
 };

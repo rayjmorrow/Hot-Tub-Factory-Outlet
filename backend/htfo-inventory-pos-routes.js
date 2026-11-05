@@ -4,6 +4,8 @@ import {q,transaction} from './service-db.js';
 import {publishedRetailCatalog,retailPriceOverrides,retailPriceJoin,retailPriceCents} from './htfo-retail-catalog.js';
 import {createUnpaidRetailDraft} from './htfo-retail-draft.js';
 
+import {accessPOSAutoShipIntent,createPOSAutoShipIntent} from './htfo-pos-autoship.js';
+
 const router=express.Router();
 const MANAGEMENT=new Set(['owner','admin','manager']);
 const SALES=new Set(['owner','admin','manager','sales']);
@@ -86,7 +88,9 @@ export async function ensureInventory(){
  price_cents INTEGER NOT NULL);
  `);
 }
+router.post('/retail/autoship-intent',accessPOSAutoShipIntent);
 router.use(authenticate);
+router.post('/retail/autoship-link',permit(RETAIL),handle(async(req,res)=>res.status(201).json(await createPOSAutoShipIntent(req.body,req.stockUser.id))));
 router.get('/me',(req,res)=>res.json({user:{id:req.stockUser.id,username:req.stockUser.username,name:req.stockUser.display_name,role:req.stockUser.role},permissions:{retail:RETAIL.has(req.stockUser.role),sales:SALES.has(req.stockUser.role),manage:MANAGEMENT.has(req.stockUser.role),service:SERVICE.has(req.stockUser.role)}}));
 router.get('/retail/customers',permit(RETAIL),handle(async(req,res)=>{
  const term=code(req.query.q).slice(0,80);if(term.length<2)return res.json([]);

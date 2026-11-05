@@ -140,6 +140,7 @@ router.post('/customers/:id/recurring-orders',auth,async(req,res)=>{
   const b=req.body||{};
   const customer=(await q('SELECT id FROM service_customers WHERE id=$1',[req.params.id])).rows[0];
   if(!customer)return res.status(404).json({error:'Customer not found'});
+  if(b.external_subscription_id||b.payment_reference)return res.status(400).json({error:'Processor subscriptions must use authorized enrollment'});
   const r=(await q(`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,[req.params.id,clean(b.external_subscription_id),clean(b.status)||'active',Math.max(1,Number(b.frequency_value)||30),clean(b.frequency_unit)||'days',b.next_ship_date||null,clean(b.payment_reference),clean(b.shipping_method),clean(b.notes)])).rows[0];
   await logChange({customerId:req.params.id,recurringOrderId:r.id,action:'autoship_created',description:`Created ${r.frequency_value}-${r.frequency_unit} auto-ship`,actor:req.user?.name||req.user?.username});
@@ -150,6 +151,25 @@ router.patch('/recurring-orders/:id',auth,async(req,res)=>{
   const current=(await q('SELECT * FROM service_recurring_orders WHERE id=$1',[req.params.id])).rows[0];
   if(!current)return res.status(404).json({error:'Auto-ship not found'});
   const b=req.body||{};
+  if(current.external_subscription_id){
+    if(b.status!=='cancelled'||Object.keys(b).some(key=>key!=='status')){
+      return res.status(409).json({error:'This AutoShip is managed by Authorize.Net. Schedule or item changes require a new customer authorization.'});
+    }
+    const staff=(await q('SELECT role FROM service_users WHERE active=true AND id=$1',[req.user.sub])).rows[0];
+    if(!['owner','admin','manager','service_manager'].includes(staff?.role))return res.status(403).json({error:'Manager access required'});
+    const secret=process.env.FULFILLMENT_WEBHOOK_SECRET;
+    if(!secret)return res.status(503).json({error:'Processor cancellation is unavailable'});
+    try{
+      const gateway=await fetch('https://hot-tub-factory-outlet.onrender.com/internal/pos-autoship/cancel',{
+        method:'POST',headers:{'content-type':'application/json','x-htfo-fulfillment-secret':secret},
+        body:JSON.stringify({subscription_id:current.external_subscription_id}),signal:AbortSignal.timeout(20000)
+      });
+      if(!gateway.ok)throw Error('Processor cancellation could not be confirmed');
+      const updated=(await q('SELECT * FROM service_recurring_orders WHERE id=$1',[current.id])).rows[0];
+      await logChange({customerId:updated.customer_id,recurringOrderId:updated.id,action:'autoship_cancelled',description:'Authorize.Net cancellation confirmed',actor:req.user?.name||req.user?.username});
+      return res.json(updated);
+    }catch(error){return res.status(503).json({error:'Processor cancellation could not be reconciled. Retry before confirming to the customer.'})}
+  }
   const status=clean(b.status)||current.status;
   if(!['active','paused','cancelled'].includes(status))return res.status(400).json({error:'Invalid auto-ship status'});
   const r=(await q(`UPDATE service_recurring_orders SET status=$2,frequency_value=$3,frequency_unit=$4,next_ship_date=$5,shipping_method=coalesce($6,shipping_method),notes=coalesce($7,notes),updated_at=NOW() WHERE id=$1 RETURNING *`,[req.params.id,status,Math.max(1,Number(b.frequency_value??current.frequency_value)||30),clean(b.frequency_unit)||current.frequency_unit,b.next_ship_date===undefined?current.next_ship_date:(b.next_ship_date||null),clean(b.shipping_method),clean(b.notes)])).rows[0];

@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import {q} from './service-db.js';
+import {merchantRoutingReadiness} from './htfo-merchant-routes.js';
 
 const router=express.Router();
 const DEPARTMENTS=['monroeville_sales','wexford_sales','online_sales','service'];
@@ -21,6 +22,7 @@ async function ownerOnly(req,res,next){
   next();
  }catch{return res.status(401).json({error:'Login required'})}
 }
+router.get('/htfo-departments/merchant-routing',ownerOnly,(_req,res)=>res.set('Cache-Control','no-store').json(merchantRoutingReadiness()));
 router.get('/htfo-departments/summary',ownerOnly,async(req,res)=>{
  try{
   const today=localDate.format(new Date());

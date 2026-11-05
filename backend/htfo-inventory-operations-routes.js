@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import {q,transaction} from './service-db.js';
+import {requireAgreementReservation} from './htfo-agreement-reservation.js';
 import {ensureInventory} from './htfo-inventory-pos-routes.js';
 const router=express.Router();
 const manager=new Set(['owner','admin','manager']);
@@ -104,8 +105,13 @@ router.post('/spas/:id/status',permit(manager),wrap(async(req,res)=>{
   let draft=current.sold_draft_id;
   if(state==='sold'){
    draft=current.reserved_draft_id;
-   const agreement=(await run('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft])).rows[0];
-   if(!agreement)fail('Cannot mark sold until the reserved agreement is signed and executed');
+   const agreement=(await run(`SELECT d.document FROM crm_sales_drafts d
+    JOIN crm_sales_executed_contracts e ON e.draft_id=d.id WHERE d.id=$1`,[draft])).rows[0];
+   const spa=agreement?.document?.spa;
+   if(spa?.inventory_mode!=='in_stock'||String(spa.inventory_unit_id)!==String(id)){
+    fail('A signed agreement must still specify this exact stock spa before marking sold');
+   }
+   await requireAgreementReservation(run,draft,spa);
   }
   await run('UPDATE htfo_inventory_spa SET status=$2,reserved_draft_id=NULL,sold_draft_id=$3,updated_at=NOW() WHERE id=$1',[id,state,draft]);
   const event=(await run('INSERT INTO htfo_spa_events(spa_id,before_status,after_status,reason,actor_id) VALUES($1,$2,$3,$4,$5) RETURNING id',[id,current.status,state,reason,req.operator.id])).rows[0];

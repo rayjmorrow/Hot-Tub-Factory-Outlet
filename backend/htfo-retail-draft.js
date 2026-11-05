@@ -1,12 +1,13 @@
 import {q,transaction} from './service-db.js';
 import {retailPriceOverrides,retailPriceJoin,retailPriceCents} from './htfo-retail-catalog.js';
+import {merchantRouteForDepartment} from './htfo-merchant-routes.js';
 const number=(x,min,max,label)=>{if(!Number.isSafeInteger(x)||x<min||x>max)throw Error('Invalid '+label);return x};
 export async function createUnpaidRetailDraft(body,actor){
  const lines=body?.items;if(!Array.isArray(lines)||lines.length<1||lines.length>30)throw Error('Add 1–30 retail items');
  const overrides=await retailPriceOverrides();
  const products=[];
  for(const item of lines){
-  const id=number(item.sku_id,1,100000000,'SKU'),qty=number(item.qty,1,99,'quantity');
+  const id=number(Number(item.sku_id),1,100000000,'SKU'),qty=number(item.qty,1,99,'quantity');
   const p=(await q(`SELECT p.id,p.description,p.taxable,
    COALESCE(NULLIF(p.supplier_part_number,''),NULLIF(p.manufacturer_part_number,''),'PART-'||p.id::text) AS sku,
    ${retailPriceCents} AS price_cents FROM service_parts p ${retailPriceJoin} WHERE p.id=$2 AND p.active=true`,[overrides,id])).rows[0];
@@ -16,11 +17,11 @@ export async function createUnpaidRetailDraft(body,actor){
  const subtotal=products.reduce((n,p)=>n+p.qty*p.price,0),taxable=products.filter(x=>x.taxable).reduce((n,p)=>n+p.qty*p.price,0);
  const settings=(await q("SELECT tax_rate_bps FROM htfo_dealer_settings WHERE dealer_key='htfo'")).rows[0];
  const rate=Number(settings?.tax_rate_bps??700),tax=Math.round(taxable*rate/10000),total=subtotal+tax;
- const customer=body?.customer_id?number(body.customer_id,1,100000000,'customer ID'):null;
+ const customer=body?.customer_id?number(Number(body.customer_id),1,100000000,'customer ID'):null;
  const ref=String(body?.reference_key||'').trim().slice(0,120)||null;
  const department=String(body?.department||'').trim();
  if(!['monroeville_sales','wexford_sales'].includes(department))throw Error('Select Monroeville or Wexford for this counter sale');
- const merchantRoute='sales';
+ const merchantRoute=merchantRouteForDepartment(department);
  return transaction(async run=>{
   if(ref){const existing=(await run('SELECT id,total_cents,tax_cents,payment_status,department,merchant_route FROM htfo_pos_receipts WHERE reference_key=$1',[ref])).rows[0];
    if(existing){if(Number(existing.total_cents)!==total||existing.department!==department)throw Error('Draft reference was reused for a different total or department');return {...existing,already_exists:true}}}
