@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {installVoucherRoutes} from './vouchers.js';
 import {ensureCustomerProfile,profileSummary,signToken,verifyToken,addMonthsISO,occurrencesFor} from './autoship-account.js';
 
@@ -13,6 +14,9 @@ app.use(express.json({limit:'256kb'}));
 installVoucherRoutes(app);
 
 const money=n=>Math.round((Number(n)||0)*100)/100;
+const RETAIL_CATALOG=(()=>{try{const raw=JSON.parse(readFileSync(new URL('../retail-catalog.json',import.meta.url),'utf8'));const catalog=new Map();for(const p of raw.products||[]){if(!p.sku||!Number.isSafeInteger(p.price_cents)||p.price_cents<=0)continue;catalog.set(String(p.sku).toLowerCase(),p.price_cents)}console.log('HTFO shared retail catalog loaded:',catalog.size,'published products');return catalog}catch(e){console.error('Retail catalog unavailable; verify deployment:',e.message);return new Map()}})();
+const publishedRetailPrice=item=>{const raw=String(item.id||'');const key=raw.split('|')[0].trim().toLowerCase();return RETAIL_CATALOG.get(key)};
+
 const coverCatalog={
   Economy:{sku:'CVTH100',price:565},
   Bronze:{sku:'CVTH200',price:636},
@@ -70,7 +74,7 @@ function cleanItems(items){
   if(!Array.isArray(items)||!items.length)throw new Error('Cart is empty');
   return items.map((x,i)=>({id:String(x.id||x.sku||`item-${i+1}`).slice(0,31),name:String(x.name||'Item').slice(0,31),description:String(x.name||'Item').slice(0,255),quantity:Math.max(1,Number(x.qty)||1),original_price:money(x.originalPrice??x.price),autoship:Boolean(x.autoship),frequencyMonths:Number(x.frequencyMonths)||null,cover_form_id:String(x.coverFormId||x.cover_form_id||'').trim().slice(0,40)}));
 }
-function priceItems(items,attribution){return items.map(x=>{const discountRate=attribution?0.10:(x.autoship?0.05:0);const autoshipLockedDiscount=x.autoship&&attribution?0.10:(x.autoship?0.05:0);return{...x,discountRate,autoshipLockedDiscount,unit_price:money(x.original_price*(1-discountRate))}})}
+function priceItems(items,attribution){return items.map(x=>{const discountRate=attribution?0.10:(x.autoship?0.05:0);const autoshipLockedDiscount=x.autoship&&attribution?0.10:(x.autoship?0.05:0);const authoritative=x.cover_form_id?null:publishedRetailPrice(x);const original_price=authoritative==null?x.original_price:authoritative/100;return{...x,original_price,discountRate,autoshipLockedDiscount,unit_price:money(original_price*(1-discountRate))}})}
 function customer(b){const a=b.shippingAddress||{};return{first:String(b.first||'').trim(),last:String(b.last||'').trim(),email:String(b.email||'').trim(),phone:String(b.phone||'').trim(),street:String(a.street||'').trim(),street2:String(a.street2||'').trim(),city:String(a.city||'').trim(),state:String(a.state||'').trim().toUpperCase(),zip:String(a.zip||'').trim(),country:'US'}}
 function validateShip(c){for(const k of ['first','last','email','street','city','state','zip'])if(!c[k])throw new Error(`Missing ${k}`)}
 function monroeville(){return{street:process.env.SHIP_FROM_STREET||'4680 Old William Penn Hwy',street2:'',city:process.env.SHIP_FROM_CITY||'Monroeville',state:process.env.SHIP_FROM_STATE||'PA',zip:process.env.SHIP_FROM_ZIP||'15146',country:'US'}}
