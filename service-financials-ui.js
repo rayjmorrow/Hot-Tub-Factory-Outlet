@@ -12,6 +12,7 @@
       <div class="row between wrap"><div><h1>Service Department Financials</h1><p class="muted">Collections first: customer balances, warranty credits, delivery revenue, payroll and service P/L.</p></div><button class="secondary" id="finRefresh">Refresh</button></div>
       <div class="ops-toolbar"><label>From<input id="finFrom" type="date"></label><label>To<input id="finTo" type="date"></label><button id="finApply">Apply Period</button></div>
       <div id="finCollectionAlert"></div>
+      <div class="card" style="margin:12px 0"><h2>Who Owes HTFO? — Manufacturer and Customer Summary</h2><p class="muted">Shows open recorded claims and customer invoices. Credits granted are separate from verified deposits or vendor credits used.</p><div id="finReceivableByBrand"></div></div>
       <div class="stats" id="finStats"></div>
       <div class="detail-grid" style="margin-top:16px">
         <div class="card"><h2>Customer Balances — Collect These</h2><div id="finOpenBalances"></div></div>
@@ -37,16 +38,25 @@
     defaultDates();
     const q=finQuery();
     try{
-      const [sum,balances,warranty,history,expenses]=await Promise.all([
-        api('/financials/summary'+q),api('/financials/open-balances'),api('/financials/warranty-receivables'),api('/financials/work-order-history'+q),api('/financials/expenses'+q).catch(()=>[])
+      const [sum,balances,warranty,history,expenses,ownership]=await Promise.all([
+        api('/financials/summary'+q),api('/financials/open-balances'),api('/financials/warranty-receivables'),api('/financials/work-order-history'+q),api('/financials/expenses'+q).catch(()=>[]),api('/warranty/manufacturers/summary').catch(()=>null)
       ]);
       const r=sum.receivables||{},col=sum.collections||{},cost=sum.costs||{},pl=sum.profit_loss||{};
       $('#finCollectionAlert').innerHTML=Number(r.total_open||0)>.009
         ?`<div class="payment-needed" style="margin:12px 0"><b>COLLECTIONS ATTENTION:</b> ${money(r.total_open)} is still open — customer A/R ${money(r.customer_ar)} + manufacturer warranty credits ${money(r.warranty_receivable)}. Goal: $0 unexplained open balance.</div>`
         :'<div class="payment-ready" style="margin:12px 0"><b>✓ Collections clear:</b> no open customer or manufacturer balances.</div>';
+      const area=$('#finReceivableByBrand');
+      if(ownership){
+       const ms=ownership.manufacturers||[],customer=ownership.customers||{};
+       area.innerHTML='<p><b>Manufacturers: '+money(ownership.manufacturer_unresolved)+'</b> · <b>Customers: '+money(customer.outstanding)+'</b> · <b>Total open: '+money(ownership.total_unresolved)+'</b></p>'+
+        '<table><thead><tr><th>Who owes</th><th>Awaiting manufacturer credit</th><th>Approved credit not settled</th><th>Total outstanding</th></tr></thead><tbody>'+
+        ms.map(m=>'<tr><td>'+esc(m.manufacturer)+(m.warranty_policy==='parts_only_customer_pays_labor'?' · Parts warranty, labor billed to customer':'')+'</td><td>'+money(m.awaiting_credit)+'</td><td>'+money(m.credit_approved_not_settled)+'</td><td><b>'+money(m.total_unresolved)+'</b></td></tr>').join('')+
+        '<tr><td><b>Customers</b></td><td>—</td><td>—</td><td><b>'+money(customer.outstanding)+'</b></td></tr></tbody></table>'+
+        '<p class="muted">Customer exceptions: declined cards '+money(customer.by_status?.declined)+'; authorized but not charged '+money(customer.by_status?.authorized_not_charged)+'; processor errors '+money(customer.by_status?.processor_error)+'; payment setup needed '+money(customer.by_status?.authorization_needed)+'.</p>';
+      }else area.textContent='Manufacturer-by-manufacturer breakdown temporarily unavailable. Customer and overall totals remain above.';
       $('#finStats').innerHTML=
         `<div class="stat"><b>${money(r.customer_ar)}</b><span>Customer A/R</span></div>`+
-        `<div class="stat"><b>${money(r.warranty_uncredited)}</b><span>Cal Spas / Manufacturer Credits Not Yet Granted</span></div>`+
+        `<div class="stat"><b>${money(r.warranty_uncredited)}</b><span>Manufacturer Credits Not Yet Granted</span></div>`+
         `<div class="stat"><b>${money(r.warranty_approved_unsettled)}</b><span>Approved Vendor Credits Awaiting Settlement</span></div>`+
         `<div class="stat"><b>${money(col.customer_collected)}</b><span>Customer Cash Collected</span></div>`+
         `<div class="stat"><b>${money(col.warranty_credits_received)}</b><span>Warranty Reimbursements Recorded as Received</span></div>`+
