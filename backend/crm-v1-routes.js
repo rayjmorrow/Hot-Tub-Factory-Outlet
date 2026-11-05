@@ -644,7 +644,7 @@ function orderLogRow(r){
    customer_phone:customer.phone||'',
    brand:spa.brand||'',
    model:spa.model||'',
-   year:spa.year||'',
+   sales_department:d.sales_department||'unassigned',
    serial:spa.serial||'',
    acrylic_color:spa.shell||'',
    cabinet_color:spa.cabinet||'',
@@ -677,7 +677,7 @@ router.get('/crm/v1/admin/order-list.csv',...guard,salesIdentity,async(req,res)=
    const rows=await signedOrderLogRows();
    const cols=[
      ['Agreement #','agreement_id'],['Sale Date','sale_date'],['Salesperson','salesperson'],['Customer','customer_name'],
-     ['Brand','brand'],['Model','model'],['Year','year'],['Serial #','serial'],['Acrylic Color','acrylic_color'],
+     ['Sales Department','sales_department'],['Brand','brand'],['Model','model'],['Serial #','serial'],['Acrylic Color','acrylic_color'],
      ['Cabinet Color','cabinet_color'],['Manufacturer Add-ons','manufacturer_add_ons'],['Cover Lift','cover_lift_model'],
      ['Steps','step_model'],['Accessories','accessories'],['Location','location'],['Total','total'],['Paid','paid'],['Balance','balance']
    ];
