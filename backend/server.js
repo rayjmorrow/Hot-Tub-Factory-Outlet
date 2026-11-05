@@ -23,6 +23,11 @@ for(const product of retailProducts){
     throw new Error('Invalid or duplicate SKU in the published retail catalog');
   }
   retailCatalog.set(key,product);
+  for(const alias of product.aliases||[]){
+    const aliasKey=String(alias).trim().toLowerCase();
+    if(!aliasKey||retailCatalog.has(aliasKey))throw Error('Invalid or duplicate retail SKU alias');
+    retailCatalog.set(aliasKey,product);
+  }
 }
 
 const coverCatalog={

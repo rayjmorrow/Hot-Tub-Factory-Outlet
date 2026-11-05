@@ -1,11 +1,11 @@
 {
-  "version": "2026-11-05-initial",
+  "version": "2026-11-05-pos-reconciled",
   "currency": "USD",
   "description": "Published HTFO retail catalog extracted from website product listings. Wholesale costs and stock levels are intentionally absent. Unverified website identifiers cannot be scanned as manufacturer barcodes.",
   "excluded": [
     {
       "sku": "CHSE300",
-      "reason": "Conflicting website labels/prices; manual review required"
+      "reason": "Manufacturer SKU verified; HTFO retail price pending confirmation"
     }
   ],
   "products": [
@@ -466,7 +466,8 @@
       "sku_status": "published_sku"
     },
     {
-      "sku": "FROG-SS-SYSTEM",
+      "sku": "01-14-3288",
+      "aliases": ["FROG-SS-SYSTEM"],
       "name": "FROG @ease Floating System · Swim Spas",
       "price_cents": 13499,
       "category": "FROG @ease",
