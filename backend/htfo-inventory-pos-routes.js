@@ -2,6 +2,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import {q,transaction} from './service-db.js';
 import {publishedRetailCatalog,retailPriceOverrides,retailPriceJoin,retailPriceCents} from './htfo-retail-catalog.js';
+import {recordRetailTender} from './htfo-retail-tender.js';
 import {createUnpaidRetailDraft} from './htfo-retail-draft.js';
 
 import {accessPOSAutoShipIntent,createPOSAutoShipIntent} from './htfo-pos-autoship.js';
@@ -55,6 +56,10 @@ export async function ensureInventory(){
  payment_status TEXT NOT NULL DEFAULT 'unpaid',
  created_by BIGINT NOT NULL REFERENCES service_users(id),
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+ CREATE TABLE IF NOT EXISTS htfo_pos_external_tenders(
+ receipt_id BIGINT PRIMARY KEY REFERENCES htfo_pos_receipts(id),method TEXT NOT NULL,reference TEXT NOT NULL,
+ amount_cents INTEGER NOT NULL,recorded_by BIGINT NOT NULL REFERENCES service_users(id),
+ recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
  CREATE TABLE IF NOT EXISTS htfo_inventory_part_locations(
  part_id BIGINT NOT NULL REFERENCES service_parts(id),location TEXT NOT NULL,
  on_hand NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK(on_hand>=0),
@@ -91,7 +96,7 @@ export async function ensureInventory(){
 router.post('/retail/autoship-intent',accessPOSAutoShipIntent);
 router.use(authenticate);
 router.post('/retail/autoship-link',permit(RETAIL),handle(async(req,res)=>res.status(201).json(await createPOSAutoShipIntent(req.body,req.stockUser.id))));
-router.get('/me',(req,res)=>res.json({user:{id:req.stockUser.id,username:req.stockUser.username,name:req.stockUser.display_name,role:req.stockUser.role},permissions:{retail:RETAIL.has(req.stockUser.role),sales:SALES.has(req.stockUser.role),manage:MANAGEMENT.has(req.stockUser.role),service:SERVICE.has(req.stockUser.role)}}));
+router.get('/me',(req,res)=>res.json({user:{id:req.stockUser.id,username:req.stockUser.username,name:req.stockUser.display_name,role:req.stockUser.role},permissions:{retail:RETAIL.has(req.stockUser.role),sales:SALES.has(req.stockUser.role),manage:MANAGEMENT.has(req.stockUser.role),record_tender:RETAIL.has(req.stockUser.role)&&process.env.HTFO_POS_RECORD_EXTERNAL_PAYMENTS==='true',service:SERVICE.has(req.stockUser.role)}}));
 router.get('/retail/customers',permit(RETAIL),handle(async(req,res)=>{
  const term=code(req.query.q).slice(0,80);if(term.length<2)return res.json([]);
  const rows=await q(`SELECT id,first_name,last_name,phone,email FROM service_customers
@@ -283,6 +288,11 @@ const result=await run(`WITH changed AS (UPDATE htfo_inventory_spa SET status='a
  });
  if(outcome.error)return res.status(409).json(outcome);
  res.json(outcome);
+}));
+router.post('/receipts/:id/tender',permit(RETAIL),handle(async(req,res)=>{
+ if(process.env.HTFO_POS_RECORD_EXTERNAL_PAYMENTS!=='true')return res.status(409).json({error:'Recording outside payments is disabled pending register acceptance testing.'});
+ await ensureInventory();
+ res.json(await recordRetailTender(Number(req.params.id),req.body,req.stockUser.id));
 }));
 router.get('/receipts',permit(RETAIL),handle(async(req,res)=>{
  await ensureInventory();const rows=await q('SELECT id,customer_id,total_cents,payment_status,department,merchant_route,created_at FROM htfo_pos_receipts ORDER BY id DESC LIMIT 50');res.json(rows.rows);

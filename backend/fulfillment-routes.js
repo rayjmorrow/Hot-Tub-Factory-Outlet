@@ -18,6 +18,7 @@ export async function initFulfillment(){
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS fulfillment_status TEXT NOT NULL DEFAULT 'waiting';
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS ship_address JSONB;
     ALTER TABLE service_recurring_orders ADD COLUMN IF NOT EXISTS ship_address JSONB;
+    ALTER TABLE service_recurring_orders ADD COLUMN IF NOT EXISTS schedule_anchor DATE;
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS sales_department TEXT NOT NULL DEFAULT 'unassigned';
     ALTER TABLE service_recurring_orders ADD COLUMN IF NOT EXISTS sales_department TEXT NOT NULL DEFAULT 'unassigned';
     ALTER TABLE service_customer_order_items ADD COLUMN IF NOT EXISTS cover_form_id TEXT;
@@ -162,7 +163,7 @@ async function queueRows(){
     coalesce(o.ship_address->>'zip',c.zip) zip,
     coalesce((SELECT json_agg(json_build_object('id',i.id,'sku',i.sku,'description',i.description,'quantity',i.quantity,'unit_price',i.unit_price,'line_total',i.line_total,'cover_form_id',i.cover_form_id) ORDER BY i.id) FROM service_customer_order_items i WHERE i.order_id=o.id),'[]'::json) items
     FROM service_customer_orders o JOIN service_customers c ON c.id=o.customer_id
-    WHERE o.status <> 'cancelled' AND coalesce(o.fulfillment_status,'waiting') NOT IN ('shipped','delivered')
+    WHERE o.status <> 'cancelled' AND o.order_type<>'pickup' AND coalesce(o.fulfillment_status,'waiting') NOT IN ('shipped','delivered')
       AND (o.recurring_order_id IS NULL OR NOT EXISTS (SELECT 1 FROM service_recurring_orders r
         WHERE r.id=o.recurring_order_id AND r.external_subscription_id IS NOT NULL)
         OR EXISTS (SELECT 1 FROM service_order_card_payments p WHERE p.order_id=o.id))
@@ -261,6 +262,7 @@ router.post('/fulfillment/store-order',async(req,res)=>{
   const existing=(await run('SELECT id,customer_id FROM service_customer_orders WHERE external_order_id=$1',[external])).rows[0];
   if(existing)return {duplicate:true,order_id:existing.id,customer_id:existing.customer_id};
   const department=showroom(b.department);
+  const pickup=['pickup-monroeville','pickup-wexford'].includes(b.fulfillment);
   let customer=null;
   if(department){
     customer=(await run('SELECT * FROM service_customers WHERE id=$1',[b.pos_customer_id])).rows[0];
@@ -274,8 +276,8 @@ router.post('/fulfillment/store-order',async(req,res)=>{
   }
   const orderNo=clean(b.order_number)||('WEB-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-7));
   const order=(await run(`INSERT INTO service_customer_orders(customer_id,external_order_id,order_number,status,order_type,shipping_amount,total_amount,source,fulfillment_status,package_weight_lbs,package_length_in,package_width_in,package_height_in,notes,sales_department,ship_address)
-    VALUES($1,$2,$3,'processing','online',$4,$5,'online','waiting',$6,$7,$8,$9,$10,$11,$12::jsonb) RETURNING *`,
-    [customer.id,external,orderNo,num(b.shipping_amount),num(b.total_amount),num(b.package_weight_lbs)||10,num(b.package_length_in)||12,num(b.package_width_in)||12,num(b.package_height_in)||12,clean(b.notes),department||'online_sales',shippingAddress(cust)])).rows[0];
+    VALUES($1,$2,$3,'processing',$13,$4,$5,'online',$14,$6,$7,$8,$9,$10,$11,$12::jsonb) RETURNING *`,
+    [customer.id,external,orderNo,num(b.shipping_amount),num(b.total_amount),num(b.package_weight_lbs)||10,num(b.package_length_in)||12,num(b.package_width_in)||12,num(b.package_height_in)||12,clean(b.notes),department||'online_sales',pickup?null:shippingAddress(cust),pickup?'pickup':'online',pickup?'hold':'waiting'])).rows[0];
   for(const i of items){
     const qty=Math.max(.01,num(i.quantity)||1),unit=num(i.unit_price);
     const coverFormId=clean(i.cover_form_id);
@@ -315,8 +317,8 @@ router.post('/fulfillment/store-autoship',async(req,res)=>{
       for(const sub of subs){
         const external=String(sub.subscriptionId),months=Number(sub.frequencyMonths);
         if(!Number.isSafeInteger(months)||months<1||months>12)throw Error('Invalid AutoShip interval');
-        const inserted=(await run(`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes,sales_department,ship_address)
-          VALUES($1,$2,'active',$3,'months',$4,$5,$6,'AutoShip enrollment',$7,$8::jsonb)
+        const inserted=(await run(`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes,sales_department,ship_address,schedule_anchor)
+          VALUES($1,$2,'active',$3,'months',$4,$5,$6,'AutoShip enrollment',$7,$8::jsonb,$4)
           ON CONFLICT(external_subscription_id) WHERE external_subscription_id IS NOT NULL DO NOTHING RETURNING id`,
           [customer.id,external,months,sub.startDate,clean(b.payment_reference),b.fulfillment==='ship'?'ship':clean(b.fulfillment)||'ship',department||'online_sales',shippingAddress(cust)])).rows[0];
         if(!inserted){
@@ -369,9 +371,10 @@ router.post('/fulfillment/autoship-payment',async(req,res)=>{
         total_amount=$2,updated_at=NOW() WHERE id=$1`,[id,amount]);
       await run(`INSERT INTO service_order_card_payments(order_id,authorize_transaction_id,amount,raw_event_type)
         VALUES($1,$2,$3,'autoship_capture')`,[id,transactionId,amount]);
-      await run(`UPDATE service_recurring_orders SET next_ship_date=($2::date+make_interval(months=>CASE
-        WHEN frequency_unit='months' THEN frequency_value ELSE greatest(1,frequency_value/30) END))::date,
-        updated_at=NOW() WHERE id=$1 AND status='active' AND (next_ship_date IS NULL OR next_ship_date<=$2::date)`,[sub.id,date]);
+      await run(`UPDATE service_recurring_orders SET next_ship_date=CASE WHEN schedule_anchor IS NOT NULL
+        THEN (schedule_anchor+make_interval(months=>frequency_value*$3::integer))::date
+        ELSE ($2::date+make_interval(months=>CASE WHEN frequency_unit='months' THEN frequency_value ELSE greatest(1,frequency_value/30) END))::date END,
+        updated_at=NOW() WHERE id=$1 AND status='active' AND (next_ship_date IS NULL OR next_ship_date<=$2::date)`,[sub.id,date,paymentNumber]);
       return id;
     });
     res.json({ok:true,order_id:order});

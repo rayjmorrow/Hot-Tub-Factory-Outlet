@@ -37,18 +37,21 @@ router.get('/htfo-departments/summary',ownerOnly,async(req,res)=>{
     WHERE (executed_at AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date GROUP BY 1`,[from,to]),
    q(`SELECT department,payment_status,count(*)::int count,
     coalesce(sum(total_cents),0)::numeric total_cents
-    FROM htfo_pos_receipts WHERE (created_at AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date
+    FROM htfo_pos_receipts r LEFT JOIN htfo_pos_external_tenders t ON t.receipt_id=r.id
+    WHERE (coalesce(t.recorded_at,r.created_at) AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date
     GROUP BY department,payment_status`,[from,to]),
    q(`SELECT sales_department department,count(*)::int count,
     coalesce(sum(total_amount),0)::numeric gross_usd
     FROM service_customer_orders
-    WHERE source='online' AND (created_at AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date
+    WHERE (source='online' OR (source='autoship' AND EXISTS(
+      SELECT 1 FROM service_order_card_payments p WHERE p.order_id=service_customer_orders.id)))
+    AND (created_at AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date
     GROUP BY sales_department`,[from,to]),
    q(`SELECT coalesce(sum(amount),0)::numeric collected_usd,count(*)::int count
     FROM service_payments WHERE (received_at AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date`,[from,to])
   ]);
   const byDepartment=Object.fromEntries(DEPARTMENTS.map(k=>[k,{department:k,signed_agreements:0,signed_contract_value_cents:0,
-   agreement_recorded_paid_cents:0,retail_unpaid_drafts:0,retail_unpaid_draft_cents:0,online_fulfillment_orders:0,
+   agreement_recorded_paid_cents:0,retail_unpaid_drafts:0,retail_unpaid_draft_cents:0,retail_paid_receipts:0,retail_paid_cents:0,online_fulfillment_orders:0,
    online_order_gross_usd:0,service_payments_collected_usd:0}]));
   const unassigned=new Map();
   function target(k){
@@ -57,14 +60,14 @@ router.get('/htfo-departments/summary',ownerOnly,async(req,res)=>{
    return unassigned.get(k);
   }
   for(const x of signed.rows){const d=target(x.department);d.signed_agreements=Number(x.count);d.signed_contract_value_cents=Number(x.total_cents);d.agreement_recorded_paid_cents=Number(x.recorded_paid_cents)}
-  for(const x of retail.rows){const d=target(x.department);if(x.payment_status==='unpaid'){d.retail_unpaid_drafts=Number(x.count);d.retail_unpaid_draft_cents=Number(x.total_cents)}}
+  for(const x of retail.rows){const d=target(x.department);if(x.payment_status==='unpaid'){d.retail_unpaid_drafts=Number(x.count);d.retail_unpaid_draft_cents=Number(x.total_cents)}else if(x.payment_status==='paid'){d.retail_paid_receipts=Number(x.count);d.retail_paid_cents=Number(x.total_cents)}}
   for(const x of online.rows){const d=target(x.department);d.online_fulfillment_orders=Number(x.count);d.online_order_gross_usd=Number(x.gross_usd)}
   byDepartment.service.service_payments_collected_usd=Number(service.rows[0]?.collected_usd||0);
   res.set('Cache-Control','no-store');
   res.json({from,to,departments:byDepartment,unassigned:[...unassigned.values()],notes:[
    'Signed agreement totals are contract values, not verified settlement or recognized revenue.',
    'Retail unpaid drafts are not collected sales; they are excluded from paid revenue.',
-   'Online fulfillment amounts are recorded after payment handoff, not bank-reconciled deposits.',
+   'Store and AutoShip order totals reflect payment handoffs. Bank reconciliation is separate.',
    'Service payment totals are collected payments, not service profitability.',
    'Historical records without an assigned department are not automatically attributed.'
   ]});
