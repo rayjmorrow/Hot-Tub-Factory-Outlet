@@ -15,6 +15,8 @@ function csv(v){const s=String(v??'');return /[",\n]/.test(s)?'"'+s.replace(/"/g
 export async function initFulfillment(){
   await q(`
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS fulfillment_status TEXT NOT NULL DEFAULT 'waiting';
+    ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS sales_department TEXT NOT NULL DEFAULT 'unassigned';
+    ALTER TABLE service_recurring_orders ADD COLUMN IF NOT EXISTS sales_department TEXT NOT NULL DEFAULT 'unassigned';
     ALTER TABLE service_customer_order_items ADD COLUMN IF NOT EXISTS cover_form_id TEXT;
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS carrier TEXT;
     ALTER TABLE service_customer_orders ADD COLUMN IF NOT EXISTS shipping_service TEXT;
@@ -253,8 +255,8 @@ router.post('/fulfillment/store-order',async(req,res)=>{
     if(existing)return res.json({ok:true,duplicate:true,order_id:existing.id});
   }
   const orderNo=clean(b.order_number)||('WEB-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-7));
-  const order=(await q(`INSERT INTO service_customer_orders(customer_id,external_order_id,order_number,status,order_type,shipping_amount,total_amount,source,fulfillment_status,package_weight_lbs,package_length_in,package_width_in,package_height_in,notes)
-    VALUES($1,$2,$3,'processing','online',$4,$5,'online','waiting',$6,$7,$8,$9,$10) RETURNING *`,
+  const order=(await q(`INSERT INTO service_customer_orders(customer_id,external_order_id,order_number,status,order_type,shipping_amount,total_amount,source,fulfillment_status,package_weight_lbs,package_length_in,package_width_in,package_height_in,notes,sales_department)
+    VALUES($1,$2,$3,'processing','online',$4,$5,'online','waiting',$6,$7,$8,$9,$10,'online_sales') RETURNING *`,
     [customer.id,external,orderNo,num(b.shipping_amount),num(b.total_amount),num(b.package_weight_lbs)||10,num(b.package_length_in)||12,num(b.package_width_in)||12,num(b.package_height_in)||12,clean(b.notes)])).rows[0];
   for(const i of items){
     const qty=Math.max(.01,num(i.quantity)||1),unit=num(i.unit_price);
@@ -282,8 +284,8 @@ router.post('/fulfillment/store-autoship',async(req,res)=>{
     let rec=external?(await q('SELECT * FROM service_recurring_orders WHERE external_subscription_id=$1 LIMIT 1',[external])).rows[0]:null;
     if(!rec){
       const months=Math.max(1,Number(sub.frequencyMonths)||1),days=months*30,next=clean(sub.startDate)||addDays(ymd(new Date()),days);
-      rec=(await q(`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes)
-        VALUES($1,$2,'active',$3,'days',$4,$5,'ship',$6) RETURNING *`,[customer.id,external,days,next,clean(b.payment_reference),'Online store AutoShip'])).rows[0];
+      rec=(await q(`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes,sales_department)
+        VALUES($1,$2,'active',$3,'days',$4,$5,'ship',$6,'online_sales') RETURNING *`,[customer.id,external,days,next,clean(b.payment_reference),'Online store AutoShip'])).rows[0];
       const subItems=Array.isArray(sub.items)?sub.items:[];
       for(const i of subItems)await q(`INSERT INTO service_recurring_order_items(recurring_order_id,product_id,sku,description,quantity,unit_price,active)
         VALUES($1,$2,$3,$4,$5,$6,true)`,[rec.id,clean(i.id),clean(i.sku),clean(i.name)||clean(i.description)||'AutoShip item',Math.max(.01,num(i.quantity)||1),num(i.unit_price)]);
