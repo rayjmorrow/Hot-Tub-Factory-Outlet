@@ -51,5 +51,32 @@ $('#scanToCart').onclick=scanToCart;$('#counterBarcode').onkeydown=e=>{if(e.key=
 $('#addToCart').onclick=()=>{const p=skus.find(x=>x.id===Number($('#counterSku').value));const qty=Number($('#counterQty').value);if(!p||!Number.isInteger(qty)||qty<1||qty>99)return text($('#saleStatus'),'Choose a valid item and quantity');cart.push({p,qty});retailDraftReference=null;renderCart()};
 function renderCart(){$('#cartBody').replaceChildren();cart.forEach((x,i)=>{const tr=document.createElement('tr');for(const val of [x.p.name,x.qty,money(x.qty*x.p.price_cents)]){const td=document.createElement('td');text(td,val);tr.append(td)}const td=document.createElement('td'),b=document.createElement('button');text(b,'Remove');b.onclick=()=>{cart.splice(i,1);retailDraftReference=null;renderCart()};td.append(b);tr.append(td);$('#cartBody').append(tr)});text($('#cartTotal'),'Subtotal: '+money(cart.reduce((n,x)=>n+x.qty*x.p.price_cents,0)))}
 $('#saveReceipt').onclick=async()=>{if(!cart.length)return text($('#saleStatus'),'Add a product first');const department=$('#retailDepartment').value;if(!['monroeville_sales','wexford_sales'].includes(department))return text($('#saleStatus'),'Select the showroom for this counter sale');const button=$('#saveReceipt');button.disabled=true;try{retailDraftReference ||= crypto.randomUUID();const receipt=await request(POS+'/receipts',{method:'POST',body:JSON.stringify({customer_id:customerId,department,reference_key:retailDraftReference,items:cart.map(x=>({sku_id:x.p.id,qty:x.qty}))})});text($('#saleStatus'),'Retail draft #'+receipt.id+' saved — UNPAID. Tax '+money(receipt.tax_cents)+', total '+money(receipt.total_cents)+'. No stock deducted.');cart=[];retailDraftReference=null;renderCart()}catch(e){text($('#saleStatus'),e.message)}finally{button.disabled=false}};
+
+let catalogPreviewVersion='';
+$('#previewRetailCatalog').onclick=async()=>{
+ const output=$('#catalogPreview'),status=$('#catalogStatus');
+ catalogPreviewVersion='';$('#syncRetailPrices').disabled=true;output.replaceChildren();
+ text(status,'Comparing the published website catalog with counter POS…');
+ try{
+  const report=await request(POS+'/catalog/preview');catalogPreviewVersion=report.version;
+  const changed=report.entries.filter(x=>x.state!=='matches');
+  text(status,'Catalog '+report.version+': '+report.entries.length+' products, '+(report.counts.matches||0)+' already matching, '+(report.counts.price_differs||0)+' price differences, '+(report.counts.not_in_pos||0)+' missing SKUs, '+(report.counts.verify_sku||0)+' website-only identifiers, '+(report.counts.duplicate_existing||0)+' duplicates. No records changed.');
+  for(const p of changed.slice(0,120)){
+   const row=document.createElement('div');row.className='cardrow';
+   text(row,p.sku+' · '+p.name+' · '+p.state+' · website '+money(p.price_cents)+(p.current_price_cents===null?'':', POS '+money(p.current_price_cents)));
+   output.append(row);
+  }
+  $('#syncRetailPrices').disabled=!(report.counts.price_differs>0);
+ }catch(e){text(status,'Catalog comparison failed: '+e.message)}
+};
+$('#syncRetailPrices').onclick=async()=>{
+ if(!catalogPreviewVersion||!confirm('Update ONLY matching existing POS SKU selling prices to the published website price? Costs, inventory quantities and missing products will not be changed.'))return;
+ const button=$('#syncRetailPrices');button.disabled=true;
+ try{
+  const r=await request(POS+'/catalog/sync-existing-prices',{method:'POST',body:JSON.stringify({confirm:'SYNC_MATCHED_RETAIL_PRICES',version:catalogPreviewVersion})});
+  text($('#catalogStatus'),r.updated+' existing SKU selling prices updated. '+r.notes);await refresh();catalogPreviewVersion='';
+ }catch(e){text($('#catalogStatus'),'Sync was not completed: '+e.message)}
+};
+
 $('#skuForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);try{await request(POS+'/skus',{method:'POST',body:JSON.stringify({sku:f.get('sku'),name:f.get('name'),category:f.get('category'),price_cents:Math.round(Number(f.get('price'))*100),cost_cents:Math.round(Number(f.get('cost'))*100),reorder_point:Number(f.get('reorder')),barcode:f.get('barcode')})});text($('#manageStatus'),'SKU saved');await refresh()}catch(e){text($('#manageStatus'),e.message)}};
 $('#receiveForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);try{await request(POS+'/skus/'+f.get('sku_id')+'/receive',{method:'POST',body:JSON.stringify({location:f.get('location'),qty:Number(f.get('qty'))})});text($('#manageStatus'),'Inventory received');await refresh()}catch(e){text($('#manageStatus'),e.message)}};
