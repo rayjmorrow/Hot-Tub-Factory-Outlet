@@ -369,7 +369,10 @@ router.post('/crm/v1/import/highlevel',...guard,async(req,res)=>{try{
 async function ensureSalesDrafts(){await q(`CREATE TABLE IF NOT EXISTS crm_sales_drafts(
  id BIGSERIAL PRIMARY KEY, document JSONB NOT NULL, version INTEGER NOT NULL DEFAULT 1,
  created_by TEXT, updated_by TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
- await q(`ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES service_users(id);
+ await q(`ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+ ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS archived_by TEXT;
+ ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS archive_reason TEXT;
+ ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES service_users(id);
  UPDATE crm_sales_drafts d SET owner_user_id=u.id FROM (SELECT d2.id draft_id,MIN(u2.id) id FROM crm_sales_drafts d2 JOIN service_users u2 ON lower(d2.created_by)=lower(u2.display_name) OR lower(d2.created_by)=lower(u2.username) WHERE d2.owner_user_id IS NULL GROUP BY d2.id HAVING COUNT(*)=1) u WHERE d.id=u.draft_id AND d.owner_user_id IS NULL`)}
 function validateSalesDraft(input){
  const text=(v,max=500)=>String(v??'').trim().slice(0,max);
@@ -669,6 +672,7 @@ async function signedOrderLogRows(){
  const rows=(await q(`SELECT d.id,d.document,d.created_by,d.updated_at,e.executed_at
    FROM crm_sales_drafts d
    JOIN crm_sales_executed_contracts e ON e.draft_id=d.id
+   WHERE d.archived_at IS NULL
    ORDER BY e.executed_at DESC,d.id DESC
    LIMIT 2000`)).rows;
  return rows.map(orderLogRow);
@@ -694,7 +698,36 @@ router.get('/crm/v1/admin/order-list.csv',...guard,salesIdentity,async(req,res)=
    res.send('\ufeff'+out);
  }catch(e){res.status(500).json({error:e.message})}
 });
-router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();await ensureExecutedContracts();res.json((await q('SELECT d.*, (e.draft_id IS NOT NULL) AS executed FROM crm_sales_drafts d LEFT JOIN crm_sales_executed_contracts e ON e.draft_id=d.id ORDER BY d.updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
+// Owner-only archival keeps signed PDFs and payment evidence intact while excluding test records from active reports.
+router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,async(req,res)=>{
+ if(!['owner','admin'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Owner or administrator access required'});
+ const id=Number(req.params.id),reason=String(req.body?.reason||'').trim();
+ if(!Number.isSafeInteger(id)||id<1||reason.length<10||reason.length>500)return res.status(400).json({error:'Provide an agreement ID and a reason of at least 10 characters'});
+ try{
+  await ensureSalesDrafts();await ensureExecutedContracts();
+  const result=await transaction(async run=>{
+   const row=(await run('SELECT * FROM crm_sales_drafts WHERE id=$1 FOR UPDATE',[id])).rows[0];
+   if(!row)return {status:404,error:'Agreement not found'};
+   if(row.archived_at)return {status:409,error:'Agreement has already been archived'};
+   const doc=row.document||{};
+   const signed=(await run('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[id])).rowCount>0;
+   const recorded=Array.isArray(doc.payments)&&doc.payments.some(p=>Number(p.amount)>0);
+   const financed=Number(doc.finance?.amount||0)>0;
+   if(recorded||financed)return {status:409,error:'Agreement contains payments or financing. Reconcile or reverse the actual transaction before archiving.'};
+   // Signed agreements are retained permanently; archival does not cancel legal obligations.
+   const updated=(await run('UPDATE crm_sales_drafts SET archived_at=NOW(),archived_by=$2,archive_reason=$3,updated_at=NOW() WHERE id=$1 RETURNING id,archived_at,archived_by,archive_reason',[id,String(req.user.name||req.user.username||req.user.sub),reason])).rows[0];
+   return {status:200,agreement:updated,was_signed:signed,warning:signed?'Signed contract retained. Archiving does not void a legally executed agreement or release any serialized inventory reservation.':''};
+  });
+  res.status(result.status).json(result.error?{error:result.error}:{ok:true,...result});
+ }catch(e){res.status(500).json({error:'Unable to archive agreement safely'})}
+});
+router.get('/crm/v1/admin/sales-drafts/archived',...guard,salesIdentity,async(req,res)=>{
+ if(!['owner','admin'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Owner or administrator access required'});
+ try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,archived_at,archived_by,archive_reason FROM crm_sales_drafts WHERE archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 100')).rows;res.set('Cache-Control','no-store').json(rows)}
+ catch{res.status(500).json({error:'Archived agreement list unavailable'})}
+});
+
+router.get('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{await ensureSalesDrafts();await ensureExecutedContracts();res.json((await q('SELECT d.*, (e.draft_id IS NOT NULL) AS executed FROM crm_sales_drafts d LEFT JOIN crm_sales_executed_contracts e ON e.draft_id=d.id WHERE d.archived_at IS NULL ORDER BY d.updated_at DESC LIMIT 200')).rows)}catch(e){res.status(500).json({error:e.message})}});
 router.post('/crm/v1/sales-drafts',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);document.salesperson=req.user.name||req.user.username;await ensureSalesDrafts();const who=String(req.user.name||req.user.username);res.status(201).json((await q('INSERT INTO crm_sales_drafts(document,created_by,updated_by,owner_user_id) VALUES($1::jsonb,$2,$2,$3) RETURNING *',[JSON.stringify(document),who,req.user.sub])).rows[0])}catch(e){res.status(400).json({error:e.message})}});
 router.put('/crm/v1/sales-drafts/:id',...guard,salesIdentity,async(req,res)=>{try{const document=validateSalesDraft(req.body);const version=Number(req.body.version);if(!Number.isInteger(version)||version<1)return res.status(400).json({error:'Draft version is required'});await ensureSalesDrafts();const existing=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!existing||(!salesAdmin(req)&&String(existing.owner_user_id)!==String(req.user.sub)))return res.status(404).json({error:'Agreement not found'});await ensureExecutedContracts();if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[req.params.id])).rowCount)return res.status(409).json({error:'Signed agreement is locked; use a customer-authorized change order'});document.salesperson=existing.document.salesperson||'';const who=String(req.user.name||req.user.username);const params=[JSON.stringify(document),who,req.params.id,version];let access='';if(!salesAdmin(req)){params.push(req.user.sub);access=' AND owner_user_id=$5'}const row=(await q('UPDATE crm_sales_drafts SET document=$1::jsonb,version=version+1,updated_by=$2,updated_at=NOW() WHERE id=$3 AND version=$4'+access+' RETURNING *',params)).rows[0];if(!row)return res.status(409).json({error:'This draft changed or no longer exists. Reopen it from the log before saving.'});res.json(row)}catch(e){res.status(400).json({error:e.message})}});
 
