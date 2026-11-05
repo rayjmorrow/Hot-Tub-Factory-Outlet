@@ -127,7 +127,7 @@ router.post('/warranty/manufacturers/:manufacturer/import-batches/:id/apply-cred
   if(!Number.isSafeInteger(batchId)||batchId<1||req.body?.confirm!=='APPLY_VERIFIED_MANUFACTURER_CREDITS')
    return res.status(400).json({error:'Review the monthly report before applying approved credits'});
   const result=await transaction(async run=>{
-   const batch=(await run("SELECT id,credit_mode FROM htfo_warranty_import_batches WHERE id=$1 AND supplier='Cal Spas' FOR UPDATE",[batchId])).rows[0];
+   const batch=(await run("SELECT id,credit_mode FROM htfo_warranty_import_batches WHERE id=$1 AND supplier=$2 FOR UPDATE",[batchId,supplier])).rows[0];
    if(!batch)return {status:404,error:'Batch not found'};
    const lines=(await run('SELECT * FROM htfo_warranty_import_lines WHERE batch_id=$1 ORDER BY id FOR UPDATE',[batchId])).rows;
    const outcome={batch_id:batchId,applied:0,already_applied:0,requires_review:[],new_approved_credit:0};
@@ -170,7 +170,7 @@ router.post('/warranty/manufacturers/:manufacturer/claims/:id/settlements',owner
    return res.status(400).json({error:'Amount, settlement kind, date, bank or supplier invoice reference, and owner confirmation required'});
   const result=await transaction(async run=>{
    const claim=(await run('SELECT * FROM service_warranty_claims WHERE id=$1 FOR UPDATE',[id])).rows[0];
-   if(!claim||!text(claim.supplier).toLowerCase().includes('cal'))return {status:404,error:'Manufacturer claim not found'};
+   if(!claim||supplierKey(claim.supplier)!==supplierKey(supplier))return {status:404,error:'Manufacturer claim not found'};
    const approved=Number(claim.total_approved||0),paid=Number(claim.total_paid||0);
    if(amount>approved-paid+0.001)return {status:409,error:'Settlement exceeds the manufacturer credit approved but not yet settled'};
    const dupe=(await run('SELECT id FROM htfo_warranty_settlements WHERE claim_id=$1 AND kind=$2 AND reference=$3',[id,kind,reference])).rowCount;
