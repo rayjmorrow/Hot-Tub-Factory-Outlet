@@ -14,6 +14,7 @@
  <p id="calWarrantySummary" role="status"></p>
  <div class="card"><h3>Import Cal Spas CSV</h3>
  <p class="muted">Required column: serial number. Optional columns: claim number, claimed, approved, paid, status, payment reference, notes. Rows must be reviewed before storing as manufacturer evidence.</p>
+ <label>Credit report amounts represent <select id="calWarrantyCreditMode"><option value="monthly_credit">Credits issued on THIS month's report (add to existing credits)</option><option value="cumulative_approved">Total credit approved to date (replace prior total)</option></select></label>
  <label>Manufacturer report <input id="calWarrantyFile" type="file" accept=".csv,text/csv"></label>
  <button type="button" id="calWarrantyPreview">Preview matches</button>
  <button type="button" id="calWarrantyCommit" disabled>Save reviewed report as evidence</button>
@@ -48,7 +49,7 @@
    serial:['serial','serial_number','spa_serial','serial_no','serial_num','spa_serial_number','sn','s_n'],
    claim_number:['claim_number','claim_no','claim','warranty_claim','claim_id','service_claim'],
    claimed:['claimed','amount_claimed','claim_amount','total_claimed','billed_amount','invoice_amount'],
-   approved:['approved','amount_approved','approved_amount','total_approved'],
+   approved:['approved','amount_approved','approved_amount','total_approved','credit','credit_amount','credited','credit_issued','warranty_credit','credit_value','credit_memo_amount'],
    paid:['paid','amount_paid','paid_amount','total_paid','payment_amount'],
    status:['status','claim_status','warranty_status'],
    payment_reference:['payment_reference','payment_id','check_number','check_no','reference','eft_reference'],
@@ -73,9 +74,9 @@
    $('#calWarrantyClaims').innerHTML=claimed.length?'<table><thead><tr><th>Claim</th><th>Work order</th><th>Serial</th><th>Claimed</th><th>Credit approved</th><th>Actual receipts recorded</th><th>Awaiting credit</th><th>Approved not received</th><th>Status</th></tr></thead><tbody>'+
     claimed.map(x=>'<tr><td>'+html(x.claim_number||('#'+x.id))+'</td><td>'+html(x.work_order_number)+'</td><td>'+html(x.serial_number)+'</td><td>'+fmt(x.total_claimed)+'</td><td>'+fmt(x.total_approved)+'</td><td>'+fmt(x.total_paid)+'</td><td>'+fmt(Math.max(0,Number(x.total_claimed)-Number(x.total_approved)))+'</td><td>'+fmt(Math.max(0,Number(x.total_approved)-Number(x.total_paid)))+'</td><td>'+html(x.status)+'</td></tr>').join('')+'</tbody></table>':'<p>No Cal Spas claims recorded yet.</p>';
    const batches=data.batches||[];
-   $('#calWarrantyBatches').innerHTML=batches.length?batches.map(b=>'<div class="item"><b>'+html(b.file_name||'Cal Spas report')+' · '+html(String(b.created_at||'').slice(0,10))+'</b><span>'+Number(b.row_count||0)+' rows</span><button type="button" data-apply-credits="'+b.id+'">Apply approved credits</button></div>').join(''):'<p>No monthly manufacturer reports uploaded yet.</p>';
+   $('#calWarrantyBatches').innerHTML=batches.length?batches.map(b=>'<div class="item"><b>'+html(b.file_name||'Cal Spas report')+' · '+html(String(b.created_at||'').slice(0,10))+'</b><span>'+Number(b.row_count||0)+' rows · '+html(b.credit_mode==='cumulative_approved'?'Cumulative credit':'This month’s credit')+'</span><button type="button" data-apply-credits="'+b.id+'">Apply approved credits</button></div>').join(''):'<p>No monthly manufacturer reports uploaded yet.</p>';
    $('#calWarrantyBatches').querySelectorAll('[data-apply-credits]').forEach(b=>b.onclick=async()=>{
-    const batchId=b.dataset.applyCredits;if(!confirm('Apply only the approved amounts for uniquely matched claims in report #'+batchId+'? This does NOT record a bank payment, reduce a customer balance, or charge a card.'))return;
+    const batchId=b.dataset.applyCredits;if(!confirm('Apply report #'+batchId+' as '+(batches.find(x=>String(x.id)===String(batchId))?.credit_mode==='cumulative_approved'?'cumulative approved-to-date credits':'credits issued this month')+'? Only uniquely matched claims will be updated. No bank payment or customer charge will be recorded.'))return;
     b.disabled=true;const note=$('#calWarrantyCreditStatus');note.textContent='Reviewing the report and applying verifiable credits…';
     try{
      const result=await api('/warranty/cal-spas/import-batches/'+batchId+'/apply-credits',{method:'POST',body:JSON.stringify({confirm:'APPLY_VERIFIED_CAL_SPAS_CREDITS'})});
@@ -120,13 +121,14 @@
   try{
    const rows=mapCsv(await file.text());
    const preview=await api('/warranty/cal-spas/preview',{method:'POST',body:JSON.stringify({rows})});
-   staged={rows,file_name:file.name};const counts=preview.counts;
+   staged={rows,file_name:file.name,credit_mode:$('#calWarrantyCreditMode').value};const counts=preview.counts;
    status.textContent='Previewed '+rows.length+' records. '+Object.entries(counts).map(([k,v])=>k+': '+v).join(' · ')+'. No data was changed.';
    const table=document.createElement('table');table.innerHTML='<thead><tr><th>Serial</th><th>Claim #</th><th>Work order</th><th>Match</th><th>Claimed</th><th>Approved</th><th>Paid</th></tr></thead><tbody>'+preview.rows.map(x=>'<tr><td>'+html(x.serial)+'</td><td>'+html(x.claim_number)+'</td><td>'+html(x.internal?.work_order_number)+'</td><td>'+html(x.match_status)+'</td><td>'+fmt(x.reported_claimed)+'</td><td>'+fmt(x.reported_approved)+'</td><td>'+fmt(x.reported_paid)+'</td></tr>').join('')+'</tbody>';
    $('#calWarrantyImportPreview').append(table);
    $('#calWarrantyCommit').disabled=false;
   }catch(e){status.textContent='Preview failed: '+e.message}
  };
+ $('#calWarrantyCreditMode').onchange=()=>{staged=null;$('#calWarrantyCommit').disabled=true;$('#calWarrantyImportStatus').textContent='Credit interpretation changed. Preview the file again.'};
  $('#calWarrantyFile').onchange=()=>{staged=null;$('#calWarrantyCommit').disabled=true;$('#calWarrantyImportPreview').replaceChildren()};
  $('#calWarrantyCommit').onclick=async()=>{
   if(!staged)return;
