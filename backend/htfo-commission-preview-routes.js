@@ -8,7 +8,7 @@ const normalize=s=>String(s||'').trim().toLowerCase();
 const safeCents=v=>Number.isSafeInteger(Number(v))&&Number(v)>=0?Number(v):null;
 function authorize(req,res,next){
  try{
-  const raw=String(req.get('authorization')||'').replace(/^Bearer\\s+/i,'');
+  const raw=String(req.get('authorization')||'').replace(/^Bearer\s+/i,'');
   const user=jwt.verify(raw,process.env.SERVICE_JWT_SECRET);
   if(!managerRoles.has(normalize(user.role)))return res.status(403).json({error:'Commission preview is manager-only'});
   req.staff=user;next();
