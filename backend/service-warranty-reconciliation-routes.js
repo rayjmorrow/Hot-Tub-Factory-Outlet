@@ -44,6 +44,7 @@ async function ensure(){
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_serial ON htfo_warranty_import_lines(serial_number);
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_claim ON htfo_warranty_import_lines(claim_id);
  ALTER TABLE htfo_warranty_import_batches ADD COLUMN IF NOT EXISTS credit_mode TEXT NOT NULL DEFAULT 'monthly_credit';
+ ALTER TABLE htfo_warranty_import_batches ADD COLUMN IF NOT EXISTS report_month DATE;
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_work ON htfo_warranty_import_lines(work_order_id);
  ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_credit NUMERIC(12,2);
  ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
@@ -156,11 +157,14 @@ router.post('/warranty/manufacturers/:manufacturer/import',owner,async(req,res)=
   await ensure();const supplier=validSupplier(req,res);if(!supplier)return;const incoming=req.body?.rows,filename=text(req.body?.file_name).slice(0,180);
   if(req.body?.confirm!=='IMPORT_AS_EVIDENCE'||!Array.isArray(incoming)||!incoming.length||incoming.length>1000)return res.status(400).json({error:'Review and explicitly confirm the CSV import'});
   const creditMode=['monthly_credit','cumulative_approved'].includes(req.body?.credit_mode)?req.body.credit_mode:'monthly_credit';
-  const rows=incoming.map(normalize),hash=crypto.createHash('sha256').update(JSON.stringify({supplier,rows,creditMode})).digest('hex');
+  const reportMonth=text(req.body?.report_month);
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(reportMonth))return res.status(400).json({error:'Select the statement month for this manufacturer report'});
+
+  const rows=incoming.map(normalize),hash=crypto.createHash('sha256').update(JSON.stringify({supplier,rows,creditMode,reportMonth})).digest('hex');
   const result=await transaction(async run=>{
    if((await run('SELECT id FROM htfo_warranty_import_batches WHERE content_hash=$1',[hash])).rowCount)return {duplicate:true};
-   const batch=(await run(`INSERT INTO htfo_warranty_import_batches(supplier,file_name,content_hash,imported_by,row_count,credit_mode) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [supplier,filename,hash,text(req.operator.name||req.operator.username),rows.length,creditMode])).rows[0];
+   const batch=(await run(`INSERT INTO htfo_warranty_import_batches(supplier,file_name,content_hash,imported_by,row_count,credit_mode,report_month) VALUES($1,$2,$3,$4,$5,$6,$7::date) RETURNING id`,
+    [supplier,filename,hash,text(req.operator.name||req.operator.username),rows.length,creditMode,reportMonth+'-01'])).rows[0];
    const counts={};
    for(let i=0;i<rows.length;i++){
     const line=rows[i],m=await matched(line,supplier,run);counts[m.match_status]=(counts[m.match_status]||0)+1;
@@ -261,7 +265,7 @@ router.get('/warranty/manufacturers/:manufacturer/reconciliation',owner,async(re
    AND NOT EXISTS(SELECT 1 FROM service_warranty_claims wc WHERE wc.work_order_id=w.id AND lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($1::text[]))
    ORDER BY w.created_at DESC LIMIT 500`,[supplierAliases(supplier)])).rows;
   const settlements=(await q("SELECT s.id,s.claim_id,s.kind,s.amount,s.reference,s.settled_on,s.recorded_at FROM htfo_warranty_settlements s JOIN service_warranty_claims wc ON wc.id=s.claim_id WHERE lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($1::text[]) ORDER BY s.recorded_at DESC LIMIT 1000",[supplierAliases(supplier)])).rows;
-  const batches=(await q("SELECT id,file_name,created_at,row_count,credit_mode FROM htfo_warranty_import_batches WHERE supplier=$1 ORDER BY created_at DESC LIMIT 100",[supplier])).rows;
+  const batches=(await q("SELECT id,file_name,created_at,row_count,credit_mode,report_month FROM htfo_warranty_import_batches WHERE supplier=$1 ORDER BY created_at DESC LIMIT 100",[supplier])).rows;
   const imports=(await q(`SELECT li.*,b.created_at imported_at,b.file_name,w.work_order_number,wc.total_claimed internal_claimed,
    wc.total_paid internal_paid FROM htfo_warranty_import_lines li
    JOIN htfo_warranty_import_batches b ON b.id=li.batch_id LEFT JOIN service_work_orders w ON w.id=li.work_order_id
