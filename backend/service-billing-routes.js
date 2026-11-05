@@ -20,12 +20,17 @@ async function loadBill(id){
     WHERE w.id=$1`,[id])).rows[0];
   if(!w)return null;
   let invoice=(await q('SELECT * FROM service_invoices WHERE work_order_id=$1 ORDER BY created_at DESC LIMIT 1',[id])).rows[0]||null;
-  const subtotal=num(w.diagnostic_amount)+num(w.labor_amount)+num(w.parts_amount)+num(w.trip_amount),tax=num(w.tax_amount),total=num(subtotal+tax);
+  const aquaPartsOnly=Boolean(w.warranty)&&/^aquasolus(?:spas)?$/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''));
+  const customerParts=aquaPartsOnly?0:num(w.parts_amount);
+  const subtotal=num(w.diagnostic_amount)+num(w.labor_amount)+customerParts+num(w.trip_amount);
+  const tax=aquaPartsOnly?0:num(w.tax_amount),total=num(subtotal+tax);
   if(!invoice){
     const invoiceNo=`SVC-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
     invoice=(await q(`INSERT INTO service_invoices(invoice_number,work_order_id,customer_id,status,subtotal,tax_amount,total_amount,amount_paid)
       VALUES($1,$2,$3,'open',$4,$5,$6,0) RETURNING *`,[invoiceNo,w.id,w.customer_id,subtotal,tax,total])).rows[0];
   }else{
+    if(aquaPartsOnly&&Number(invoice.amount_paid||0)>0&&Math.abs(Number(invoice.total_amount)-total)>0.009)
+      throw new Error('Existing AquaSolus invoice has a recorded payment; owner review is required before changing the customer balance.');
     invoice=(await q(`UPDATE service_invoices SET subtotal=$2,tax_amount=$3,total_amount=$4,status=CASE WHEN amount_paid >= $4 THEN 'paid' WHEN amount_paid>0 THEN 'partial' ELSE 'open' END,updated_at=NOW() WHERE id=$1 RETURNING *`,[invoice.id,subtotal,tax,total])).rows[0];
   }
   await q('UPDATE service_invoice_line_items SET invoice_id=$2 WHERE work_order_id=$1 AND invoice_id IS NULL',[w.id,invoice.id]).catch(()=>{});
@@ -45,9 +50,11 @@ function billText(x){
     w.work_performed?`Work performed: ${w.work_performed}`:'',
     `Diagnostic: $${num(w.diagnostic_amount).toFixed(2)}`,
     `Labor: $${num(w.labor_amount).toFixed(2)}`,
-    `Parts: $${num(w.parts_amount).toFixed(2)}`,
+    `Parts: ${(w.warranty&&/^aquasolus(?:spas)?$/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''))?'0.00 — factory parts warranty (parts claimed from AquaSolus)':' '+num(w.parts_amount).toFixed(2)).trim()}`,
     `Trip: ${num(w.trip_amount).toFixed(2)}`,
-    ...(x.lineItems||[]).map(li=>`Part: ${li.description} — ${Number(li.quantity||1)} × ${num(li.unit_price).toFixed(2)} = ${num(li.line_total).toFixed(2)}`),
+    ...(x.lineItems||[]).map(li=>w.warranty&&/^aquasolus(?:spas)?$/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''))
+      ?`Factory-covered part (customer $0): ${li.description} — ${Number(li.quantity||1)}`
+      :`Part: ${li.description} — ${Number(li.quantity||1)} × ${num(li.unit_price).toFixed(2)} = ${num(li.line_total).toFixed(2)}`),
     `Tax: ${num(w.tax_amount).toFixed(2)}`,
     `Total: $${num(i.total_amount).toFixed(2)}`,
     `Paid: $${num(i.amount_paid).toFixed(2)}`,
