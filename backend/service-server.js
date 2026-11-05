@@ -45,6 +45,7 @@ import serviceMessagingRoutes,{syncServiceTwilioMessages} from './service-messag
 import serviceEmailRoutes,{ensureServiceCustomerEmails} from './service-email-routes.js';
 import serviceBillingRoutes from './service-billing-routes.js';
 import serviceDepartmentFinancials from './service-department-financials.js';
+import serviceWarrantyReconciliation from './service-warranty-reconciliation-routes.js';
 
 const app=express();
 const port=Number(process.env.PORT||process.env.SERVICE_PORT||8790);
@@ -142,9 +143,10 @@ app.use('/api/service',serviceMessagingRoutes);
 app.use('/api/service',serviceEmailRoutes);
 app.use('/api/service',serviceBillingRoutes);
 app.use('/api/service',serviceDepartmentFinancials);
+app.use('/api/service',serviceWarrantyReconciliation);
 
 const portalAssets=new Set([
-  'service-portal.css','service-portal.js','htfo-retail-pos.js','htfo-retail-pos.css','htfo-inventory-admin.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
+  'service-warranty-reconciliation-ui.js','service-portal.css','service-portal.js','htfo-retail-pos.js','htfo-retail-pos.css','htfo-inventory-admin.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
   'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js','service-workorder-detail-ui.js',
   'service-field.css','service-field.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js','fulfillment-ui.js','service-calendar-hotfix.js'
 ]);
