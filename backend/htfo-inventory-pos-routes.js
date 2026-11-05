@@ -100,7 +100,7 @@ router.get('/me',(req,res)=>res.json({user:{id:req.stockUser.id,username:req.sto
 router.get('/retail/customers',permit(RETAIL),handle(async(req,res)=>{
  const term=code(req.query.q).slice(0,80);if(term.length<2)return res.json([]);
  const rows=await q(`SELECT id,first_name,last_name,phone,email FROM service_customers
- WHERE concat_ws(' ',first_name,last_name,phone,email) ILIKE $1 ORDER BY last_name,first_name LIMIT 20`,['%'+term+'%']);
+ WHERE archived_at IS NULL AND concat_ws(' ',first_name,last_name,phone,email) ILIKE $1 ORDER BY last_name,first_name LIMIT 20`,['%'+term+'%']);
  res.json(rows.rows);
 }));
 router.get('/retail/signed-customers',permit(RETAIL),handle(async(req,res)=>{
