@@ -78,11 +78,13 @@ router.get('/financials/open-balances',auth,financeOwner,async(req,res)=>{try{
   const rows=(await q(`SELECT i.id invoice_id,i.invoice_number,i.total_amount,i.amount_paid,(i.total_amount-i.amount_paid) balance,i.created_at,
     greatest(0,(CURRENT_DATE-i.created_at::date))::int age_days,w.id work_order_id,w.work_order_number,w.status work_order_status,
     concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.email,
-    coalesce(ps.payment_status,'needed') payment_status,ps.card_brand,ps.card_last_four
+    coalesce(ps.payment_status,'needed') payment_status,ps.card_brand,ps.card_last_four,ca.status last_charge_status,ca.processor_message last_charge_message,ca.created_at last_charge_at
     FROM service_invoices i
     LEFT JOIN service_work_orders w ON w.id=i.work_order_id
     JOIN service_customers c ON c.id=i.customer_id
     LEFT JOIN service_customer_payment_settings ps ON ps.customer_id=i.customer_id
+    LEFT JOIN LATERAL (SELECT status,processor_message,created_at FROM service_card_charge_attempts
+      WHERE invoice_id=i.id ORDER BY created_at DESC,id DESC LIMIT 1) ca ON TRUE
     WHERE i.total_amount-i.amount_paid>0.009 ORDER BY age_days DESC,balance DESC`)).rows;
   res.json(rows);
 }catch(e){res.status(500).json({error:e.message})}});
