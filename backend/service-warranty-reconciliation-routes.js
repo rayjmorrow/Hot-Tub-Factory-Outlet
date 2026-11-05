@@ -29,6 +29,7 @@ async function ensure(){
   created_at TIMESTAMPTZ DEFAULT NOW(),UNIQUE(batch_id,line_number));
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_serial ON htfo_warranty_import_lines(serial_number);
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_claim ON htfo_warranty_import_lines(claim_id);
+ ALTER TABLE htfo_warranty_import_batches ADD COLUMN IF NOT EXISTS credit_mode TEXT NOT NULL DEFAULT 'monthly_credit';
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_work ON htfo_warranty_import_lines(work_order_id);
  ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_credit NUMERIC(12,2);
  ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
@@ -86,11 +87,12 @@ router.post('/warranty/cal-spas/import',owner,async(req,res)=>{
  try{
   await ensure();const incoming=req.body?.rows,filename=text(req.body?.file_name).slice(0,180);
   if(req.body?.confirm!=='IMPORT_AS_EVIDENCE'||!Array.isArray(incoming)||!incoming.length||incoming.length>1000)return res.status(400).json({error:'Review and explicitly confirm the CSV import'});
-  const rows=incoming.map(normalize),hash=crypto.createHash('sha256').update(JSON.stringify({supplier:'Cal Spas',rows})).digest('hex');
+  const creditMode=['monthly_credit','cumulative_approved'].includes(req.body?.credit_mode)?req.body.credit_mode:'monthly_credit';
+  const rows=incoming.map(normalize),hash=crypto.createHash('sha256').update(JSON.stringify({supplier:'Cal Spas',rows,creditMode})).digest('hex');
   const result=await transaction(async run=>{
    if((await run('SELECT id FROM htfo_warranty_import_batches WHERE content_hash=$1',[hash])).rowCount)return {duplicate:true};
-   const batch=(await run(`INSERT INTO htfo_warranty_import_batches(supplier,file_name,content_hash,imported_by,row_count) VALUES('Cal Spas',$1,$2,$3,$4) RETURNING id`,
-    [filename,hash,text(req.operator.name||req.operator.username),rows.length])).rows[0];
+   const batch=(await run(`INSERT INTO htfo_warranty_import_batches(supplier,file_name,content_hash,imported_by,row_count,credit_mode) VALUES('Cal Spas',$1,$2,$3,$4,$5) RETURNING id`,
+    [filename,hash,text(req.operator.name||req.operator.username),rows.length,creditMode])).rows[0];
    const counts={};
    for(let i=0;i<rows.length;i++){
     const line=rows[i],m=await matched(line,run);counts[m.match_status]=(counts[m.match_status]||0)+1;
@@ -114,7 +116,7 @@ router.post('/warranty/cal-spas/import-batches/:id/apply-credits',owner,async(re
   if(!Number.isSafeInteger(batchId)||batchId<1||req.body?.confirm!=='APPLY_VERIFIED_CAL_SPAS_CREDITS')
    return res.status(400).json({error:'Review the monthly report before applying approved credits'});
   const result=await transaction(async run=>{
-   const batch=(await run("SELECT id FROM htfo_warranty_import_batches WHERE id=$1 AND supplier='Cal Spas' FOR UPDATE",[batchId])).rows[0];
+   const batch=(await run("SELECT id,credit_mode FROM htfo_warranty_import_batches WHERE id=$1 AND supplier='Cal Spas' FOR UPDATE",[batchId])).rows[0];
    if(!batch)return {status:404,error:'Batch not found'};
    const lines=(await run('SELECT * FROM htfo_warranty_import_lines WHERE batch_id=$1 ORDER BY id FOR UPDATE',[batchId])).rows;
    const outcome={batch_id:batchId,applied:0,already_applied:0,requires_review:[],new_approved_credit:0};
@@ -131,7 +133,7 @@ router.post('/warranty/cal-spas/import-batches/:id/apply-credits',owner,async(re
     if(!claim||serial(claim.serial_number)!==serial(line.serial_number)||!text(claim.supplier).toLowerCase().includes('cal')){
      outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Claim and serial could not be verified'});continue;
     }
-    const approved=Number(line.reported_approved),previous=Number(claim.total_approved||0);
+    const previous=Number(claim.total_approved||0),reported=Number(line.reported_approved),approved=batch.credit_mode==='monthly_credit'?Math.round((previous+reported)*100)/100:reported;
     if(!Number.isFinite(approved)||approved<previous-0.001||approved>Number(claim.total_claimed)+0.001){
      outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Credit decreases previous approval or exceeds claimed amount'});continue;
     }
@@ -163,7 +165,7 @@ router.get('/warranty/cal-spas/reconciliation',owner,async(req,res)=>{
    WHERE w.warranty=true AND lower(coalesce(e.brand,'')) LIKE '%cal%'
    AND NOT EXISTS(SELECT 1 FROM service_warranty_claims wc WHERE wc.work_order_id=w.id AND lower(wc.supplier) LIKE '%cal%')
    ORDER BY w.created_at DESC LIMIT 500`)).rows;
-  const batches=(await q("SELECT id,file_name,created_at,row_count FROM htfo_warranty_import_batches WHERE supplier='Cal Spas' ORDER BY created_at DESC LIMIT 100")).rows;
+  const batches=(await q("SELECT id,file_name,created_at,row_count,credit_mode FROM htfo_warranty_import_batches WHERE supplier='Cal Spas' ORDER BY created_at DESC LIMIT 100")).rows;
   const imports=(await q(`SELECT li.*,b.created_at imported_at,b.file_name,w.work_order_number,wc.total_claimed internal_claimed,
    wc.total_paid internal_paid FROM htfo_warranty_import_lines li
    JOIN htfo_warranty_import_batches b ON b.id=li.batch_id LEFT JOIN service_work_orders w ON w.id=li.work_order_id
