@@ -20,7 +20,7 @@ async function loadBill(id){
     WHERE w.id=$1`,[id])).rows[0];
   if(!w)return null;
   let invoice=(await q('SELECT * FROM service_invoices WHERE work_order_id=$1 ORDER BY created_at DESC LIMIT 1',[id])).rows[0]||null;
-  const aquaPartsOnly=Boolean(w.warranty)&&/^aquasolus(?:spas)?$/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''));
+  const aquaPartsOnly=Boolean(w.warranty)&&/^aquasolus/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''));
   const customerParts=aquaPartsOnly?0:num(w.parts_amount);
   const subtotal=num(w.diagnostic_amount)+num(w.labor_amount)+customerParts+num(w.trip_amount);
   const tax=aquaPartsOnly?0:num(w.tax_amount),total=num(subtotal+tax);
@@ -50,9 +50,9 @@ function billText(x){
     w.work_performed?`Work performed: ${w.work_performed}`:'',
     `Diagnostic: $${num(w.diagnostic_amount).toFixed(2)}`,
     `Labor: $${num(w.labor_amount).toFixed(2)}`,
-    `Parts: ${(w.warranty&&/^aquasolus(?:spas)?$/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''))?'0.00 — factory parts warranty (parts claimed from AquaSolus)':' '+num(w.parts_amount).toFixed(2)).trim()}`,
+    `Parts: ${(w.warranty&&/^aquasolus/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''))?'0.00 — factory parts warranty (parts claimed from AquaSolus)':' '+num(w.parts_amount).toFixed(2)).trim()}`,
     `Trip: ${num(w.trip_amount).toFixed(2)}`,
-    ...(x.lineItems||[]).map(li=>w.warranty&&/^aquasolus(?:spas)?$/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''))
+    ...(x.lineItems||[]).map(li=>w.warranty&&/^aquasolus/i.test(String(w.brand||'').replace(/[^a-z0-9]/gi,''))
       ?`Factory-covered part (customer $0): ${li.description} — ${Number(li.quantity||1)}`
       :`Part: ${li.description} — ${Number(li.quantity||1)} × ${num(li.unit_price).toFixed(2)} = ${num(li.line_total).toFixed(2)}`),
     `Tax: ${num(w.tax_amount).toFixed(2)}`,
