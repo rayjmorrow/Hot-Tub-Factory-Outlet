@@ -48,6 +48,19 @@ export async function initServiceFinancials(){
     CREATE INDEX IF NOT EXISTS idx_service_warranty_claims_status ON service_warranty_claims(status);
     CREATE INDEX IF NOT EXISTS idx_service_warranty_claims_supplier ON service_warranty_claims(supplier);
     CREATE INDEX IF NOT EXISTS idx_service_warranty_claims_work_order ON service_warranty_claims(work_order_id);
+    CREATE TABLE IF NOT EXISTS htfo_warranty_settlements (
+      id BIGSERIAL PRIMARY KEY,
+      claim_id BIGINT NOT NULL REFERENCES service_warranty_claims(id),
+      kind TEXT NOT NULL CHECK(kind IN ('bank_deposit','vendor_credit_applied')),
+      amount NUMERIC(12,2) NOT NULL CHECK(amount>0),
+      reference TEXT NOT NULL,
+      settled_on DATE NOT NULL,
+      recorded_by TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(claim_id,kind,reference)
+    );
+    CREATE INDEX IF NOT EXISTS idx_htfo_warranty_settlements_claim ON htfo_warranty_settlements(claim_id);
+
 
     CREATE TABLE IF NOT EXISTS service_payments (
       id BIGSERIAL PRIMARY KEY,
