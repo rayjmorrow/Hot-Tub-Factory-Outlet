@@ -19,6 +19,15 @@ function owner(req,res,next){
 const MANUFACTURERS={"cal-spas":"Cal Spas","vita-spas":"Vita Spas","american-whirlpool":"American Whirlpool","aquasolus":"AquaSolus","eco-spas":"Eco Spas","innova-spas":"Innova Spas","wellis":"Wellis"};
 const canonicalSupplier=req=>MANUFACTURERS[text(req.params.manufacturer).toLowerCase()]||null;
 const supplierKey=v=>text(v).toLowerCase().replace(/[^a-z0-9]/g,'');
+const supplierAliases=supplier=>{
+ const key=supplierKey(supplier);
+ if(key==='vitaspas')return ['vitaspas','vitaspasbymaax','vitaspa'];
+ if(key==='americanwhirlpool')return ['americanwhirlpool','aw'];
+ if(key==='ecospas')return ['ecospas','ecospasbymaax'];
+ if(key==='innovaspas')return ['innovaspas','innova'];
+ if(key==='aquasolus')return ['aquasolus','aquasolusspas'];
+ return [key];
+};
 function validSupplier(req,res){const supplier=canonicalSupplier(req);if(!supplier)res.status(400).json({error:'Choose a supported manufacturer'});return supplier}
 
 async function ensure(){
@@ -58,19 +67,19 @@ async function matched(line,supplier,run=q){
  if(claim)claims=(await run(`SELECT wc.id,wc.work_order_id,wc.total_claimed,wc.total_paid,wc.total_approved,
   w.work_order_number,e.serial_number FROM service_warranty_claims wc
   JOIN service_work_orders w ON w.id=wc.work_order_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
-  WHERE lower(wc.claim_number)=lower($1) AND lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=$2 ORDER BY wc.id`,[claim,supplierKey(supplier)])).rows;
+  WHERE lower(wc.claim_number)=lower($1) AND lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($2::text[]) ORDER BY wc.id`,[claim,supplierAliases(supplier)])).rows;
  if(!claims.length&&sn){
   const rows=(await run(`SELECT wc.id,wc.work_order_id,wc.total_claimed,wc.total_paid,wc.total_approved,w.work_order_number,e.serial_number
   FROM service_warranty_claims wc JOIN service_work_orders w ON w.id=wc.work_order_id
   JOIN service_equipment e ON e.id=w.equipment_id WHERE upper(regexp_replace(e.serial_number,'[^A-Za-z0-9]','','g'))=$1
-  AND lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=$2 ORDER BY wc.id`,[sn,supplierKey(supplier)])).rows;
+  AND lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($2::text[]) ORDER BY wc.id`,[sn,supplierAliases(supplier)])).rows;
   claims=rows;
  }
  if(claims.length===1)return {match_status:'matched_claim',claim_id:claims[0].id,work_order_id:claims[0].work_order_id,internal:claims[0]};
  if(claims.length>1)return {match_status:'multiple_claims',claim_id:null,work_order_id:null};
  const work=sn?(await run(`SELECT w.id,w.work_order_number,w.total_amount,w.warranty,e.serial_number
   FROM service_work_orders w JOIN service_equipment e ON e.id=w.equipment_id
-  WHERE upper(regexp_replace(e.serial_number,'[^A-Za-z0-9]','','g'))=$1 AND lower(regexp_replace(coalesce(e.brand,''),'[^A-Za-z0-9]','','g'))=$2 ORDER BY w.id DESC LIMIT 3`,[sn,supplierKey(supplier)])).rows:[];
+  WHERE upper(regexp_replace(e.serial_number,'[^A-Za-z0-9]','','g'))=$1 AND lower(regexp_replace(coalesce(e.brand,''),'[^A-Za-z0-9]','','g'))=ANY($2::text[]) ORDER BY w.id DESC LIMIT 3`,[sn,supplierAliases(supplier)])).rows:[];
  if(work.length===1)return {match_status:'matched_work_order_no_claim',claim_id:null,work_order_id:work[0].id,internal:work[0]};
  return {match_status:work.length?'multiple_work_orders':'unmatched_serial',claim_id:null,work_order_id:null};
 }
@@ -84,6 +93,54 @@ function normalize(r,i){
  for(const k of ['claimed','approved','paid'])if((r[k]??r['amount_'+k])!=null&&text(r[k]??r['amount_'+k])!==''&&item['reported_'+k]===null)throw Error('Invalid '+k+' amount on row '+(i+2));
  return item;
 }
+router.get('/warranty/manufacturers/summary',owner,async(req,res)=>{
+ try{
+  await ensure();
+  const claims=(await q(`SELECT supplier,total_claimed,total_approved,total_paid,status FROM service_warranty_claims`)).rows;
+  const invoices=(await q(`SELECT i.id,i.invoice_number,i.total_amount,i.amount_paid,i.created_at,
+   w.work_order_number,e.serial_number,coalesce(e.brand,'Unassigned') spa_brand,
+   concat_ws(' ',c.first_name,c.last_name) customer_name,
+   coalesce(ps.payment_status,'needed') payment_status,
+   ca.status last_charge_status
+   FROM service_invoices i
+   JOIN service_customers c ON c.id=i.customer_id
+   LEFT JOIN service_work_orders w ON w.id=i.work_order_id
+   LEFT JOIN service_equipment e ON e.id=w.equipment_id
+   LEFT JOIN service_customer_payment_settings ps ON ps.customer_id=i.customer_id
+   LEFT JOIN LATERAL (SELECT status FROM service_card_charge_attempts
+    WHERE invoice_id=i.id ORDER BY created_at DESC,id DESC LIMIT 1) ca ON TRUE
+   WHERE greatest(i.total_amount-i.amount_paid,0)>0.009
+   AND lower(coalesce(i.status,'')) NOT IN ('void','voided','cancelled','canceled')
+   ORDER BY i.created_at DESC LIMIT 2000`)).rows;
+  const manufacturers=Object.values(MANUFACTURERS).map(name=>{
+   const own=claims.filter(x=>supplierAliases(name).includes(supplierKey(x.supplier)));
+   const sum=k=>Math.round(own.reduce((n,x)=>n+Number(x[k]||0),0)*100)/100;
+   const claimed=sum('total_claimed'),approved=sum('total_approved'),settled=sum('total_paid');
+   return {manufacturer:name,warranty_policy:name==='AquaSolus'?'parts_only_customer_pays_labor':'standard_verify_terms',
+    claims:own.length,claimed,approved_credit:approved,settled,awaiting_credit:Math.max(0,Math.round((claimed-approved)*100)/100),
+    credit_approved_not_settled:Math.max(0,Math.round((approved-settled)*100)/100),
+    total_unresolved:Math.max(0,Math.round((claimed-settled)*100)/100)};
+  });
+  const customerTotal=Math.round(invoices.reduce((n,x)=>n+Math.max(0,Number(x.total_amount)-Number(x.amount_paid)),0)*100)/100;
+  const customerBreakdown={
+   declined:0,processor_error:0,authorized_not_charged:0,cash_check_due:0,authorization_needed:0
+  };
+  for(const x of invoices){
+   const amt=Math.max(0,Number(x.total_amount)-Number(x.amount_paid));
+   const bucket=x.last_charge_status==='declined'?'declined':
+    x.last_charge_status==='error'?'processor_error':
+    x.payment_status==='card_on_file'?'authorized_not_charged':
+    x.payment_status==='cash_check_approved'?'cash_check_due':'authorization_needed';
+   customerBreakdown[bucket]=Math.round((customerBreakdown[bucket]+amt)*100)/100;
+  }
+  res.set('Cache-Control','no-store').json({
+   manufacturers,manufacturer_unresolved:Math.round(manufacturers.reduce((n,x)=>n+x.total_unresolved,0)*100)/100,
+   customers:{invoices:invoices.length,outstanding:customerTotal,by_status:customerBreakdown,details:invoices.slice(0,200)},
+   total_unresolved:Math.round((customerTotal+manufacturers.reduce((n,x)=>n+x.total_unresolved,0))*100)/100,
+   disclaimer:'Totals are recorded claims and invoiced balances, not proof that payments or credits were collected. Authorized cards are not settled payments.'
+  });
+ }catch(e){res.status(503).json({error:'Warranty and customer receivables summary unavailable: '+e.message})}
+});
 router.post('/warranty/manufacturers/:manufacturer/preview',owner,async(req,res)=>{
  try{
   await ensure();const supplier=validSupplier(req,res);if(!supplier)return;const incoming=req.body?.rows;
@@ -141,7 +198,7 @@ router.post('/warranty/manufacturers/:manufacturer/import-batches/:id/apply-cred
     if(seen.has(id)){outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Multiple report rows for one claim'});continue}
     seen.add(id);
     const claim=(await run("SELECT wc.*,e.serial_number FROM service_warranty_claims wc JOIN service_work_orders w ON w.id=wc.work_order_id JOIN service_equipment e ON e.id=w.equipment_id WHERE wc.id=$1 FOR UPDATE OF wc",[line.claim_id])).rows[0];
-    if(!claim||serial(claim.serial_number)!==serial(line.serial_number)||supplierKey(claim.supplier)!==supplierKey(supplier)){
+    if(!claim||serial(claim.serial_number)!==serial(line.serial_number)||!supplierAliases(supplier).includes(supplierKey(claim.supplier))){
      outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Claim and serial could not be verified'});continue;
     }
     const previous=Number(claim.total_approved||0),reported=Number(line.reported_approved),approved=batch.credit_mode==='monthly_credit'?Math.round((previous+reported)*100)/100:reported;
@@ -170,7 +227,7 @@ router.post('/warranty/manufacturers/:manufacturer/claims/:id/settlements',owner
    return res.status(400).json({error:'Amount, settlement kind, date, bank or supplier invoice reference, and owner confirmation required'});
   const result=await transaction(async run=>{
    const claim=(await run('SELECT * FROM service_warranty_claims WHERE id=$1 FOR UPDATE',[id])).rows[0];
-   if(!claim||supplierKey(claim.supplier)!==supplierKey(supplier))return {status:404,error:'Manufacturer claim not found'};
+   if(!claim||!supplierAliases(supplier).includes(supplierKey(claim.supplier)))return {status:404,error:'Manufacturer claim not found'};
    const approved=Number(claim.total_approved||0),paid=Number(claim.total_paid||0);
    if(amount>approved-paid+0.001)return {status:409,error:'Settlement exceeds the manufacturer credit approved but not yet settled'};
    const dupe=(await run('SELECT id FROM htfo_warranty_settlements WHERE claim_id=$1 AND kind=$2 AND reference=$3',[id,kind,reference])).rowCount;
@@ -195,15 +252,15 @@ router.get('/warranty/manufacturers/:manufacturer/reconciliation',owner,async(re
    (SELECT count(*)::int FROM htfo_warranty_import_lines li WHERE li.claim_id=wc.id) imported_line_count
    FROM service_warranty_claims wc JOIN service_work_orders w ON w.id=wc.work_order_id
    JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
-   WHERE lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=$1 ORDER BY wc.created_at DESC LIMIT 2000`,[supplierKey(supplier)])).rows;
+   WHERE lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($1::text[]) ORDER BY wc.created_at DESC LIMIT 2000`,[supplierAliases(supplier)])).rows;
   const missing=(await q(`SELECT w.id work_order_id,w.work_order_number,w.completed_at,w.labor_amount,w.parts_amount,w.trip_amount,
    e.serial_number,concat_ws(' ',c.first_name,c.last_name) customer_name
    FROM service_work_orders w JOIN service_equipment e ON e.id=w.equipment_id
    JOIN service_customers c ON c.id=w.customer_id
-   WHERE w.warranty=true AND lower(regexp_replace(coalesce(e.brand,''),'[^A-Za-z0-9]','','g'))=$1
-   AND NOT EXISTS(SELECT 1 FROM service_warranty_claims wc WHERE wc.work_order_id=w.id AND lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=$1)
-   ORDER BY w.created_at DESC LIMIT 500`,[supplierKey(supplier)])).rows;
-  const settlements=(await q("SELECT s.id,s.claim_id,s.kind,s.amount,s.reference,s.settled_on,s.recorded_at FROM htfo_warranty_settlements s JOIN service_warranty_claims wc ON wc.id=s.claim_id WHERE lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=$1 ORDER BY s.recorded_at DESC LIMIT 1000",[supplierKey(supplier)])).rows;
+   WHERE w.warranty=true AND lower(regexp_replace(coalesce(e.brand,''),'[^A-Za-z0-9]','','g'))=ANY($1::text[])
+   AND NOT EXISTS(SELECT 1 FROM service_warranty_claims wc WHERE wc.work_order_id=w.id AND lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($1::text[]))
+   ORDER BY w.created_at DESC LIMIT 500`,[supplierAliases(supplier)])).rows;
+  const settlements=(await q("SELECT s.id,s.claim_id,s.kind,s.amount,s.reference,s.settled_on,s.recorded_at FROM htfo_warranty_settlements s JOIN service_warranty_claims wc ON wc.id=s.claim_id WHERE lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($1::text[]) ORDER BY s.recorded_at DESC LIMIT 1000",[supplierAliases(supplier)])).rows;
   const batches=(await q("SELECT id,file_name,created_at,row_count,credit_mode FROM htfo_warranty_import_batches WHERE supplier=$1 ORDER BY created_at DESC LIMIT 100",[supplier])).rows;
   const imports=(await q(`SELECT li.*,b.created_at imported_at,b.file_name,w.work_order_number,wc.total_claimed internal_claimed,
    wc.total_paid internal_paid FROM htfo_warranty_import_lines li
@@ -225,7 +282,7 @@ router.get('/warranty/manufacturers/:manufacturer/reconciliation.csv',owner,asyn
    wc.status,wc.total_claimed,wc.total_approved,wc.total_paid,(wc.total_claimed-wc.total_paid) outstanding,
    w.labor_hours,w.work_performed,w.diagnosis
    FROM service_warranty_claims wc JOIN service_work_orders w ON w.id=wc.work_order_id
-   LEFT JOIN service_equipment e ON e.id=w.equipment_id WHERE lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=$1 ORDER BY wc.created_at DESC`,[supplierKey(supplier)])).rows;
+   LEFT JOIN service_equipment e ON e.id=w.equipment_id WHERE lower(regexp_replace(wc.supplier,'[^A-Za-z0-9]','','g'))=ANY($1::text[]) ORDER BY wc.created_at DESC`,[supplierAliases(supplier)])).rows;
   const safe=v=>'"'+String(v??'').replace(/^[=+@\-\t\r]/,' ').replaceAll('"','""')+'"';
   const fields=['claim_number','work_order_number','serial_number','completed','status','total_claimed','total_approved','total_paid','outstanding','labor_hours','work_performed','diagnosis'];
   res.set('Content-Type','text/csv; charset=utf-8').set('Cache-Control','no-store')
