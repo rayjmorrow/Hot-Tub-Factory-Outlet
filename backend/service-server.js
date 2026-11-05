@@ -25,7 +25,7 @@ import customerEditRoutes from './service-customer-edit-routes.js';
 import equipmentEditRoutes from './service-equipment-edit-routes.js';
 import workOrderDetailRoutes from './service-workorder-detail-routes.js';
 import {promoteLatestStagedCustomers} from './service-customer-promote.js';
-import {initServiceDb,q} from './service-db.js';
+import {initServiceDb,q,transaction} from './service-db.js';
 import {initServiceFinancials} from './service-financials.js';
 import {initServiceScheduling} from './service-scheduling.js';
 import {initServiceTenancy} from './service-tenancy.js';
@@ -187,27 +187,41 @@ try{
   await promoteLatestStagedCustomers();
   app.listen(port,()=>{
     console.log(`HTFO service backend listening on ${port}`);
-    // Temporary read-only reconciliation against the production database.
+    // One-time retail catalog reconciliation. Existing part records are kept intact.
     (async()=>{
       const catalog=await publishedRetailCatalog();
-      const auditProducts=[...catalog.products,{sku:'CHSE300',sku_status:'excluded'}];
-      const {rows}=await q(`SELECT c.sku,c.sku_status,c.price_cents AS published_price,
-        count(p.id)::int AS candidates,count(p.id) FILTER(WHERE lower(trim(p.supplier_part_number))=lower(c.sku))::int AS supplier_matches,
-        jsonb_agg(jsonb_build_object('sku',p.supplier_part_number,'manufacturer',p.manufacturer_part_number,
-          'name',p.description,'price',round(coalesce(nullif(p.sell_price,0),p.list_price,0)*100))) FILTER(WHERE p.id IS NOT NULL) AS matches
-        FROM jsonb_to_recordset($1::jsonb) c(sku text,sku_status text,price_cents int)
-        LEFT JOIN service_parts p ON p.active AND (lower(trim(p.supplier_part_number))=lower(c.sku) OR lower(trim(p.manufacturer_part_number))=lower(c.sku))
-        GROUP BY c.sku,c.sku_status,c.price_cents ORDER BY c.sku`,[JSON.stringify(auditProducts)]);
-      const summary={version:catalog.version,total:catalog.products.length,active_parts:Number((await q('SELECT count(*) FROM service_parts WHERE active')).rows[0].count)};
-      for(const row of rows){
-        const state=row.sku_status!=='published_sku'?row.sku_status:row.supplier_matches>1?'duplicate':row.supplier_matches===1?'mapped':row.candidates?'manufacturer_only':'missing';
-        summary[state]=(summary[state]||0)+1;
-        if(state==='mapped'&&row.matches.find(match=>match.sku?.trim().toLowerCase()===row.sku.toLowerCase())?.price!==row.published_price)summary.stored_price_differs=(summary.stored_price_differs||0)+1;
-        if(row.candidates&&(state!=='mapped'||row.candidates>1))console.log('HTFO_CATALOG_AUDIT_DETAIL '+JSON.stringify(row));
-      }
-      console.log('HTFO_CATALOG_AUDIT_SUMMARY '+JSON.stringify(summary));
-    })().catch(error=>console.error('HTFO_CATALOG_AUDIT_ERROR '+error.message));
-
+      if(catalog.version!=='2026-11-05-pos-reconciled')throw Error('Expected catalog revision is not published yet');
+      const products=catalog.products.filter(p=>p.sku_status==='published_sku');
+      const result=await transaction(async run=>{
+        await run('LOCK TABLE service_parts IN SHARE ROW EXCLUSIVE MODE');
+        const {rows:[summary]}=await run(`WITH catalog AS (
+          SELECT * FROM jsonb_to_recordset($1::jsonb) AS c(sku text,name text,category text,price_cents int)
+        ), inserted AS (
+          INSERT INTO service_parts(supplier_part_number,description,category,sell_price,source_updated_at)
+          SELECT c.sku,c.name,c.category,c.price_cents::numeric/100,NOW() FROM catalog c
+          WHERE NOT EXISTS(SELECT 1 FROM service_parts p WHERE lower(c.sku) IN
+            (lower(trim(p.supplier_part_number)),lower(trim(p.manufacturer_part_number)),lower(trim(p.barcode)))
+            OR (c.sku='01-14-3288' AND 'frog-ss-system' IN
+              (lower(trim(p.supplier_part_number)),lower(trim(p.manufacturer_part_number)),lower(trim(p.barcode)))))
+          RETURNING id
+        ) SELECT count(*)::int inserted FROM inserted`,[JSON.stringify(products)]);
+        const {rows:[checks]}=await run(`WITH catalog AS (
+          SELECT * FROM jsonb_to_recordset($1::jsonb) AS c(sku text,price_cents int)
+        ), audit AS (
+          SELECT c.sku,c.price_cents,count(p.id) AS matches,max(round(coalesce(nullif(p.sell_price,0),p.list_price,0)*100)) AS stored,
+          max(p.quantity_on_hand) AS stock,max(p.cost) AS cost
+          FROM catalog c LEFT JOIN service_parts p ON p.active AND lower(trim(p.supplier_part_number))=lower(c.sku)
+          GROUP BY c.sku,c.price_cents
+        ) SELECT count(*) FILTER(WHERE matches=1)::int matched,
+          count(*) FILTER(WHERE matches=1 AND stored=price_cents)::int price_matches,
+          count(*) FILTER(WHERE matches=0)::int missing,
+          count(*) FILTER(WHERE matches>1)::int ambiguous,
+          count(*) FILTER(WHERE matches=1 AND stock=0)::int zero_stock,
+          count(*) FILTER(WHERE matches=1 AND cost=0)::int cost_not_entered FROM audit`,[JSON.stringify(products)]);
+        return {...summary,...checks};
+      });
+      console.log('HTFO_CATALOG_RECONCILED '+JSON.stringify({version:catalog.version,...result}));
+    })().catch(error=>console.error('HTFO_CATALOG_RECONCILE_ERROR '+error.message));
     syncGmailReplies(Number(process.env.GMAIL_SYNC_DAYS||30),150).then(r=>console.log('Initial Gmail reply sync:',r)).catch(e=>console.error('Initial Gmail reply sync error:',e));
   });
   setInterval(()=>runFulfillmentAutomation().catch(e=>console.error('Fulfillment automation error:',e)),60*60*1000).unref();
