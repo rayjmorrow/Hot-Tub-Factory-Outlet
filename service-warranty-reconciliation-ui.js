@@ -7,14 +7,19 @@
  if(!nav||!main)return;
  const manufacturers=[
  ['cal-spas','Cal Spas'],['vita-spas','Vita Spas'],['american-whirlpool','American Whirlpool'],
- ['aquasolus','AquaSolus'],['eco-spas','Eco Spas'],['innova-spas','Innova Spas'],['wellis','Wellis (legacy)']
+ ['aquasolus','AquaSolus'],['eco-spas','Eco Spas'],['innova-spas','Innova Spas'],['wellis','Wellis (legacy)'],['bull-bbq','Bull BBQ'],['cal-flame','Cal Flame'],['primo-grills','Primo Grills'],['latham-pools','Latham Pools']
  ];
- const selectedManufacturer=()=>$('#manufacturerWarrantyBrand').value;
- const selectedManufacturerName=()=>manufacturers.find(x=>x[0]===selectedManufacturer())?.[1]||'Manufacturer';
+ const selectedManufacturer=()=>{
+  const value=$('#manufacturerWarrantyBrand').value;
+  if(value!=='custom')return value;
+  const key=$('#manufacturerWarrantyCustom').value.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  return key?'custom-'+key:'';
+ };
+ const selectedManufacturerName=()=>$('#manufacturerWarrantyBrand').value==='custom'?$('#manufacturerWarrantyCustom').value.trim():(manufacturers.find(x=>x[0]===selectedManufacturer())?.[1]||'Manufacturer');
  const button=document.createElement('button');button.dataset.view='warrantyReconciliation';button.textContent='Manufacturer Warranty';button.hidden=true;nav.append(button);
  const section=document.createElement('section');section.id='warrantyReconciliation';section.className='view';section.hidden=true;
  section.innerHTML=`<h2>Manufacturer Warranty Reconciliation</h2>
- <label>Manufacturer <select id="manufacturerWarrantyBrand"><option value="cal-spas">Cal Spas</option><option value="vita-spas">Vita Spas</option><option value="american-whirlpool">American Whirlpool</option><option value="aquasolus">AquaSolus</option><option value="eco-spas">Eco Spas</option><option value="innova-spas">Innova Spas</option><option value="wellis">Wellis (existing warranty history)</option></select></label>
+ <label>Manufacturer <select id="manufacturerWarrantyBrand"><option value="cal-spas">Cal Spas</option><option value="vita-spas">Vita Spas</option><option value="american-whirlpool">American Whirlpool</option><option value="aquasolus">AquaSolus</option><option value="eco-spas">Eco Spas</option><option value="innova-spas">Innova Spas</option><option value="wellis">Wellis (existing warranty history)</option><option value="bull-bbq">Bull BBQ</option><option value="cal-flame">Cal Flame</option><option value="primo-grills">Primo Grills</option><option value="latham-pools">Latham Pools</option><option value="custom">Other manufacturer…</option></select></label><label id="manufacturerWarrantyCustomLabel" hidden>Manufacturer name <input id="manufacturerWarrantyCustom" placeholder="Enter manufacturer name"></label>
  <div class="card"><h3>HTFO Receivables — Who Owes Us?</h3><div id="manufacturerWarrantyTotals" role="status"></div><div id="manufacturerWarrantyBreakdown"></div><div id="manufacturerCustomerBalances"></div></div>
  <p id="manufacturerWarrantyPolicy" class="muted"></p>
  <p class="muted">Owner-only. Match manufacturer CSV records against serialized spa service history and our claims. Uploaded amounts are evidence, not recorded payments.</p>
@@ -91,6 +96,7 @@
  }
  async function reload(){
   await reloadSummary();
+  if(!selectedManufacturer()){$('#calWarrantySummary').textContent='Enter a manufacturer name to view or import records.';return}
   $('#manufacturerWarrantyPolicy').textContent=selectedManufacturer()==='aquasolus'?'AquaSolus: parts-only factory warranty. ALL labor is billed to the customer. Do not include labor in manufacturer claims.':'Manufacturer warranty terms must be verified for each claim.';
   const status=$('#calWarrantySummary');status.textContent='Loading service warranty claims…';
   try{
@@ -159,7 +165,8 @@
   }catch(e){status.textContent='Warranty report unavailable: '+e.message}
  }
  button.onclick=()=>{showView('warrantyReconciliation');reload()};
- $('#manufacturerWarrantyBrand').onchange=()=>{staged=null;$('#calWarrantyCommit').disabled=true;$('#calWarrantyImportPreview').replaceChildren();reload()};
+ $('#manufacturerWarrantyCustom').onchange=()=>{staged=null;$('#calWarrantyCommit').disabled=true;reload()};
+ $('#manufacturerWarrantyBrand').onchange=()=>{$('#manufacturerWarrantyCustomLabel').hidden=$('#manufacturerWarrantyBrand').value!=='custom';staged=null;$('#calWarrantyCommit').disabled=true;$('#calWarrantyImportPreview').replaceChildren();reload()};
  const originalShowApp=showApp;
  showApp=function(user){
   originalShowApp(user);
@@ -171,6 +178,7 @@
   const file=$('#calWarrantyFile').files?.[0],status=$('#calWarrantyImportStatus');
   staged=null;$('#calWarrantyCommit').disabled=true;$('#calWarrantyImportPreview').replaceChildren();
   if(!file)return status.textContent='Choose a CSV file first.';
+  if(!selectedManufacturer())return status.textContent='Select a manufacturer or enter the custom manufacturer name first.';
   try{
    const rows=mapCsv(await file.text());
    const preview=await api('/warranty/manufacturers/'+selectedManufacturer()+'/preview',{method:'POST',body:JSON.stringify({rows})});
