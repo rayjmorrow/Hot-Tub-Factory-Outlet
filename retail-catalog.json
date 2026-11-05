@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-05-pos-reconciled",
+  "version": "2026-11-05-life-sku-reconciled",
   "currency": "USD",
   "description": "Published HTFO retail catalog extracted from website product listings. Wholesale costs and stock levels are intentionally absent. Unverified website identifiers cannot be scanned as manufacturer barcodes.",
   "excluded": [
@@ -539,172 +539,193 @@
       "sku_status": "published_sku"
     },
     {
-      "sku": "life-ph-up-liquid",
+      "sku": "LCH-50-4035",
+      "aliases": ["life-ph-up-liquid"],
       "name": "1 pt pH Up Liquid",
       "price_cents": 982,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-brom-tabs-5",
+      "sku": "LCH-50-1005",
+      "aliases": ["life-brom-tabs-5"],
       "name": "5 lb Brominating Tabs",
       "price_cents": 12992,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-waterline-cleaner",
+      "sku": "LCH-50-5090",
+      "aliases": ["life-waterline-cleaner"],
       "name": "1 pt Waterline & Surface Cleaner",
       "price_cents": 1062,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-scale-defense",
+      "sku": "LCH-50-5011",
+      "aliases": ["life-scale-defense"],
       "name": "1 pt Scale Defense",
       "price_cents": 1058,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-cover-cleaner",
+      "sku": "LCH-50-5070",
+      "aliases": ["life-cover-cleaner"],
       "name": "1 pt Cover Cleaner & Conditioner",
       "price_cents": 2818,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-scum-free",
+      "sku": "LCH-50-5030",
+      "aliases": ["life-scum-free"],
       "name": "1 pt Scum Free",
       "price_cents": 1084,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-fresh-start",
+      "sku": "LCH-50-0030",
+      "aliases": ["life-fresh-start"],
       "name": "Fresh Start Spa Maintenance Kit",
       "price_cents": 6564,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-spasoft",
+      "sku": "LCH-50-5005",
+      "aliases": ["life-spasoft"],
       "name": "2 lbs SpaSoft",
       "price_cents": 2076,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-chlor-5",
+      "sku": "LCH-50-2005",
+      "aliases": ["life-chlor-5"],
       "name": "5 lb Chlorinating Granules",
       "price_cents": 8390,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-foam-free",
+      "sku": "LCH-50-5040",
+      "aliases": ["life-foam-free"],
       "name": "1 pt Foam Free",
       "price_cents": 1084,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-metal-out",
+      "sku": "LCH-50-5010",
+      "aliases": ["life-metal-out"],
       "name": "1 pt Metal Out",
       "price_cents": 980,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-filter-cleaner",
+      "sku": "LCH-50-5080",
+      "aliases": ["life-filter-cleaner"],
       "name": "1 pt Filter Cleaner with Sprayer",
       "price_cents": 1446,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-oxidizer-5",
+      "sku": "LCH-50-3005",
+      "aliases": ["life-oxidizer-5"],
       "name": "5 lb Oxidizing Shock",
       "price_cents": 6094,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-alk-up",
+      "sku": "LCH-50-4030",
+      "aliases": ["life-alk-up"],
       "name": "1 lb Alkalinity & pH Up",
       "price_cents": 854,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-calcium",
+      "sku": "LCH-50-4010",
+      "aliases": ["life-calcium"],
       "name": "14 oz Calcium Booster",
       "price_cents": 740,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-brom-tabs-15",
+      "sku": "LCH-50-1015",
+      "aliases": ["life-brom-tabs-15"],
       "name": "1.5 lb Brominating Tabs",
       "price_cents": 4228,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-clarifier",
+      "sku": "LCH-50-5020",
+      "aliases": ["life-clarifier"],
       "name": "1 pt Natural Clarifier",
       "price_cents": 858,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-oxidizer-15",
+      "sku": "LCH-50-3015",
+      "aliases": ["life-oxidizer-15"],
       "name": "1.5 lb Oxidizing Shock",
       "price_cents": 1838,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-chlor-2",
+      "sku": "LCH-50-2002",
+      "aliases": ["life-chlor-2"],
       "name": "2 lb Chlorinating Granules",
       "price_cents": 3292,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-alk-down",
+      "sku": "LCH-50-4020",
+      "aliases": ["life-alk-down"],
       "name": "1.5 lb Alkalinity & pH Down",
       "price_cents": 1040,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     },
     {
-      "sku": "life-jet-cleaner",
+      "sku": "LCH-50-5060",
+      "aliases": ["life-jet-cleaner"],
       "name": "1 pt Purge & Jet Line Cleaner",
       "price_cents": 1266,
       "category": "LIFE Spa Care",
       "source": "life-products.js",
-      "sku_status": "website_identifier"
+      "sku_status": "published_sku"
     }
   ]
 }
