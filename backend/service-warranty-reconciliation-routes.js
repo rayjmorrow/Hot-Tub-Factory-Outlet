@@ -29,7 +29,16 @@ async function ensure(){
   created_at TIMESTAMPTZ DEFAULT NOW(),UNIQUE(batch_id,line_number));
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_serial ON htfo_warranty_import_lines(serial_number);
  CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_claim ON htfo_warranty_import_lines(claim_id);
- CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_work ON htfo_warranty_import_lines(work_order_id);`);
+ CREATE INDEX IF NOT EXISTS idx_htfo_warranty_lines_work ON htfo_warranty_import_lines(work_order_id);
+ ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_credit NUMERIC(12,2);
+ ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
+ ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_by TEXT;
+ CREATE TABLE IF NOT EXISTS htfo_warranty_credit_events(
+ id BIGSERIAL PRIMARY KEY,
+ import_line_id BIGINT NOT NULL UNIQUE REFERENCES htfo_warranty_import_lines(id),
+ claim_id BIGINT NOT NULL REFERENCES service_warranty_claims(id),
+ approved_before NUMERIC(12,2) NOT NULL,approved_after NUMERIC(12,2) NOT NULL,
+ credited_by TEXT NOT NULL,credited_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
 }
 async function matched(line,run=q){
  const sn=serial(line.serial),claim=text(line.claim_number);
@@ -114,15 +123,18 @@ router.get('/warranty/cal-spas/reconciliation',owner,async(req,res)=>{
    WHERE w.warranty=true AND lower(coalesce(e.brand,'')) LIKE '%cal%'
    AND NOT EXISTS(SELECT 1 FROM service_warranty_claims wc WHERE wc.work_order_id=w.id AND lower(wc.supplier) LIKE '%cal%')
    ORDER BY w.created_at DESC LIMIT 500`)).rows;
+  const batches=(await q("SELECT id,file_name,created_at,row_count FROM htfo_warranty_import_batches WHERE supplier='Cal Spas' ORDER BY created_at DESC LIMIT 100")).rows;
   const imports=(await q(`SELECT li.*,b.created_at imported_at,b.file_name,w.work_order_number,wc.total_claimed internal_claimed,
    wc.total_paid internal_paid FROM htfo_warranty_import_lines li
    JOIN htfo_warranty_import_batches b ON b.id=li.batch_id LEFT JOIN service_work_orders w ON w.id=li.work_order_id
    LEFT JOIN service_warranty_claims wc ON wc.id=li.claim_id WHERE b.supplier='Cal Spas'
    ORDER BY li.created_at DESC,li.id DESC LIMIT 2000`)).rows;
   const total=claims.reduce((s,r)=>s+Math.max(0,Number(r.total_claimed||0)-Number(r.total_paid||0)),0);
+  const uncredited=claims.reduce((n,r)=>n+Math.max(0,Number(r.total_claimed||0)-Number(r.total_approved||0)),0);
+  const approvedUnpaid=claims.reduce((n,r)=>n+Math.max(0,Number(r.total_approved||0)-Number(r.total_paid||0)),0);
   res.set('Cache-Control','no-store').json({summary:{claims:claims.length,claimed:claims.reduce((s,r)=>s+Number(r.total_claimed||0),0),
-   recorded_paid:claims.reduce((s,r)=>s+Number(r.total_paid||0),0),unreconciled_claim_balance:Math.round(total*100)/100,
-   warranty_jobs_without_claim:missing.length,imported_lines:imports.length},claims,unclaimed_work_orders:missing,imports,
+   recorded_paid:claims.reduce((s,r)=>s+Number(r.total_paid||0),0),unreconciled_claim_balance:Math.round(total*100)/100,uncredited_balance:Math.round(uncredited*100)/100,approved_not_received:Math.round(approvedUnpaid*100)/100,
+   warranty_jobs_without_claim:missing.length,imported_lines:imports.length},claims,unclaimed_work_orders:missing,imports,batches,
    notice:'Internal paid amounts are staff-entered and require verification against bank deposits; manufacturer CSV paid amounts are kept separate.'});
  }catch(e){res.status(503).json({error:'Warranty reconciliation unavailable: '+e.message})}
 });
