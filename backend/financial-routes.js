@@ -1,7 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { q } from './service-db.js';
+import { q, transaction } from './service-db.js';
 import { calculateTripCharge } from './service-financials.js';
 
 const router=express.Router();
@@ -42,19 +42,33 @@ router.get('/invoices/:id/field',auth,async(req,res)=>{
 });
 
 router.post('/invoices/:id/payments',auth,async(req,res)=>{
-  const method=String(req.body?.payment_method||'').toLowerCase();
-  if(!['cash','check'].includes(method))return res.status(400).json({error:'Field manual payments must be cash or check'});
-  const inv=(await q('SELECT * FROM service_invoices WHERE id=$1',[req.params.id])).rows[0];
-  if(!inv)return res.status(404).json({error:'Invoice not found'});
-  const balance=Math.max(0,money(num(inv.total_amount)-num(inv.amount_paid)));
-  const amount=money(req.body?.amount);
-  if(amount<=0)return res.status(400).json({error:'Payment amount must be greater than zero'});
-  if(amount>balance+0.001)return res.status(400).json({error:`Payment exceeds remaining balance of ${balance.toFixed(2)}`});
-  const reference=clean(req.body?.reference_number),notes=clean(req.body?.notes);
-  if(method==='check'&&!reference)return res.status(400).json({error:'Check number is required for check payments'});
-  const p=await q(`INSERT INTO service_payments(invoice_id,work_order_id,customer_id,amount,payment_method,reference_number,collected_by_user_id,collected_by_name,collected_in_field,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,$9) RETURNING *`,[inv.id,inv.work_order_id,inv.customer_id,amount,method,reference,req.user?.sub||null,req.user?.name||req.user?.username||'HTFO staff',notes]);
-  const updated=await q(`UPDATE service_invoices SET amount_paid=amount_paid+$2,payment_method=$3,status=CASE WHEN amount_paid+$2>=total_amount THEN 'paid' ELSE 'partial' END,paid_at=CASE WHEN amount_paid+$2>=total_amount THEN NOW() ELSE paid_at END,updated_at=NOW() WHERE id=$1 RETURNING *,total_amount-amount_paid balance`,[inv.id,amount,method]);
-  res.status(201).json({payment:p.rows[0],invoice:updated.rows[0]});
+ const method=String(req.body?.payment_method||'').toLowerCase();
+ if(!['cash','check'].includes(method))return res.status(400).json({error:'Cash or check required for manually recorded field payments'});
+ const amount=money(req.body?.amount),reference=clean(req.body?.reference_number),notes=clean(req.body?.notes);
+ if(!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Payment must be greater than zero'});
+ if(method==='check'&&!reference)return res.status(400).json({error:'Check number is required'});
+ try{
+  const result=await transaction(async run=>{
+   const inv=(await run('SELECT * FROM service_invoices WHERE id=$1 FOR UPDATE',[req.params.id])).rows[0];
+   if(!inv)return {status:404,error:'Invoice not found'};
+   const balance=Math.max(0,money(num(inv.total_amount)-num(inv.amount_paid)));
+   if(amount>balance+0.001)return {status:409,error:'Payment exceeds remaining balance of $'+balance.toFixed(2)};
+   if(reference){
+    const duplicate=(await run('SELECT id FROM service_payments WHERE invoice_id=$1 AND payment_method=$2 AND reference_number=$3 LIMIT 1',[inv.id,method,reference])).rows[0];
+    if(duplicate)return {status:409,error:'This payment reference is already recorded for this invoice'};
+   }
+   const payment=(await run(`INSERT INTO service_payments(invoice_id,work_order_id,customer_id,amount,payment_method,reference_number,collected_by_user_id,collected_by_name,collected_in_field,notes)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,true,$9) RETURNING *`,
+    [inv.id,inv.work_order_id,inv.customer_id,amount,method,reference,req.user?.sub||null,req.user?.name||req.user?.username||'HTFO staff',notes])).rows[0];
+   const updated=(await run(`UPDATE service_invoices SET amount_paid=amount_paid+$2,payment_method=$3,
+    status=CASE WHEN amount_paid+$2>=total_amount THEN 'paid' ELSE 'partial' END,
+    paid_at=CASE WHEN amount_paid+$2>=total_amount THEN NOW() ELSE paid_at END,updated_at=NOW()
+    WHERE id=$1 RETURNING *,total_amount-amount_paid balance`,[inv.id,amount,method])).rows[0];
+   return {status:201,payment,invoice:updated};
+  });
+  if(result.error)return res.status(result.status).json({error:result.error});
+  res.status(201).json({payment:result.payment,invoice:result.invoice});
+ }catch(e){res.status(503).json({error:'Payment not recorded. Please check the invoice history before retrying.'})}
 });
 
 router.post('/invoices/:id/card-checkout',auth,async(req,res)=>{
