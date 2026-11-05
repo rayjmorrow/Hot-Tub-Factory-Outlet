@@ -372,6 +372,7 @@ async function ensureSalesDrafts(){await q(`CREATE TABLE IF NOT EXISTS crm_sales
  await q(`ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
  ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS archived_by TEXT;
  ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS archive_reason TEXT;
+ ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS archive_kind TEXT;
  ALTER TABLE crm_sales_drafts ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES service_users(id);
  UPDATE crm_sales_drafts d SET owner_user_id=u.id FROM (SELECT d2.id draft_id,MIN(u2.id) id FROM crm_sales_drafts d2 JOIN service_users u2 ON lower(d2.created_by)=lower(u2.display_name) OR lower(d2.created_by)=lower(u2.username) WHERE d2.owner_user_id IS NULL GROUP BY d2.id HAVING COUNT(*)=1) u WHERE d.id=u.draft_id AND d.owner_user_id IS NULL`)}
 function validateSalesDraft(input){
@@ -701,8 +702,9 @@ router.get('/crm/v1/admin/order-list.csv',...guard,salesIdentity,async(req,res)=
 // Owner-only archival keeps signed PDFs and payment evidence intact while excluding test records from active reports.
 router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,async(req,res)=>{
  if(!['owner','admin'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Owner or administrator access required'});
- const id=Number(req.params.id),reason=String(req.body?.reason||'').trim();
+ const id=Number(req.params.id),reason=String(req.body?.reason||'').trim(),kind=String(req.body?.kind||'test');
  if(!Number.isSafeInteger(id)||id<1||reason.length<10||reason.length>500)return res.status(400).json({error:'Provide an agreement ID and a reason of at least 10 characters'});
+ if(!['test','cancelled'].includes(kind))return res.status(400).json({error:'Choose test or cancelled'});
  try{
   await ensureSalesDrafts();await ensureExecutedContracts();
   const result=await transaction(async run=>{
@@ -714,8 +716,10 @@ router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,asyn
    const recorded=Array.isArray(doc.payments)&&doc.payments.some(p=>Number(p.amount)>0);
    const financed=Number(doc.finance?.amount||0)>0;
    if(recorded||financed)return {status:409,error:'Agreement contains payments or financing. Reconcile or reverse the actual transaction before archiving.'};
+   if(signed&&kind==='test')return {status:409,error:'A signed agreement must be handled as a documented cancellation, not a test deletion.'};
+   if(signed&&req.body?.customer_cancelled!==true)return {status:409,error:'Confirm that the customer cancellation is documented before removing a signed agreement from active reports.'};
    // Signed agreements are retained permanently; archival does not cancel legal obligations.
-   const updated=(await run('UPDATE crm_sales_drafts SET archived_at=NOW(),archived_by=$2,archive_reason=$3,updated_at=NOW() WHERE id=$1 RETURNING id,archived_at,archived_by,archive_reason',[id,String(req.user.name||req.user.username||req.user.sub),reason])).rows[0];
+   const updated=(await run('UPDATE crm_sales_drafts SET archived_at=NOW(),archived_by=$2,archive_reason=$3,archive_kind=$4,updated_at=NOW() WHERE id=$1 RETURNING id,archived_at,archived_by,archive_reason,archive_kind',[id,String(req.user.name||req.user.username||req.user.sub),reason,kind])).rows[0];
    return {status:200,agreement:updated,was_signed:signed,warning:signed?'Signed contract retained. Archiving does not void a legally executed agreement or release any serialized inventory reservation.':''};
   });
   res.status(result.status).json(result.error?{error:result.error}:{ok:true,...result});
@@ -723,7 +727,7 @@ router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,asyn
 });
 router.get('/crm/v1/admin/sales-drafts/archived',...guard,salesIdentity,async(req,res)=>{
  if(!['owner','admin'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Owner or administrator access required'});
- try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,archived_at,archived_by,archive_reason FROM crm_sales_drafts WHERE archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 100')).rows;res.set('Cache-Control','no-store').json(rows)}
+ try{await ensureSalesDrafts();const rows=(await q('SELECT id,document,archived_at,archived_by,archive_reason,archive_kind FROM crm_sales_drafts WHERE archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 100')).rows;res.set('Cache-Control','no-store').json(rows)}
  catch{res.status(500).json({error:'Archived agreement list unavailable'})}
 });
 
