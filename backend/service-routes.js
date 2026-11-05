@@ -148,16 +148,15 @@ router.post('/customers/:id/archive',auth,async(req,res)=>{
   if(!customer)return res.status(404).json({error:'Customer not found'});
   if(customer.archived_at)return res.status(409).json({error:'Customer is already archived'});
   const related=await Promise.all([
-   q('SELECT 1 FROM service_work_orders WHERE customer_id=$1 LIMIT 1',[id]),
-   q('SELECT 1 FROM service_invoices WHERE customer_id=$1 LIMIT 1',[id]),
-   q('SELECT 1 FROM service_customer_orders WHERE customer_id=$1 LIMIT 1',[id]),
-   q('SELECT 1 FROM service_recurring_orders WHERE customer_id=$1 LIMIT 1',[id]),
-   q('SELECT 1 FROM service_equipment WHERE customer_id=$1 LIMIT 1',[id]),
-   q('SELECT 1 FROM htfo_pos_receipts WHERE customer_id=$1 LIMIT 1',[id]),
+   q("SELECT 1 FROM service_work_orders WHERE customer_id=$1 AND lower(coalesce(status,'')) NOT IN ('completed','cancelled','canceled','closed') LIMIT 1",[id]),
+   q("SELECT 1 FROM service_invoices WHERE customer_id=$1 AND greatest(coalesce(total_amount,0)-coalesce(amount_paid,0),0)>0.009 AND lower(coalesce(status,'')) NOT IN ('void','voided','cancelled','canceled') LIMIT 1",[id]),
+   q("SELECT 1 FROM service_customer_orders WHERE customer_id=$1 AND lower(coalesce(status,'')) NOT IN ('completed','fulfilled','shipped','cancelled','canceled','closed') LIMIT 1",[id]),
+   q("SELECT 1 FROM service_recurring_orders WHERE customer_id=$1 AND lower(coalesce(status,'')) NOT IN ('cancelled','canceled','inactive','expired','completed','ended') LIMIT 1",[id]),
+   q("SELECT 1 FROM htfo_pos_receipts WHERE customer_id=$1 AND payment_status='unpaid' LIMIT 1",[id]),
    q(`SELECT 1 FROM crm_sales_executed_contracts e JOIN crm_sales_drafts d ON d.id=e.draft_id
       WHERE d.archived_at IS NULL AND lower(e.customer_email)=lower($1) LIMIT 1`,[customer.email||''])
   ]);
-  if(related.some(x=>x.rowCount))return res.status(409).json({error:'Customer has linked purchases, equipment, service or signed agreements. Archive those test records first, or preserve the customer history.'});
+  if(related.some(x=>x.rowCount))return res.status(409).json({error:'Customer has open orders, an outstanding invoice, an active AutoShip, pending work, an unpaid POS draft, or an active signed agreement. Close or reconcile those records first.'});
   const updated=(await q('UPDATE service_customers SET archived_at=NOW(),archived_by=$2,archive_reason=$3,updated_at=NOW() WHERE id=$1 AND archived_at IS NULL RETURNING id,archived_at,archived_by,archive_reason',[id,String(req.user?.name||req.user?.username||req.user?.sub),reason])).rows[0];
   if(!updated)return res.status(409).json({error:'Customer already archived'});
   res.json({ok:true,customer:updated});
