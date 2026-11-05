@@ -84,5 +84,115 @@
   if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(body.error||'Report failed')}
   const data=await response.blob(),url=URL.createObjectURL(data),a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);
  }
+
+ // Individual serialized spa receiving uses the exact model, color and factory-options source as Sales Agreements.
+ const spaCatalog=window.HTFO_SPA_CATALOG;
+ const spaEntry=$('#singleSpaForm'),spaBrand=$('#singleSpaBrand'),spaModel=$('#singleSpaModel'),spaShell=$('#singleSpaShell'),spaCabinet=$('#singleSpaCabinet');
+ let spaFactory=null,spaConfigRev=0;
+ function spaOpt(value,label){const o=document.createElement('option');o.value=value;o.textContent=label||value;return o}
+ function setSpaColors(field,values){
+   field.replaceChildren(spaOpt('','Choose color'));
+   for(const v of values)field.append(spaOpt(v));
+   field.append(spaOpt('__custom','Other / specify'));
+   field.value='';
+ }
+ function spaColors(){
+   const brand=spaBrand.value,model=spaModel.value,base=spaCatalog.configuration[brand]||{shell:[],cabinet:[]};
+   let shell=base.shell,cabinet=base.cabinet;
+   if(brand==='Cal Spas'){
+     shell=/^(PZ-|PPZ-)/i.test(model)?['High Gloss White']:/^EC-/i.test(model)?['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon']:base.shell;
+     cabinet=spaCatalog.calCabinetsForModel(model);
+   } else if(brand==='Innova Spas'){
+     shell=/^Stream/i.test(model)?['Frost','Sand','Moka','Graphite']:/^Fantom/i.test(model)?['Dark Charcoal','Moka']:/^Storm/i.test(model)?['Frost','Sand','Midnight Grey','Moka']:/^Monsoon/i.test(model)?['Frost','Sand','Graphite','Moka']:[];
+     cabinet=[];
+   }
+   setSpaColors(spaShell,shell);
+   setSpaColors(spaCabinet,cabinet);
+ }
+ function otherColor(field,id){
+   const label=$('#'+id+'Label');label.hidden=field.value!=='__custom';
+   if(label.hidden)$('#'+id).value='';
+ }
+ spaShell.addEventListener('change',()=>{
+   otherColor(spaShell,'singleSpaShellOther');
+   if(spaBrand.value==='Innova Spas'){
+     const vals=spaCatalog.innovaDoorPanels(spaModel.value,spaShell.value);
+     setSpaColors(spaCabinet,vals);
+     otherColor(spaCabinet,'singleSpaCabinetOther');
+   }
+ });
+ spaCabinet.addEventListener('change',()=>otherColor(spaCabinet,'singleSpaCabinetOther'));
+ spaBrand.addEventListener('change',()=>{
+   const brand=spaBrand.value;
+   spaModel.replaceChildren(spaOpt('','Choose factory model'));
+   const codes=brand==='Cal Spas'&&spaFactory
+      ?Object.keys(spaFactory.models).filter(k=>k.startsWith('Cal Spas|')).map(k=>k.slice('Cal Spas|'.length))
+      :(spaCatalog.models[brand]||[]);
+   for(const m of [...new Set(codes)])spaModel.append(spaOpt(m));
+   spaModel.append(spaOpt('__custom','Other / enter factory model'));
+   spaModel.value='';
+   $('#singleSpaManualModelLabel').hidden=true;
+   spaColors();renderSpaOptions();
+ });
+ function actualSpaModel(){return spaModel.value==='__custom'?$('#singleSpaManualModel').value.trim():spaModel.value}
+ spaModel.addEventListener('change',()=>{
+   $('#singleSpaManualModelLabel').hidden=spaModel.value!=='__custom';
+   spaColors();renderSpaOptions();
+ });
+ $('#singleSpaManualModel').addEventListener('input',()=>renderSpaOptions());
+ function renderSpaOptions(){
+   const revision=++spaConfigRev,brand=spaBrand.value,model=actualSpaModel(),target=$('#singleSpaOptions'),message=$('#singleSpaOptionsMessage');
+   target.replaceChildren();
+   if(!brand||!model){message.textContent='Choose brand and model to load compatible options.';return}
+   message.textContent='Loading compatible factory options…';
+   spaCatalog.factoryOptions.then(catalog=>{
+     if(revision!==spaConfigRev)return;
+     const options=(catalog.models?.[brand+'|'+model]||[]).map(i=>catalog.opt[i]).filter(Boolean);
+     const ecoExtras=brand==='Eco Spas'&&/^E[1-6](?: DLUX)?$/i.test(model)
+       ?[['Wi-Fi control',400],['30-foot 110V GFCI cord',168],...(/^E[34]$/i.test(model)?[['4 HP pump upgrade',1010]]:[])]:[];
+     for(const option of [...options,...ecoExtras]){
+       const label=String(option[0]).replaceAll(',',';');
+       const row=document.createElement('label'),checkbox=document.createElement('input');
+       checkbox.type='checkbox';checkbox.value=label;checkbox.name='factory_option';
+       row.append(checkbox,document.createTextNode(' '+label+' — 
+})();
++Number(option[1]).toLocaleString()));
+       target.append(row);
+     }
+     message.textContent=options.length||ecoExtras.length?'Choose any installed factory add-ons.':'No verified factory add-ons for this model. Specify an actual option below if needed.';
+   }).catch(()=>{if(revision===spaConfigRev)message.textContent='Factory options unavailable. Check model before entering inventory.'});
+ }
+ if(spaCatalog){
+   for(const brand of Object.keys(spaCatalog.models))spaBrand.append(spaOpt(brand));
+   spaCatalog.factoryOptions.then(c=>{spaFactory=c;if(spaBrand.value==='Cal Spas')spaBrand.dispatchEvent(new Event('change'))}).catch(()=>{});
+ }else{$('#singleSpaStatus').textContent='Shared spa configuration could not load. Refresh this page before receiving a spa.'}
+ $('#showSingleSpaForm').onclick=()=>{
+   spaEntry.hidden=!spaEntry.hidden;
+   if(!spaEntry.hidden)spaBrand.focus();
+ };
+ $('#cancelSingleSpa').onclick=()=>{spaEntry.hidden=true;spaEntry.reset();spaBrand.dispatchEvent(new Event('change'));$('#singleSpaStatus').textContent=''};
+ spaEntry.onsubmit=async event=>{
+   event.preventDefault();if(!spaCatalog)return;
+   const serial=$('#singleSpaSerial').value.trim(),brand=spaBrand.value,model=actualSpaModel();
+   const shell=spaShell.value==='__custom'?$('#singleSpaShellOther').value.trim():spaShell.value;
+   const cabinet=spaCabinet.value==='__custom'?$('#singleSpaCabinetOther').value.trim():spaCabinet.value;
+   const location=$('#singleSpaLocation').value,rawCost=$('#singleSpaWholesale').value.trim();
+   const picked=[...$('#singleSpaOptions').querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);
+   const extra=$('#singleSpaOtherOptions').value.trim();
+   const options=[...picked,...(extra?[extra]:[])].join(', ');
+   if(!serial||!brand||!model){$('#singleSpaStatus').textContent='Brand, factory model and serial number are required.';return}
+   if((spaShell.value==='__custom'&&!shell)||(spaCabinet.value==='__custom'&&!cabinet)){$('#singleSpaStatus').textContent='Specify the selected custom color.';return}
+   if(!['Monroeville','Wexford','Warehouse','In Transit'].includes(location))return;
+   const button=$('#saveSingleSpa');button.disabled=true;
+   try{
+     const payload={serial,brand,model,shell,cabinet,options,location,wholesale_cents:rawCost?dollars(rawCost):0};
+     if(!confirm('Add serial '+serial+' — '+brand+' '+model+' at '+location+' to inventory?'))return;
+     const added=await request('/api/service/htfo-pos/spas',{method:'POST',body:JSON.stringify(payload)});
+     $('#singleSpaStatus').textContent='Spa '+added.serial+' added to '+added.location+' inventory (unit #'+added.id+').';
+     spaEntry.reset();spaBrand.dispatchEvent(new Event('change'));await refresh();
+   }catch(e){$('#singleSpaStatus').textContent='Spa not added: '+e.message}
+   finally{button.disabled=false}
+ };
+
  document.querySelectorAll('[data-export]').forEach(b=>b.onclick=()=>exportReport(b.dataset.export).catch(e=>status(e.message)));
 })();
