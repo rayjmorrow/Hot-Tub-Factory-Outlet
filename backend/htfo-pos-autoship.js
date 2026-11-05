@@ -15,6 +15,11 @@ function ensure(){
  );
  ALTER TABLE htfo_pos_autoship_intents ADD COLUMN IF NOT EXISTS consent_record JSONB;
  ALTER TABLE htfo_pos_autoship_intents ADD COLUMN IF NOT EXISTS authorized_at TIMESTAMPTZ;
+ ALTER TABLE htfo_pos_autoship_intents ADD COLUMN IF NOT EXISTS activation_hash TEXT;
+ ALTER TABLE htfo_pos_autoship_intents ADD COLUMN IF NOT EXISTS activation_payload TEXT;
+ ALTER TABLE htfo_pos_autoship_intents ADD COLUMN IF NOT EXISTS activation_started_at TIMESTAMPTZ;
+ ALTER TABLE htfo_pos_autoship_intents ADD COLUMN IF NOT EXISTS activation_result JSONB;
+ CREATE UNIQUE INDEX IF NOT EXISTS htfo_pos_autoship_activation_hash ON htfo_pos_autoship_intents(activation_hash);
  `).catch(error=>{schema=null;throw error});
  return schema;
 }
@@ -58,12 +63,43 @@ export async function accessPOSAutoShipIntent(req,res){
  const expected=Buffer.from(process.env.FULFILLMENT_WEBHOOK_SECRET||''),supplied=Buffer.from(req.get('x-htfo-fulfillment-secret')||'');
  if(!enabled()||!expected.length||expected.length!==supplied.length||!timingSafeEqual(expected,supplied))return res.sendStatus(404);
  const {token,action}=req.body||{};
- if(!/^[a-f0-9]{64}$/.test(String(token||''))||!['read','claim','release','consent'].includes(action))return res.sendStatus(404);
+ if(!/^[a-f0-9]{64}$/.test(String(token||''))||!['read','claim','release','consent','prepare_activation','activate','release_activation','finish_activation'].includes(action))return res.sendStatus(404);
  try{
   await ensure();
   const key=hash(token);
   if(action==='release'){
-   await q('UPDATE htfo_pos_autoship_intents SET checkout_started_at=NULL WHERE token_hash=$1',[key]);
+   await q('UPDATE htfo_pos_autoship_intents SET checkout_started_at=NULL WHERE token_hash=$1 AND activation_hash IS NULL',[key]);
+   return res.json({ok:true});
+  }
+  if(action==='prepare_activation'){
+   const {activationToken,payload}=req.body;
+   if(!/^[a-f0-9]{64}$/.test(String(activationToken||''))||typeof payload!=='string'||payload.length>64000)return res.sendStatus(400);
+   const saved=await q(`UPDATE htfo_pos_autoship_intents SET activation_hash=$2,activation_payload=$3
+    WHERE token_hash=$1 AND checkout_started_at IS NOT NULL AND authorized_at IS NOT NULL
+    AND activation_hash IS NULL AND expires_at>NOW() RETURNING token_hash`,[key,hash(activationToken),payload]);
+   if(!saved.rowCount)return res.sendStatus(410);
+   return res.json({ok:true});
+  }
+  if(action==='activate'){
+   const current=(await q(`SELECT activation_result FROM htfo_pos_autoship_intents
+    WHERE activation_hash=$1 AND checkout_started_at>NOW()-INTERVAL '1 day'`,[key])).rows[0];
+   if(!current)return res.status(410).json({error:'This AutoShip activation link has expired.'});
+   if(current.activation_result)return res.json({ok:true,result:current.activation_result});
+   const claimed=(await q(`UPDATE htfo_pos_autoship_intents SET activation_started_at=NOW()
+    WHERE activation_hash=$1 AND checkout_started_at>NOW()-INTERVAL '1 day' AND activation_result IS NULL
+    AND (activation_started_at IS NULL OR activation_started_at<NOW()-INTERVAL '2 minutes') RETURNING activation_payload`,[key])).rows[0];
+   if(!claimed)return res.status(409).json({error:'AutoShip is still being confirmed. Try again in a few seconds.'});
+   return res.json({ok:true,payload:claimed.activation_payload});
+  }
+  if(action==='release_activation'){
+   await q('UPDATE htfo_pos_autoship_intents SET activation_started_at=NULL WHERE activation_hash=$1 AND activation_result IS NULL',[key]);
+   return res.json({ok:true});
+  }
+  if(action==='finish_activation'){
+   const result=req.body.result;
+   if(!result?.accountToken)return res.sendStatus(400);
+   await q(`UPDATE htfo_pos_autoship_intents SET activation_result=$2::jsonb,activation_payload=NULL,activation_started_at=NULL
+    WHERE activation_hash=$1 AND activation_result IS NULL`,[key,JSON.stringify(result)]);
    return res.json({ok:true});
   }
   if(action==='consent'){
