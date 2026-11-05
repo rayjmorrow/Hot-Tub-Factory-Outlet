@@ -4,7 +4,7 @@
  const msg=document.getElementById('message'),accountInfo=document.getElementById('accountInfo'),cards=document.getElementById('cards'),autoshipList=document.getElementById('autoshipList'),manage=document.getElementById('managePayment');
  const params=new URLSearchParams(location.search);let accountToken=localStorage.getItem('htfo_account_token')||'';
  const api=async(path,body)=>{const r=await fetch(apiBase()+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.error||'Request failed');return j};
- const show=(text,bad=false)=>{msg.innerHTML=text?`<div class="${bad?'error':'success'}">${text}</div>`:''};
+ const show=(text,bad=false)=>{msg.className=bad?'error':'success';msg.textContent=text||''};
  function render(data){
    const p=data.profile||{};accountInfo.innerHTML=`<strong>${p.email||'HTFO customer'}</strong><div class="small">Authorize.Net Customer Profile ${p.customerProfileId||''}</div>`;
    const ps=p.paymentProfiles||[];cards.innerHTML=ps.length?ps.map(x=>`<div class="card"><strong>${x.cardNumber||'Saved card'}</strong>${x.expirationDate?` · expires ${x.expirationDate}`:''}</div>`).join(''):'No saved payment method is showing yet.';manage.disabled=!ps.length;
@@ -12,9 +12,10 @@
    document.querySelectorAll('.cancel').forEach(b=>b.addEventListener('click',()=>cancelAutoship(b.dataset.id)));
  }
  async function load(){if(!accountToken){accountInfo.textContent='No account is connected in this browser yet.';cards.textContent='Complete an AutoShip checkout to securely save a card and activate your account.';autoshipList.textContent='No AutoShip account is connected.';return}try{const j=await api('/account/summary',{token:accountToken});render(j)}catch(e){show(e.message,true);localStorage.removeItem('htfo_account_token');accountToken=''}}
- async function activate(token){show('Payment received. Finishing your saved-card AutoShip account…');for(let i=0;i<8;i++){try{const j=await api('/account/activate',{token});accountToken=j.accountToken;localStorage.setItem('htfo_account_token',accountToken);history.replaceState({},'',location.pathname);show('Your HTFO account is active. Your card is securely saved with Authorize.Net and AutoShip is scheduled.');render(j);return}catch(e){if(!/few seconds|still being confirmed|still being created/i.test(e.message)||i===7){show(e.message,true);return}await new Promise(r=>setTimeout(r,2500))}}}
+ async function activate(token,pos=false){show('Payment received. Finishing your saved-card AutoShip account…');for(let i=0;i<8;i++){try{const j=await api('/account/activate',pos?{posToken:token}:{token});accountToken=j.accountToken;localStorage.setItem('htfo_account_token',accountToken);history.replaceState({},'',location.pathname);show('Your HTFO account is active. Your card is securely saved with Authorize.Net and AutoShip is scheduled.');render(j);return}catch(e){if(!/few seconds|still being confirmed|still being created/i.test(e.message)||i===7){show(e.message,true);return}await new Promise(r=>setTimeout(r,2500))}}}
  async function cancelAutoship(id){if(!confirm('Cancel this AutoShip subscription? Future automatic shipments and the associated AutoShip discount will stop.'))return;try{const j=await api('/account/cancel-autoship',{token:accountToken,subscriptionId:id});accountToken=j.token;localStorage.setItem('htfo_account_token',accountToken);show('AutoShip canceled.');await load()}catch(e){show(e.message,true)}}
  manage.addEventListener('click',async()=>{try{const j=await api('/account/manage-token',{token:accountToken});const f=document.createElement('form');f.method='post';f.action=j.formUrl;f.innerHTML=`<input type="hidden" name="token" value="${j.token.replace(/"/g,'&quot;')}">`;document.body.appendChild(f);f.submit()}catch(e){show(e.message,true)}});
- const activation=params.get('activate');if(activation)activate(activation);else load();
+ const posActivation=new URLSearchParams(location.hash.slice(1)).get('pos_activate');
+ const activation=params.get('activate');if(posActivation)activate(posActivation,true);else if(activation)activate(activation);else load();
 })();
 </script></body></html>

@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { randomUUID } from 'node:crypto';
+import { createHmac,randomBytes,randomUUID,timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import {posAutoShipPage,posAutoShipScript} from './pos-autoship-page.js';
 import {installVoucherRoutes} from './vouchers.js';
 import {ensureCustomerProfile,profileSummary,signToken,verifyToken,addMonthsISO,occurrencesFor} from './autoship-account.js';
 
@@ -10,12 +11,19 @@ const app=express();
 const port=Number(process.env.PORT||8787);
 const allowed=(process.env.ALLOWED_ORIGIN||'https://rayjmorrow.github.io,https://hottubfactoryoutlet.com,https://www.hottubfactoryoutlet.com').split(',').map(x=>x.trim());
 app.use(cors({origin:(o,cb)=>!o||allowed.includes(o)?cb(null,true):cb(new Error('Origin not allowed'))}));
-app.use(express.json({limit:'256kb'}));
+app.use(express.json({limit:'256kb',verify:(req,_res,buffer)=>{if(req.path==='/authorize/webhook')req.rawBody=buffer}}));
 installVoucherRoutes(app);
 
 const money=n=>Math.round((Number(n)||0)*100)/100;
-const RETAIL_CATALOG=(()=>{try{const raw=JSON.parse(readFileSync(new URL('../retail-catalog.json',import.meta.url),'utf8'));const catalog=new Map();for(const p of raw.products||[]){if(!p.sku||!Number.isSafeInteger(p.price_cents)||p.price_cents<=0)continue;catalog.set(String(p.sku).toLowerCase(),p.price_cents)}console.log('HTFO shared retail catalog loaded:',catalog.size,'published products');return catalog}catch(e){console.error('Retail catalog unavailable; verify deployment:',e.message);return new Map()}})();
-const publishedRetailPrice=item=>{const raw=String(item.id||'');const key=raw.split('|')[0].trim().toLowerCase();return RETAIL_CATALOG.get(key)};
+const {products: retailProducts}=JSON.parse(readFileSync(new URL('../retail-catalog.json',import.meta.url),'utf8'));
+const retailCatalog=new Map();
+for(const product of retailProducts){
+  const key=String(product.sku||'').trim().toLowerCase();
+  if(!key||retailCatalog.has(key)||!Number.isSafeInteger(product.price_cents)||product.price_cents<=0){
+    throw new Error('Invalid or duplicate SKU in the published retail catalog');
+  }
+  retailCatalog.set(key,product);
+}
 
 const coverCatalog={
   Economy:{sku:'CVTH100',price:565},
@@ -71,10 +79,24 @@ function employeeForCode(code){const key=String(code||'').trim().toUpperCase();r
 function orderAttribution(body){const code=body?.employeeAttribution?.code;if(!code)return null;const hit=employeeForCode(code);if(!hit)throw new Error('Employee code is no longer valid. Please remove it or enter a current code.');return hit}
 
 function cleanItems(items){
-  if(!Array.isArray(items)||!items.length)throw new Error('Cart is empty');
-  return items.map((x,i)=>({id:String(x.id||x.sku||`item-${i+1}`).slice(0,31),name:String(x.name||'Item').slice(0,31),description:String(x.name||'Item').slice(0,255),quantity:Math.max(1,Number(x.qty)||1),original_price:money(x.originalPrice??x.price),autoship:Boolean(x.autoship),frequencyMonths:Number(x.frequencyMonths)||null,cover_form_id:String(x.coverFormId||x.cover_form_id||'').trim().slice(0,40)}));
+  if(!Array.isArray(items)||items.length<1||items.length>30)throw new Error('Add 1–30 products to the cart.');
+  return items.map(item=>{
+    const sku=String(item.sku||item.id||'').split('|')[0].trim();
+    const quantity=Number(item.qty);
+    if(!Number.isSafeInteger(quantity)||quantity<1||quantity>99)throw new Error('Each item must have a quantity from 1 to 99.');
+    const autoship=item.autoship===true,frequencyMonths=Number(item.frequencyMonths)||null;
+    if(autoship&&(!Number.isSafeInteger(frequencyMonths)||frequencyMonths<1||frequencyMonths>12)){
+      throw new Error('Choose an AutoShip interval from 1 to 12 months.');
+    }
+    return {id:sku,quantity,autoship,frequencyMonths,cover_form_id:String(item.coverFormId||item.cover_form_id||'').trim()};
+  });
 }
-function priceItems(items,attribution){return items.map(x=>{const discountRate=attribution?0.10:(x.autoship?0.05:0);const autoshipLockedDiscount=x.autoship&&attribution?0.10:(x.autoship?0.05:0);const authoritative=x.cover_form_id?null:publishedRetailPrice(x);const original_price=authoritative==null?x.original_price:authoritative/100;return{...x,original_price,discountRate,autoshipLockedDiscount,unit_price:money(original_price*(1-discountRate))}})}
+function priceItems(items,attribution){
+  return items.map(x=>{
+    const discountRate=attribution?0.10:(x.autoship?0.05:0);
+    return {...x,discountRate,autoshipLockedDiscount:x.autoship?discountRate:0,unit_price:money(x.original_price*(1-discountRate))};
+  });
+}
 function customer(b){const a=b.shippingAddress||{};return{first:String(b.first||'').trim(),last:String(b.last||'').trim(),email:String(b.email||'').trim(),phone:String(b.phone||'').trim(),street:String(a.street||'').trim(),street2:String(a.street2||'').trim(),city:String(a.city||'').trim(),state:String(a.state||'').trim().toUpperCase(),zip:String(a.zip||'').trim(),country:'US'}}
 function validateShip(c){for(const k of ['first','last','email','street','city','state','zip'])if(!c[k])throw new Error(`Missing ${k}`)}
 function monroeville(){return{street:process.env.SHIP_FROM_STREET||'4680 Old William Penn Hwy',street2:'',city:process.env.SHIP_FROM_CITY||'Monroeville',state:process.env.SHIP_FROM_STATE||'PA',zip:process.env.SHIP_FROM_ZIP||'15146',country:'US'}}
@@ -95,11 +117,24 @@ async function anet(body){
 
 async function verifiedStoreItems(rawItems){
   const items=cleanItems(rawItems);
+  const coverForms=items.map(x=>x.cover_form_id).filter(Boolean);
+  if(new Set(coverForms).size!==coverForms.length)throw new Error('Each custom cover requires a separate order form.');
   return Promise.all(items.map(async x=>{
-    if(!x.cover_form_id)return x;
+    if(!x.cover_form_id){
+      const product=retailCatalog.get(x.id.toLowerCase());
+      if(!product)throw new Error('An item in your cart is unavailable. Remove it before continuing.');
+      return {...x,id:product.sku,name:product.name.slice(0,31),description:product.name,original_price:product.price_cents/100};
+    }
+    if(x.autoship||x.quantity!==1||!/^COV-[A-Z0-9]{16}$/.test(x.cover_form_id)){
+      throw new Error('Each custom cover requires its own order form and a one-time purchase.');
+    }
     const saved=await fulfillmentGet('/fulfillment/cover-form/'+encodeURIComponent(x.cover_form_id));
-    if(!saved||String(saved.form_id||'')!==x.cover_form_id)throw new Error('Configured cover form could not be verified.');
-    return {...x,id:String(saved.cover_sku||x.id).slice(0,31),name:String((saved.cover_model||'Custom')+' Replacement Cover').slice(0,31),description:String((saved.cover_model||'Custom')+' custom replacement cover').slice(0,200),original_price:money(saved.cover_price)};
+    const cover=coverCatalog[saved?.cover_model];
+    if(!cover||saved.form_id!==x.cover_form_id||saved.status!=='pending_payment'||cover.sku!==saved.cover_sku){
+      throw new Error('Configured cover form could not be verified.');
+    }
+    const name=saved.cover_model+' Custom Replacement Cover';
+    return {...x,id:cover.sku,name:name.slice(0,31),description:name,original_price:money(saved.cover_price)};
   }));
 }
 async function taxForOrder(body){
@@ -124,7 +159,7 @@ async function transactionDetails(transId){return (await anet({getTransactionDet
 async function fulfillmentPost(path,body){
   const base=String(process.env.FULFILLMENT_SERVICE_URL||'').replace(/\/$/,'');
   const secret=process.env.FULFILLMENT_WEBHOOK_SECRET||'';
-  if(!base||!secret){console.warn('FULFILLMENT_HANDOFF_SKIPPED: service URL/secret not configured');return null}
+  if(!base||!secret)throw Error('Fulfillment handoff is not configured');
   const r=await fetch(base+'/api/service'+path,{method:'POST',headers:{'Content-Type':'application/json','x-htfo-fulfillment-secret':secret},body:JSON.stringify(body)});
   const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.error||('Fulfillment handoff returned '+r.status));
@@ -179,8 +214,17 @@ function transactionUserField(tx,name){
   const list=Array.isArray(raw)?raw:[raw];
   return String(list.find(x=>String(x?.name||'').toLowerCase()===String(name).toLowerCase())?.value||'');
 }
+const captured=tx=>Number(tx.responseCode)===1&&['capturedPendingSettlement','settledSuccessfully'].includes(tx.transactionStatus);
 async function handoffPaidTransaction(transId){
   const tx=await transactionDetails(transId);
+  if(!captured(tx))return {skipped:'payment not captured'};
+  if(tx.subscription?.id){
+    return fulfillmentPost('/fulfillment/autoship-payment',{
+      subscription_id:String(tx.subscription.id),transaction_id:String(transId),payment_number:Number(tx.subscription.payNum),
+      paid_date:String(tx.submitTimeLocal||tx.submitTimeUTC||'').slice(0,10),amount:Number(tx.settleAmount||tx.authAmount)
+    });
+  }
+  if(!/^HTFO-|^COV-/.test(String(tx.order?.invoiceNumber||'')))return {skipped:'not a store transaction'};
   const rawItems=tx?.lineItems?.lineItem??tx?.lineItems??[];
   const itemList=(Array.isArray(rawItems)?rawItems:[rawItems]).filter(Boolean);
   const items=itemList.map(x=>{const desc=String(x.description||'');const m=desc.match(/Cover Form\s+(COV-[A-Z0-9]+)/i);return{product_id:x.itemId||'',sku:x.itemId||'',description:x.name||x.description||'Online item',quantity:Number(x.quantity)||1,unit_price:Number(x.unitPrice)||0,cover_form_id:m?m[1].toUpperCase():null}});
@@ -220,6 +264,8 @@ async function handoffPaidTransaction(transId){
     package_weight_lbs:10,package_length_in:12,package_width_in:12,package_height_in:12,
     customer:{first_name:ship.firstName||bill.firstName||'',last_name:ship.lastName||bill.lastName||'',email:customer.email||bill.email||'',phone:customer.phoneNumber||bill.phoneNumber||'',street:ship.address||bill.address||'',street2:'',city:ship.city||bill.city||'',state:ship.state||bill.state||'',zip:ship.zip||bill.zip||''},
     items,
+    pos_customer_id:transactionUserField(tx,'POS Customer'),
+    department:transactionUserField(tx,'POS Department'),
     notes:'Paid online store order'
   });
 }
@@ -229,11 +275,11 @@ function normalizeProfileIds(tx,fallbackProfileId){
   return{customerProfileId:String(p.customerProfileId||fallbackProfileId||''),customerPaymentProfileId:String(p.customerPaymentProfileId||'')};
 }
 
-async function createRecurringGroup({profileId,paymentProfileId,frequencyMonths,groupBody,invoice,employeeCode}){
-  const priced=await taxForOrder(groupBody);
+async function createRecurringGroup({profileId,paymentProfileId,frequencyMonths,groupBody,invoice,employeeCode,frozenQuote}){
+  const priced=frozenQuote||await taxForOrder(groupBody);
   const merchandise=money(priced.items.reduce((s,x)=>s+x.quantity*x.unit_price,0));
   const amount=money(merchandise+priced.shipping+priced.tax);
-  const startDate=addMonthsISO(frequencyMonths);
+  const startDate=frozenQuote?.start_date||addMonthsISO(frequencyMonths);
   const totalOccurrences=occurrencesFor(frequencyMonths);
   const names=priced.items.map(x=>x.name).join(', ').slice(0,42);
   const name=`HTFO AutoShip ${names}`.slice(0,50);
@@ -241,7 +287,7 @@ async function createRecurringGroup({profileId,paymentProfileId,frequencyMonths,
     const j=await anet({ARBCreateSubscriptionRequest:{merchantAuthentication:auth(),refId:String(invoice).slice(0,20),subscription:{name,paymentSchedule:{interval:{length:Number(frequencyMonths),unit:'months'},startDate,totalOccurrences,trialOccurrences:0},amount,profile:{customerProfileId:String(profileId),customerPaymentProfileId:String(paymentProfileId)},order:{invoiceNumber:String(invoice).slice(0,20),description:`HTFO AutoShip ${employeeCode?`employee ${employeeCode}`:'standard'} · ${frequencyMonths} month cadence`.slice(0,255)}}}});
     return{subscriptionId:String(j.subscriptionId||''),frequencyMonths:Number(frequencyMonths),amount,startDate,totalOccurrences,items:priced.items.map(x=>({id:x.id,sku:x.id,name:x.name,quantity:x.quantity,unit_price:x.unit_price,discountPercent:Math.round(x.autoshipLockedDiscount*100)}))};
   }catch(e){
-    if(String(e.code||'').toUpperCase()==='E00012'||/duplicate/i.test(e.message||''))return{duplicate:true,frequencyMonths:Number(frequencyMonths),amount,startDate,items:priced.items.map(x=>({id:x.id,name:x.name,quantity:x.quantity,discountPercent:Math.round(x.autoshipLockedDiscount*100)}))};
+    if(e.code==='E00012')throw new Error('An AutoShip subscription already exists for this payment. Contact HTFO to reconcile it before retrying.');
     throw e;
   }
 }
@@ -260,13 +306,30 @@ app.post('/account/manage-token',async(req,res)=>{
   try{const token=verifyToken(req.body?.token);if(token.kind!=='account')throw new Error('Invalid account token');const j=await anet({getHostedProfilePageRequest:{merchantAuthentication:auth(),customerProfileId:String(token.profileId),hostedProfileSettings:{setting:[{settingName:'hostedProfileReturnUrl',settingValue:process.env.STORE_ACCOUNT_RETURN_URL||'https://hottubfactoryoutlet.com/account.html'},{settingName:'hostedProfileReturnUrlText',settingValue:'Return to My HTFO Account'},{settingName:'hostedProfileManageOptions',settingValue:'showAll'},{settingName:'hostedProfilePaymentOptions',settingValue:'showCreditCard'}]}}});res.json({ok:true,token:j.token,formUrl:customerForm})}catch(e){res.status(401).json({ok:false,error:e.message})}
 });
 
+async function cancelAutoShip(id){
+  const current=await anet({ARBGetSubscriptionStatusRequest:{merchantAuthentication:auth(),subscriptionId:id}});
+  if(!['canceled','cancelled','expired','terminated'].includes(String(current.status).toLowerCase())){
+    await anet({ARBCancelSubscriptionRequest:{merchantAuthentication:auth(),subscriptionId:id}});
+  }
+  await fulfillmentPost('/fulfillment/autoship-cancelled',{subscription_id:id});
+}
+
+app.post('/internal/pos-autoship/cancel',async(req,res)=>{
+  const expected=Buffer.from(process.env.FULFILLMENT_WEBHOOK_SECRET||''),supplied=Buffer.from(req.get('x-htfo-fulfillment-secret')||'');
+  if(!expected.length||expected.length!==supplied.length||!timingSafeEqual(expected,supplied))return res.sendStatus(404);
+  const id=String(req.body?.subscription_id||'');
+  if(!/^\d+$/.test(id))return res.status(400).json({error:'Invalid subscription ID'});
+  try{await cancelAutoShip(id);res.json({ok:true})}
+  catch(error){res.status(503).json({error:'Cancellation could not be reconciled. Retry before telling the customer it is complete.'})}
+});
+
 app.post('/account/cancel-autoship',async(req,res)=>{
   try{
     const token=verifyToken(req.body?.token);if(token.kind!=='account')throw new Error('Invalid account token');
     const id=String(req.body?.subscriptionId||'');
     const allowedIds=(token.autoship||[]).map(x=>String(x.subscriptionId||'')).filter(Boolean);
     if(!allowedIds.includes(id))throw new Error('Subscription not found in this account');
-    await anet({ARBCancelSubscriptionRequest:{merchantAuthentication:auth(),subscriptionId:id}});
+    await cancelAutoShip(id);
     const autoship=(token.autoship||[]).filter(x=>String(x.subscriptionId)!==id);
     const next=signToken({kind:'account',profileId:token.profileId,email:token.email,autoship,employeeAttribution:token.employeeAttribution||null});
     res.json({ok:true,token:next,autoship});
@@ -274,16 +337,28 @@ app.post('/account/cancel-autoship',async(req,res)=>{
 });
 
 app.post('/account/activate',async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  const posToken=req.body?.posToken;
+  let claimed=false;
   try{
-    const t=verifyToken(req.body?.token);if(t.kind!=='autoship-checkout')throw new Error('Invalid AutoShip activation token');
+    let token=req.body?.token;
+    if(posToken){
+      const saved=await posIntent(posToken,'activate');
+      if(saved.result)return res.json(saved.result);
+      token=saved.payload;
+      claimed=true;
+    }
+    const t=verifyToken(token);if(t.kind!=='autoship-checkout')throw new Error('Invalid AutoShip activation token');
     const hit=await findUnsettledByInvoice(t.invoice);if(!hit)throw new Error('Payment is still being confirmed. Please try again in a few seconds.');
     const transId=hit.transId||hit.id;const tx=await transactionDetails(transId);
-    if(String(tx.transactionStatus||'').toLowerCase().includes('declin'))throw new Error('The payment was not approved.');
+    if(!captured(tx))throw new Error('Payment has not been captured.');
+    if(t.pos&&money(tx.settleAmount||tx.authAmount)!==t.pos.total)throw Error('Captured payment amount does not match the AutoShip authorization.');
+    if(tx.profile?.customerProfileId&&String(tx.profile.customerProfileId)!==String(t.profileId))throw new Error('The payment profile does not match this enrollment.');
     const ids=normalizeProfileIds(tx,t.profileId);
     if(!ids.customerProfileId)throw new Error('Authorize.Net customer profile was not attached to this payment');
-    let paymentProfileId=ids.customerPaymentProfileId;
-    if(!paymentProfileId){const p=await profileSummary(anet,auth,ids.customerProfileId);paymentProfileId=p.paymentProfiles?.[0]?.id||'';}
+    const paymentProfileId=ids.customerPaymentProfileId;
     if(!paymentProfileId)throw new Error('Your card was charged, but the saved payment profile is still being created. Try again in a few seconds.');
+    await handoffPaidTransaction(transId);
     const groups=new Map();
     for(const x of (t.items||[]).filter(x=>x.autoship)){
       const f=Number(x.frequencyMonths)||1;if(!groups.has(f))groups.set(f,[]);groups.get(f).push(x);
@@ -291,18 +366,41 @@ app.post('/account/activate',async(req,res)=>{
     const autoship=[];
     for(const [frequencyMonths,items] of groups){
       const groupBody={items,first:t.customer.first,last:t.customer.last,email:t.customer.email,phone:t.customer.phone,fulfillment:t.fulfillment,shippingAddress:t.shippingAddress,employeeAttribution:t.employeeAttribution||null};
-      autoship.push(await createRecurringGroup({profileId:ids.customerProfileId,paymentProfileId,frequencyMonths,groupBody,invoice:t.invoice,employeeCode:t.employeeAttribution?.code||''}));
+      autoship.push(await createRecurringGroup({profileId:ids.customerProfileId,paymentProfileId,frequencyMonths,groupBody,invoice:t.invoice,employeeCode:t.employeeAttribution?.code||'',frozenQuote:t.pos?.quote}));
     }
-    try{await fulfillmentPost('/fulfillment/store-autoship',{customer:{first_name:t.customer.first,last_name:t.customer.last,email:t.customer.email,phone:t.customer.phone},subscriptions:autoship,payment_reference:ids.customerPaymentProfileId})}catch(e){console.error('AutoShip fulfillment handoff failed',e)}
+    await fulfillmentPost('/fulfillment/store-autoship',{customer:{first_name:t.customer.first,last_name:t.customer.last,email:t.customer.email,phone:t.customer.phone,street:t.customer.street,street2:t.customer.street2,city:t.customer.city,state:t.customer.state,zip:t.customer.zip},subscriptions:autoship,fulfillment:t.fulfillment,payment_reference:paymentProfileId,pos:t.pos?{customer_id:t.pos.customer_id,department:t.pos.department}:undefined});
     const accountToken=signToken({kind:'account',profileId:ids.customerProfileId,email:t.customer.email,autoship,employeeAttribution:t.employeeAttribution||null});
     const profile=await profileSummary(anet,auth,ids.customerProfileId);
-    res.json({ok:true,accountToken,profile,autoship,transactionId:String(transId)});
-  }catch(e){res.status(400).json({ok:false,error:e.message})}
+    const result={ok:true,accountToken,profile,autoship,transactionId:String(transId)};
+    if(posToken)await fulfillmentPost('/htfo-pos/retail/autoship-intent',{token:posToken,action:'finish_activation',result});
+    res.json(result);
+  }catch(e){
+    if(claimed)await posIntent(posToken,'release_activation').catch(()=>{});
+    res.status(400).json({ok:false,error:e.message});
+  }
 });
 
 app.post('/customer/manage-token',async(req,res)=>{res.status(410).json({ok:false,error:'Use the signed My HTFO Account payment-management flow.'})});
 
-app.post('/authorize/webhook',async(req,res)=>{res.sendStatus(200);try{const evt=req.body||{};console.log('AUTHORIZE_WEBHOOK',JSON.stringify(evt));const type=String(evt.eventType||'').toLowerCase(),transId=evt?.payload?.id||evt?.payload?.transId||'';if(transId&&type.includes('payment')&&type.includes('authcapture')){try{await handoffPaidTransaction(transId);console.log('FULFILLMENT_HANDOFF_OK',transId)}catch(e){console.error('Fulfillment handoff failed',e)}}}catch(e){console.error('Webhook processing error',e)}});
+app.post('/authorize/webhook',async(req,res)=>{
+  const signatureKey=process.env.STORE_AUTHORIZE_SIGNATURE_KEY;
+  if(signatureKey){
+    const supplied=String(req.get('X-ANET-Signature')||'').replace(/^sha512=/i,'');
+    if(!/^[a-f0-9]{128}$/i.test(signatureKey)||!/^[a-f0-9]{128}$/i.test(supplied)||!req.rawBody)return res.sendStatus(401);
+    const expected=createHmac('sha512',Buffer.from(signatureKey,'hex')).update(req.rawBody).digest();
+    if(!timingSafeEqual(expected,Buffer.from(supplied,'hex')))return res.sendStatus(401);
+  }
+  const type=String(req.body?.eventType||'').toLowerCase();
+  const transId=String(req.body?.payload?.id||req.body?.payload?.transId||'');
+  if(!['net.authorize.payment.authcapture.created','net.authorize.payment.capture.created','net.authorize.payment.priorauthcapture.created','net.authorize.payment.fraud.approved'].includes(type)||!/^\d+$/.test(transId))return res.sendStatus(200);
+  try{
+    await handoffPaidTransaction(transId);
+    res.sendStatus(200);
+  }catch(e){
+    console.error('Authorize.Net fulfillment handoff failed',transId,e.code||e.name);
+    res.sendStatus(503);
+  }
+});
 
 
 app.post('/cover-order-form',async(req,res)=>{
@@ -493,25 +591,87 @@ app.post('/lead',async(req,res)=>{
 
 app.post('/tax',async(req,res)=>{try{const t=await taxForOrder(req.body);res.json({tax:t.tax,shipping:t.shipping,rate:t.rate,hasNexus:t.hasNexus,taxableAmount:t.taxableAmount,employeeAttribution:t.attribution})}catch(e){res.status(400).json({error:e.message})}});
 
-app.post('/checkout/session',async(req,res)=>{
-  try{
-    const t=await taxForOrder(req.body),merchandise=money(t.items.reduce((s,x)=>s+x.quantity*x.unit_price,0)),total=money(merchandise+t.shipping+t.tax);if(total<=0)throw new Error('Order total must be greater than zero');
-    const invoice=`HTFO-${Date.now()}`.slice(0,20),hasAutoship=t.items.some(x=>x.autoship),purchaseDiscount=t.attribution?10:0,autoshipDiscount=hasAutoship?(t.attribution?10:5):0,attributionText=t.attribution?` | Employee: ${t.attribution.employeeName} (${t.attribution.code})`:'';
+async function checkoutSession(body,pos=null,posEnrollmentToken=null){
+    const t=pos?.quote||await taxForOrder(body),merchandise=money(t.items.reduce((s,x)=>s+x.quantity*x.unit_price,0)),total=money(merchandise+t.shipping+t.tax);if(total<=0)throw new Error('Order total must be greater than zero');
+    const invoice='HTFO-'+randomUUID().replace(/-/g,'').slice(0,15),hasAutoship=t.items.some(x=>x.autoship),purchaseDiscount=t.attribution?10:0,autoshipDiscount=hasAutoship?(t.attribution?10:5):0,attributionText=t.attribution?` | Employee: ${t.attribution.employeeName} (${t.attribution.code})`:'';
     let customerProfileId='',activationToken='',returnUrl=process.env.STORE_RETURN_URL||'https://hottubfactoryoutlet.com/account.html';
+    if(hasAutoship&&body.fulfillment!=='ship')throw new Error('AutoShip requires shipping. Choose Ship or remove AutoShip from the cart.');
     if(hasAutoship){
       customerProfileId=await ensureCustomerProfile(anet,auth,t.customer.email);
-      activationToken=signToken({kind:'autoship-checkout',invoice,profileId:customerProfileId,items:req.body.items,customer:t.customer,fulfillment:req.body.fulfillment,shippingAddress:req.body.shippingAddress,employeeAttribution:req.body.employeeAttribution||null},60*60*24);
-      returnUrl=`https://hottubfactoryoutlet.com/account.html?activate=${encodeURIComponent(activationToken)}`;
+      activationToken=signToken({kind:'autoship-checkout',invoice,profileId:customerProfileId,items:body.items,customer:t.customer,fulfillment:body.fulfillment,shippingAddress:body.shippingAddress,employeeAttribution:body.employeeAttribution||null,pos},60*60*24);
+      returnUrl=posEnrollmentToken
+        ?`https://hottubfactoryoutlet.com/account.html#pos_activate=${posEnrollmentToken}`
+        :`https://hottubfactoryoutlet.com/account.html?activate=${encodeURIComponent(activationToken)}`;
     }
-    const userField=[{name:'Purchase Discount',value:purchaseDiscount?`${purchaseDiscount}% employee code`:'None'},{name:'AutoShip Savings',value:hasAutoship?`${autoshipDiscount}%`:'None'},{name:'AutoShip Discount Policy',value:hasAutoship&&t.attribution?'10% of current price until canceled':hasAutoship?'5% standard AutoShip':'None'},{name:'Fulfillment',value:String(req.body.fulfillment||'ship')}];
+    const userField=[{name:'Purchase Discount',value:purchaseDiscount?`${purchaseDiscount}% employee code`:'None'},{name:'AutoShip Savings',value:hasAutoship?`${autoshipDiscount}%`:'None'},{name:'AutoShip Discount Policy',value:hasAutoship&&t.attribution?'10% of current price until canceled':hasAutoship?'5% standard AutoShip':'None'},{name:'Fulfillment',value:String(body.fulfillment||'ship')}];
+    if(pos)userField.push({name:'POS Department',value:pos.department},{name:'POS Customer',value:String(pos.customer_id)});
     if(t.attribution)userField.push({name:'Employee Code',value:t.attribution.code},{name:'Employee Name',value:t.attribution.employeeName},{name:'Employee ID',value:t.attribution.employeeId});
     const d=t.destination;
     const transactionRequest={transactionType:'authCaptureTransaction',amount:total,order:{invoiceNumber:invoice,description:(hasAutoship?'HTFO order with AutoShip enrollment':'HTFO online order')+attributionText},lineItems:{lineItem:t.items.map(x=>({itemId:x.id,name:x.name,description:(x.autoship?`${x.description} | AutoShip ${Math.round(x.autoshipLockedDiscount*100)}% of current price until canceled | every ${x.frequencyMonths} months`:x.description)+(x.cover_form_id?` | Cover Form ${x.cover_form_id}`:''),quantity:x.quantity,unitPrice:x.unit_price,taxable:true}))},tax:{amount:t.tax,name:'Sales Tax'},shipping:{amount:t.shipping,name:'Shipping'},billTo:{firstName:t.customer.first,lastName:t.customer.last,address:t.customer.street,city:t.customer.city,state:t.customer.state,zip:t.customer.zip,country:'US',email:t.customer.email},shipTo:{firstName:t.customer.first,lastName:t.customer.last,address:d.street,city:d.city,state:d.state,zip:d.zip,country:'US'},userFields:{userField}};
     if(hasAutoship)transactionRequest.profile={customerProfileId};else transactionRequest.customer={email:t.customer.email};
     const request={getHostedPaymentPageRequest:{merchantAuthentication:auth(),transactionRequest,hostedPaymentSettings:{setting:[{settingName:'hostedPaymentReturnOptions',settingValue:JSON.stringify({showReceipt:true,url:returnUrl,urlText:hasAutoship?'Finish AutoShip & Open My Account':'Return to Hot Tub Factory Outlet',cancelUrl:process.env.STORE_CANCEL_URL||'https://hottubfactoryoutlet.com/cart.html',cancelUrlText:'Cancel'})},{settingName:'hostedPaymentCustomerOptions',settingValue:JSON.stringify({showEmail:true,requiredEmail:true,addPaymentProfile:hasAutoship})},{settingName:'hostedPaymentPaymentOptions',settingValue:JSON.stringify({cardCodeRequired:true,showCreditCard:true,showBankAccount:false})}]}}};
     const j=await anet(request);if(!j.token)throw new Error('Authorize.Net did not return a payment token');
-    res.json({token:j.token,formUrl:authForm,invoice,merchandise,shipping:t.shipping,tax:t.tax,total,autoship:hasAutoship,purchaseDiscount,autoshipDiscount,autoshipDiscountPersistsUntilCancel:Boolean(hasAutoship&&t.attribution),employeeAttribution:t.attribution,customerProfileId:hasAutoship?customerProfileId:null});
-  }catch(e){res.status(400).json({error:e.message})}
+    return {token:j.token,formUrl:authForm,...(posEnrollmentToken?{activationToken}:{}),invoice,merchandise,shipping:t.shipping,tax:t.tax,total,autoship:hasAutoship,purchaseDiscount,autoshipDiscount,autoshipDiscountPersistsUntilCancel:Boolean(hasAutoship&&t.attribution),employeeAttribution:t.attribution,customerProfileId:hasAutoship?customerProfileId:null};
+}
+app.post('/checkout/session',async(req,res)=>{
+  try{res.json(await checkoutSession(req.body))}
+  catch(error){res.status(400).json({error:error.message})}
+});
+
+
+// Enrollment can be accepted only when explicitly enabled on both applications.
+const posAutoShipEnabled=()=>process.env.HTFO_POS_AUTOSHIP_ENABLED==='true'&&/^[a-f0-9]{128}$/i.test(process.env.STORE_AUTHORIZE_SIGNATURE_KEY||'');
+async function posIntent(token,action){
+  if(!/^[a-f0-9]{64}$/.test(String(token||'')))throw Error('This AutoShip link is invalid.');
+  const intent=await fulfillmentPost('/htfo-pos/retail/autoship-intent',{token,action});
+  if(!intent?.ok)throw Error('Cashier AutoShip is unavailable.');
+  return intent;
+}
+app.get('/pos-autoship',(req,res)=>res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}).type('html').send(posAutoShipPage));
+app.get('/pos-autoship.js',(req,res)=>res.set('Cache-Control','no-store').type('js').send(posAutoShipScript));
+app.post('/pos-autoship/:action',async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  if(!posAutoShipEnabled())return res.status(503).json({error:'Cashier AutoShip enrollment is awaiting merchant acceptance testing.'});
+  const {token}=req.body||{};
+  let claimed=false;
+  try{
+    const action=req.params.action;
+    if(!['review','quote','start'].includes(action))return res.sendStatus(404);
+    if(action==='start'){
+      const signed=verifyToken(req.body.quote),name=String(req.body.name||'').trim();
+      if(signed.kind!=='pos-autoship-quote'||signed.token!==token||name.length<3||name.length>100||req.body.accepted!==true){
+        throw Error('Review the quote and accept the recurring payment authorization.');
+      }
+      const intent=await posIntent(token,'claim');
+      claimed=true;
+      if(String(signed.pos.customer_id)!==String(intent.customer_id)||signed.body.email!==intent.email){
+        throw Error('The customer record changed. Review a new quote before continuing.');
+      }
+      const consent=await fulfillmentPost('/htfo-pos/retail/autoship-intent',{token,action:'consent',name,quote:{
+        total:signed.pos.total,start_date:signed.pos.quote.start_date,frequency_months:signed.body.items[0].frequencyMonths,
+        occurrences:occurrencesFor(signed.body.items[0].frequencyMonths),items:signed.pos.quote.items.map(item=>({sku:item.id,quantity:item.quantity,unit_price:item.unit_price}))
+      }});
+      if(!consent?.ok)throw Error('The authorization could not be saved.');
+      const activationToken=randomBytes(32).toString('hex');
+      const checkout=await checkoutSession(signed.body,signed.pos,activationToken);
+      const saved=await fulfillmentPost('/htfo-pos/retail/autoship-intent',{token,action:'prepare_activation',activationToken,payload:checkout.activationToken});
+      if(!saved?.ok)throw Error('The enrollment could not be saved.');
+      return res.json({token:checkout.token,formUrl:checkout.formUrl});
+    }
+    const intent=await posIntent(token,'read');
+    if(action==='review')return res.json({ok:true});
+    const body={items:intent.items,first:intent.first_name,last:intent.last_name,email:intent.email,phone:intent.phone,fulfillment:'ship',shippingAddress:req.body.shippingAddress};
+    const quote=await taxForOrder(body);
+    const months=intent.items[0].frequencyMonths;
+    const total=money(quote.items.reduce((sum,item)=>sum+item.unit_price*item.quantity,0)+quote.shipping+quote.tax);
+    if(total<=0)throw Error('The order amount is invalid.');
+    quote.start_date=addMonthsISO(months);
+    const pos={customer_id:intent.customer_id,department:intent.department,total,quote};
+    res.json({quote:signToken({kind:'pos-autoship-quote',token,body,pos},900),items:quote.items.map(({description,quantity})=>({description,quantity})),total,months,start_date:quote.start_date,occurrences:occurrencesFor(months)});
+  }catch(error){
+    if(claimed)await posIntent(token,'release').catch(()=>{});
+    res.status(400).json({error:error.message});
+  }
 });
 
 app.listen(port,()=>console.log(`HTFO store backend listening on ${port}`));

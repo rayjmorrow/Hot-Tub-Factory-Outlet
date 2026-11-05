@@ -62,7 +62,7 @@ export async function profileSummary(anet,auth,profileId){
     email:p.email||'',
     paymentProfiles:list.map(x=>({
       id:String(x.customerPaymentProfileId||''),
-      cardNumber:x.payment?.creditCard?.cardNumber||'',
+      cardNumber:x.payment?.creditCard?.cardNumber?'XXXX'+String(x.payment.creditCard.cardNumber).replace(/\D/g,'').slice(-4):'',
       expirationDate:x.payment?.creditCard?.expirationDate||'',
       firstName:x.billTo?.firstName||'',
       lastName:x.billTo?.lastName||''

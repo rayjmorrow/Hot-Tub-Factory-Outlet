@@ -9,10 +9,17 @@ async function loadSharedCatalog(){
   if(!response.ok)throw Error('Catalog unavailable');
   const data=await response.json();
   if(!Array.isArray(data.products))throw Error('Invalid catalog');
+  const excluded=new Set((data.excluded||[]).map(p=>String(p.sku).toLowerCase()));
   sharedCatalog=new Map(data.products.map(p=>[String(p.sku).toLowerCase(),p]));
   document.querySelectorAll('.item,.card').forEach(el=>{
    const sku=el.querySelector('.sku,.item > span')?.textContent?.trim();
-   const p=sharedCatalog.get(String(sku||'').toLowerCase());
+   const key=String(sku||'').toLowerCase();
+   if(excluded.has(key)){
+    const button=el.querySelector('.add-cart');
+    if(button){button.disabled=true;button.textContent='Currently unavailable';}
+    return;
+   }
+   const p=sharedCatalog.get(key);
    if(!p)return;
    const priceNode=el.querySelector('.price,.item > strong');
    if(priceNode)priceNode.textContent=money(p.price_cents/100);
