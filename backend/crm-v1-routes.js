@@ -718,6 +718,15 @@ router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,asyn
    if(recorded||financed)return {status:409,error:'Agreement contains payments or financing. Reconcile or reverse the actual transaction before archiving.'};
    if(signed&&kind==='test')return {status:409,error:'A signed agreement must be handled as a documented cancellation, not a test deletion.'};
    if(signed&&req.body?.customer_cancelled!==true)return {status:409,error:'Confirm that the customer cancellation is documented before removing a signed agreement from active reports.'};
+   // Unsigned test agreements must not leave a spa reserved indefinitely.
+   // Signed cancellations require separate inventory review and customer confirmation.
+   if(!signed){
+    const held=(await run("SELECT id,location FROM htfo_inventory_spa WHERE reserved_draft_id=$1 AND status='reserved' FOR UPDATE",[id])).rows;
+    for(const unit of held){
+     await run("UPDATE htfo_inventory_spa SET status='available',reserved_draft_id=NULL,updated_at=NOW() WHERE id=$1",[unit.id]);
+     await run("INSERT INTO htfo_inventory_movements(spa_id,location,delta,reason,actor_id) VALUES($1,$2,0,$3,$4)",[unit.id,unit.location,'Released unsigned archived agreement '+id,Number(req.user.sub)]);
+    }
+   }
    // Signed agreements are retained permanently; archival does not cancel legal obligations.
    const updated=(await run('UPDATE crm_sales_drafts SET archived_at=NOW(),archived_by=$2,archive_reason=$3,archive_kind=$4,updated_at=NOW() WHERE id=$1 RETURNING id,archived_at,archived_by,archive_reason,archive_kind',[id,String(req.user.name||req.user.username||req.user.sub),reason,kind])).rows[0];
    return {status:200,agreement:updated,was_signed:signed,warning:signed?'Signed contract retained. Archiving does not void a legally executed agreement or release any serialized inventory reservation.':''};
