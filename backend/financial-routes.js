@@ -118,6 +118,11 @@ router.post('/work-orders/:id/warranty-claim',auth,manager,async(req,res)=>{
 
 router.patch('/warranty-claims/:id',auth,manager,async(req,res)=>{
   const b=req.body||{};
+  if(b.total_paid!==undefined||b.paid_at!==undefined||b.payment_reference!==undefined){
+   const existing=(await q('SELECT supplier FROM service_warranty_claims WHERE id=$1',[req.params.id])).rows[0];
+   if(existing&&String(existing.supplier||'').toLowerCase().includes('cal'))
+    return res.status(409).json({error:'Cal Spas credit settlements require the audited reconciliation workflow. Do not update total_paid directly.'});
+  }
   const r=await q(`UPDATE service_warranty_claims SET claim_number=coalesce($2,claim_number),status=coalesce($3,status),total_approved=coalesce($4,total_approved),total_paid=coalesce($5,total_paid),submitted_at=coalesce($6,submitted_at),approved_at=coalesce($7,approved_at),paid_at=coalesce($8,paid_at),payment_reference=coalesce($9,payment_reference),denial_reason=coalesce($10,denial_reason),notes=coalesce($11,notes),updated_at=NOW() WHERE id=$1 RETURNING *`,[req.params.id,clean(b.claim_number),clean(b.status),b.total_approved==null?null:num(b.total_approved),b.total_paid==null?null:num(b.total_paid),b.submitted_at||null,b.approved_at||null,b.paid_at||null,clean(b.payment_reference),clean(b.denial_reason),clean(b.notes)]);
   if(!r.rowCount)return res.status(404).json({error:'Warranty claim not found'});
   res.json(r.rows[0]);
