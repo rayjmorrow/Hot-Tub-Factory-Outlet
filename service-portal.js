@@ -297,11 +297,43 @@ const workSendCardAuth=$('#workSendCardAuth');
 if(workSendCardAuth)workSendCardAuth.onclick=async()=>{
   const customerId=workSendCardAuth.dataset.customerId||$('#workDialog').dataset.customerId;
   if(!customerId)return alert('Select a customer first.');
+  const channel=$('#workCardAuthDeliveryChannel')?.value||'copy';
+  const linkBox=$('#workPaymentLinkBox');
+  workSendCardAuth.disabled=true;
+  linkBox.replaceChildren();
+  const status=document.createElement('p');status.setAttribute('role','status');status.textContent='Preparing secure authorization link…';linkBox.append(status);
   try{
+    const details=await api('/customers/'+customerId+'/payment-method');
+    const customer=details.customer||{};
+    if(channel==='email'&&!customer.email)throw Error('Customer has no email address. Add one or choose Copy Link.');
+    if(channel==='sms'&&!customer.phone)throw Error('Customer has no mobile phone number. Add one or choose Copy Link.');
     const x=await api('/customers/'+customerId+'/payment-authorization-link',{method:'POST',body:JSON.stringify({expires_days:7})});
-    $('#workPaymentLinkBox').innerHTML='<div class="sourcebox"><b>Secure card authorization link</b><p class="muted">Copy/send this to the customer. It expires in '+x.expires_days+' days.</p><input id="workPaymentAuthUrl" value="'+esc(x.url)+'" readonly><button type="button" id="workSelectPaymentAuthUrl" class="secondary">Select Link</button></div>';
-    $('#workSelectPaymentAuthUrl').onclick=()=>{$('#workPaymentAuthUrl').focus();$('#workPaymentAuthUrl').select()};
-  }catch(e){alert(e.message)}
+    // Always provide a manual fallback, including when the email or SMS provider rejects delivery.
+    const panel=document.createElement('div');panel.className='sourcebox';
+    const heading=document.createElement('b');heading.textContent='Secure card authorization link';
+    const detail=document.createElement('p');detail.className='muted';
+    detail.textContent='Link expires in '+x.expires_days+' days. Do not send it to anyone other than the intended customer.';
+    const input=document.createElement('input');input.id='workPaymentAuthUrl';input.readOnly=true;input.value=x.url;
+    const copy=document.createElement('button');copy.type='button';copy.className='secondary';copy.textContent='Copy Link';
+    copy.onclick=async()=>{
+      try{await navigator.clipboard.writeText(x.url);status.textContent='Authorization link copied.'}
+      catch{input.focus();input.select();status.textContent='Link selected. Copy it manually.'}
+    };
+    panel.append(heading,detail,input,copy);linkBox.append(panel);
+    if(channel==='copy'){status.textContent='Link generated, not sent. Copy it and share securely with the customer.';return}
+    status.textContent='Link generated. Sending by '+(channel==='sms'?'text':'email')+'…';
+    if(channel==='email'){
+      const subject='Hot Tub Factory Outlet — secure service card authorization';
+      const body='Hello '+(customer.first_name||'')+',\n\nTo authorize a card securely for future approved service invoices, please review the authorization and enter your card directly with our payment processor using this link:\n\n'+x.url+'\n\nThis link expires in '+x.expires_days+' days. If you did not request this, please contact Hot Tub Factory Outlet at 412-326-0361.\n\nHot Tub Factory Outlet';
+      await api('/customers/'+customerId+'/emails',{method:'POST',body:JSON.stringify({subject,body})});
+      status.textContent='Email submitted successfully to '+customer.email+'. Delivery to the inbox is not guaranteed; check the customer email conversation for status.';
+    }else{
+      const body='Hot Tub Factory Outlet: Please review your secure service card authorization link: '+x.url+' (expires in '+x.expires_days+' days). Questions? 412-326-0361';
+      const r=await api('/customers/'+customerId+'/messages',{method:'POST',body:JSON.stringify({body})});
+      status.textContent='Text accepted by provider for '+customer.phone+' (status: '+(r.status||'queued')+'). Delivery to the phone is not yet confirmed.';
+    }
+  }catch(e){status.textContent='Authorization link not sent: '+e.message+'.'+(linkBox.querySelector('#workPaymentAuthUrl')?' Use the Copy Link option above.':'')}
+  finally{workSendCardAuth.disabled=false}
 };
 const workApproveCashCheck=$('#workApproveCashCheck');
 if(workApproveCashCheck)workApproveCashCheck.onclick=async()=>{
