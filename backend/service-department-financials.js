@@ -48,7 +48,8 @@ router.get('/financials/summary',auth,financeOwner,async(req,res)=>{try{
     q(`SELECT coalesce(sum(greatest(total_claimed-total_paid,0)),0)::numeric outstanding,
       coalesce(sum(greatest(total_claimed-total_approved,0)),0)::numeric uncredited,
       coalesce(sum(greatest(total_approved-total_paid,0)),0)::numeric approved_unsettled,
-      coalesce(sum(total_paid) FILTER(WHERE paid_at::date BETWEEN $1::date AND $2::date),0)::numeric paid_period,
+      (coalesce((SELECT sum(s.amount) FROM htfo_warranty_settlements s WHERE s.settled_on BETWEEN $1::date AND $2::date),0)
+       +coalesce(sum(total_paid) FILTER(WHERE paid_at::date BETWEEN $1::date AND $2::date AND NOT EXISTS(SELECT 1 FROM htfo_warranty_settlements s WHERE s.claim_id=service_warranty_claims.id)),0))::numeric paid_period,
       count(*) FILTER(WHERE greatest(total_claimed-total_paid,0)>0.009)::int open_claims
       FROM service_warranty_claims`,[from,to]),
     q(`SELECT coalesce(sum(amount),0)::numeric collected FROM service_payments WHERE received_at::date BETWEEN $1::date AND $2::date`,[from,to]),
