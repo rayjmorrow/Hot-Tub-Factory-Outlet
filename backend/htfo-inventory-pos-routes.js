@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import {q,transaction} from './service-db.js';
+import {publishedRetailCatalog,retailPriceOverrides,retailPriceJoin,retailPriceCents} from './htfo-retail-catalog.js';
 import {createUnpaidRetailDraft} from './htfo-retail-draft.js';
 
 const router=express.Router();
@@ -135,19 +136,24 @@ router.get('/skus',permit(SERVICE),handle(async(req,res)=>{
  await ensureInventory();
  const rows=await q(`SELECT p.id,COALESCE(NULLIF(p.supplier_part_number,''),NULLIF(p.manufacturer_part_number,''),'PART-'||p.id::text) AS sku,
  p.description AS name,COALESCE(p.category,'Supplies') AS category,
- ROUND(COALESCE(NULLIF(p.sell_price,0),p.list_price,0)*100)::int AS price_cents,
+ ${retailPriceCents} AS price_cents,
  COALESCE(p.reorder_point,0)::int AS reorder_point,
  COALESCE(p.quantity_on_hand,0)::numeric AS on_hand,
  COALESCE(p.quantity_committed,0)::numeric AS committed,
  (COALESCE(p.quantity_on_hand,0)-COALESCE(p.quantity_committed,0))::numeric AS available
- FROM service_parts p WHERE p.active=true ORDER BY p.category,p.description LIMIT 500`);
+ FROM service_parts p ${retailPriceJoin} WHERE p.active=true ORDER BY p.category,p.description LIMIT 500`,[await retailPriceOverrides()]);
  res.json(rows.rows);
 }));
 router.get('/skus/scan',permit(RETAIL),handle(async(req,res)=>{
  await ensureInventory();
  const lookup=code(req.query.code);
  if(!lookup)throw Error('Enter or scan barcode/SKU');
- const rows=(await q("SELECT id,description AS name,COALESCE(NULLIF(supplier_part_number,''),NULLIF(manufacturer_part_number,''),'PART-'||id::text) AS sku,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents,(quantity_on_hand-quantity_committed) AS available FROM service_parts WHERE active=true AND (lower(barcode)=lower($1) OR lower(supplier_part_number)=lower($1) OR lower(manufacturer_part_number)=lower($1)) LIMIT 3",[lookup])).rows;
+ const rows=(await q(`SELECT p.id,p.description AS name,
+ COALESCE(NULLIF(p.supplier_part_number,''),NULLIF(p.manufacturer_part_number,''),'PART-'||p.id::text) AS sku,
+ ${retailPriceCents} AS price_cents,(p.quantity_on_hand-p.quantity_committed) AS available
+ FROM service_parts p ${retailPriceJoin}
+ WHERE p.active=true AND (lower(p.barcode)=lower($2) OR lower(trim(p.supplier_part_number))=lower($2)
+ OR lower(trim(p.manufacturer_part_number))=lower($2)) LIMIT 3`,[await retailPriceOverrides(),lookup])).rows;
  if(rows.length!==1)return res.status(rows.length?409:404).json({error:rows.length?'Multiple matching SKUs. Ask a manager to correct the catalog.':'Product barcode or SKU not found'});
  res.json(rows[0]);
 }));
@@ -171,22 +177,6 @@ router.post('/skus',permit(MANAGEMENT),handle(async(req,res)=>{
  res.json(r.rows[0]);
 }));
 
-const CATALOG_URL='https://raw.githubusercontent.com/rayjmorrow/Hot-Tub-Factory-Outlet/main/retail-catalog.json';
-async function publishedRetailCatalog(){
- const response=await fetch(CATALOG_URL,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(8000)});
- if(!response.ok)throw Error('Published retail catalog unavailable ('+response.status+')');
- const data=await response.json();
- if(!Array.isArray(data.products)||data.products.length>1000||!data.version)throw Error('Invalid published retail catalog');
- const seen=new Set();
- const products=data.products.map(p=>{
-  const sku=code(p.sku),name=code(p.name),category=code(p.category);
-  const price=Number(p.price_cents);
-  if(!sku||!name||!Number.isSafeInteger(price)||price<1||seen.has(sku.toLowerCase()))throw Error('Invalid or duplicated published SKU');
-  seen.add(sku.toLowerCase());
-  return {sku,name,category,price_cents:price,sku_status:p.sku_status};
- });
- return {version:String(data.version),products,excluded:data.excluded||[]};
-}
 async function retailCatalogComparison(){
  const catalog=await publishedRetailCatalog();
  const existing=(await q("SELECT id,supplier_part_number,description,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents FROM service_parts WHERE active=true AND supplier_part_number IS NOT NULL")).rows;
@@ -247,37 +237,48 @@ router.post('/spas',permit(MANAGEMENT),handle(async(req,res)=>{
 router.post('/spas/:id/reserve',permit(SALES),handle(async(req,res)=>{
  if(process.env.HTFO_INVENTORY_LIVE_RESERVATIONS!=='true')return res.status(409).json({error:'Live reservations disabled pending acceptance testing'});
  await ensureInventory();const id=integer(Number(req.params.id),'spa',1),draft=integer(req.body.draft_id,'agreement',1);
- const owner=(await q('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1',[draft])).rows[0];
- if(!owner)return res.status(404).json({error:'Agreement not found'});
- if(owner.document?.spa?.inventory_mode!=='in_stock'||Number(owner.document?.spa?.inventory_unit_id)!==id)return res.status(409).json({error:'This exact serial must be selected and saved on the agreement before reservation'});
- if(!MANAGEMENT.has(req.stockUser.role)&&String(owner.owner_user_id)!==String(req.stockUser.id))return res.status(403).json({error:'Not your agreement'});
- const unit=(await q(`UPDATE htfo_inventory_spa SET status='reserved',reserved_draft_id=$2,updated_at=NOW()
+ const outcome=await transaction(async run=>{
+ const owner=(await run('SELECT owner_user_id,document FROM crm_sales_drafts WHERE id=$1 FOR UPDATE',[draft])).rows[0];
+ if(!owner)return {status:404,error:'Agreement not found'};
+ if(owner.document?.spa?.inventory_mode!=='in_stock'||Number(owner.document?.spa?.inventory_unit_id)!==id)return {status:409,error:'This exact serial must be selected and saved on the agreement before reservation'};
+ if(!MANAGEMENT.has(req.stockUser.role)&&String(owner.owner_user_id)!==String(req.stockUser.id))return {status:403,error:'Not your agreement'};
+ const existing=(await run("SELECT id,serial,status FROM htfo_inventory_spa WHERE id=$1 AND reserved_draft_id=$2 AND status='reserved' FOR UPDATE",[id,draft])).rows[0];
+ if(existing)return {unit:existing};
+ const unit=(await run(`UPDATE htfo_inventory_spa SET status='reserved',reserved_draft_id=$2,updated_at=NOW()
  WHERE id=$1 AND status='available' AND reserved_draft_id IS NULL
  AND brand=$3 AND model=$4 AND COALESCE(shell,'')=COALESCE($5,'')
  AND COALESCE(cabinet,'')=COALESCE($6,'')
  AND serial=$7 AND COALESCE(options,'')=COALESCE($8,'')
  RETURNING id,serial,status`,[id,draft,owner.document?.spa?.brand,owner.document?.spa?.model,owner.document?.spa?.shell,owner.document?.spa?.cabinet,owner.document?.spa?.serial,owner.document?.spa?.manufacturer_add_ons])).rows[0];
- if(!unit)return res.status(409).json({error:'Spa not available, already reserved, or configuration differs'});
- res.json(unit);
+ if(!unit)return {status:409,error:'Spa not available, already reserved, or configuration differs'};
+ await run('INSERT INTO htfo_inventory_movements(spa_id,reason,actor_id) VALUES($1,$2,$3)',[id,'Reserved for agreement '+draft,req.stockUser.id]);
+ return {unit};
+ });
+ if(outcome.error)return res.status(outcome.status).json({error:outcome.error});
+ res.json(outcome.unit);
 }));
 router.post('/spas/:id/release',permit(MANAGEMENT),handle(async(req,res)=>{
  await ensureInventory();
  const reason=code(req.body?.reason);
  if(reason.length<8)return res.status(400).json({error:'Manager release reason is required (8+ characters)'});
- const current=(await q('SELECT reserved_draft_id FROM htfo_inventory_spa WHERE id=$1 AND status=$2',[integer(Number(req.params.id),'spa',1),'reserved'])).rows[0];
+ const outcome=await transaction(async run=>{
+ const current=(await run('SELECT reserved_draft_id FROM htfo_inventory_spa WHERE id=$1 AND status=$2 FOR UPDATE',[integer(Number(req.params.id),'spa',1),'reserved'])).rows[0];
  if(current?.reserved_draft_id){
-  const signed=(await q('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[current.reserved_draft_id])).rows[0];
+  const signed=(await run('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[current.reserved_draft_id])).rows[0];
   if(signed){
-   const currentDraft=(await q('SELECT document FROM crm_sales_drafts WHERE id=$1',[current.reserved_draft_id])).rows[0];
-   if(String(currentDraft?.document?.spa?.inventory_unit_id||'')===String(req.params.id)&&currentDraft?.document?.spa?.inventory_mode==='in_stock')return res.status(409).json({error:'Signed agreement still specifies this serial; customer-approved change order required'});
-   const approved=(await q("SELECT c.id FROM crm_sales_change_orders c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1 AND c.status='approved' AND (COALESCE(d.document #>> '{spa,inventory_mode}','')<>'in_stock' OR COALESCE(d.document #>> '{spa,inventory_unit_id}','')<>$2::text) ORDER BY c.id DESC LIMIT 1",[current.reserved_draft_id,String(req.params.id)])).rows[0];
-   if(!approved)return res.status(409).json({error:'Signed agreement requires an approved change order that removes this serial before release'});
+   const currentDraft=(await run('SELECT document FROM crm_sales_drafts WHERE id=$1',[current.reserved_draft_id])).rows[0];
+   if(String(currentDraft?.document?.spa?.inventory_unit_id||'')===String(req.params.id)&&currentDraft?.document?.spa?.inventory_mode==='in_stock')return {error:'Signed agreement still specifies this serial; customer-approved change order required'};
+   const approved=(await run("SELECT c.id FROM crm_sales_change_orders c JOIN crm_sales_drafts d ON d.id=c.draft_id WHERE c.draft_id=$1 AND c.status='approved' AND (COALESCE(d.document #>> '{spa,inventory_mode}','')<>'in_stock' OR COALESCE(d.document #>> '{spa,inventory_unit_id}','')<>$2::text) ORDER BY c.id DESC LIMIT 1",[current.reserved_draft_id,String(req.params.id)])).rows[0];
+   if(!approved)return {error:'Signed agreement requires an approved change order that removes this serial before release'};
   }
  }
-const result=await q(`WITH changed AS (UPDATE htfo_inventory_spa SET status='available',reserved_draft_id=NULL,updated_at=NOW()
+const result=await run(`WITH changed AS (UPDATE htfo_inventory_spa SET status='available',reserved_draft_id=NULL,updated_at=NOW()
  WHERE id=$1 AND status='reserved' RETURNING id,serial,status), logged AS (INSERT INTO htfo_inventory_movements(spa_id,reason,actor_id)
  SELECT id,$2,$3 FROM changed RETURNING id) SELECT changed.* FROM changed JOIN logged ON true`,[integer(Number(req.params.id),'spa',1),'Manager release: '+reason,req.stockUser.id]);
- if(!result.rowCount)return res.status(409).json({error:'Only reserved spas can be released'});res.json(result.rows[0]);
+ return result.rows[0]||{error:'Only reserved spas can be released'};
+ });
+ if(outcome.error)return res.status(409).json(outcome);
+ res.json(outcome);
 }));
 router.get('/receipts',permit(RETAIL),handle(async(req,res)=>{
  await ensureInventory();const rows=await q('SELECT id,customer_id,total_cents,payment_status,department,merchant_route,created_at FROM htfo_pos_receipts ORDER BY id DESC LIMIT 50');res.json(rows.rows);

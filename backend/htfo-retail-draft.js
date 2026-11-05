@@ -1,11 +1,15 @@
 import {q,transaction} from './service-db.js';
+import {retailPriceOverrides,retailPriceJoin,retailPriceCents} from './htfo-retail-catalog.js';
 const number=(x,min,max,label)=>{if(!Number.isSafeInteger(x)||x<min||x>max)throw Error('Invalid '+label);return x};
 export async function createUnpaidRetailDraft(body,actor){
  const lines=body?.items;if(!Array.isArray(lines)||lines.length<1||lines.length>30)throw Error('Add 1–30 retail items');
+ const overrides=await retailPriceOverrides();
  const products=[];
  for(const item of lines){
   const id=number(item.sku_id,1,100000000,'SKU'),qty=number(item.qty,1,99,'quantity');
-  const p=(await q("SELECT id,description,taxable,COALESCE(NULLIF(supplier_part_number,''),NULLIF(manufacturer_part_number,''),'PART-'||id::text) AS sku,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents FROM service_parts WHERE id=$1 AND active=true",[id])).rows[0];
+  const p=(await q(`SELECT p.id,p.description,p.taxable,
+   COALESCE(NULLIF(p.supplier_part_number,''),NULLIF(p.manufacturer_part_number,''),'PART-'||p.id::text) AS sku,
+   ${retailPriceCents} AS price_cents FROM service_parts p ${retailPriceJoin} WHERE p.id=$2 AND p.active=true`,[overrides,id])).rows[0];
   if(!p)throw Error('Item no longer exists');
   products.push({id,qty,sku:p.sku,name:p.description,price:p.price_cents,taxable:p.taxable});
  }

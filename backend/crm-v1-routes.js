@@ -9,7 +9,8 @@ import {remoteSigningCompletion} from './crm-remote-sign-completion.js';
 import {authorizePaymentLinks} from './crm-authorize-checkout.js';
 import {authorizePaymentWebhook} from './crm-authorize-webhook.js';
 import { proposedSalesTermsReference } from './proposed-sales-terms-inhouse.js';
-import { q } from './service-db.js';
+import { q,transaction } from './service-db.js';
+import { requireAgreementReservation } from './htfo-agreement-reservation.js';
 import { ensureEmailTrackingSchema } from './crm-email-tracking-routes.js';
 
 const router=express.Router();
@@ -547,7 +548,7 @@ router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,
   if(!salesAdmin(req)&&String(draft.owner_user_id)!==String(req.user.sub))return res.status(403).json({error:'Salesperson must own this agreement'});
   if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft.id])).rowCount)return res.status(409).json({error:'Agreement is already executed; retrieve the signed copy'});
   const d=validateSalesDraft(draft.document);
-  if(d.spa.inventory_mode==='in_stock'){const chosen=(await q("SELECT 1 FROM htfo_inventory_spa WHERE id=$1 AND reserved_draft_id=$2 AND status='reserved' AND serial=$3",[d.spa.inventory_unit_id,draft.id,d.spa.serial])).rowCount;if(!chosen)return res.status(409).json({error:'The selected stock spa must be reserved to this agreement before signing'});}
+  await requireAgreementReservation(q,draft.id,d.spa);
   if(d.msrp<=0||!d.customer.email||!d.customer.first_name||!d.customer.last_name||!d.spa.brand||!d.spa.model)return res.status(400).json({error:'Complete customer email, name, spa and MSRP before signing'});
   const customerName=String(req.body.customer_name||'').trim(),salesName=String(req.body.salesperson_name||'').trim();
   if(customerName.length<3||salesName.length<3)return res.status(400).json({error:'Both printed signer names required'});
@@ -556,27 +557,32 @@ router.post('/crm/v1/sales-drafts/:id/execute',...guard,salesIdentity,async(req,
   if(!salesEmail||!salesEmail.includes('@'))return res.status(409).json({error:'Salesperson email is not configured'});
   const pdf=await signedPdf(d,draft.id,{customer_name:customerName,salesperson_name:salesName,customer_png,salesperson_png,terms_text:terms,terms_version:termsVersion});
   const hash=createHash('sha256').update(pdf).digest('hex');
+  await ensure();
+  await transaction(async run=>{
+  const locked=(await run('SELECT version FROM crm_sales_drafts WHERE id=$1 FOR UPDATE',[draft.id])).rows[0];
+  if(locked?.version!==draft.version)throw Error('Agreement changed. Reopen it before signing.');
+  await requireAgreementReservation(run,draft.id,d.spa,true);
   // Customer profile association: retain the CRM lead ID if known, otherwise resolve unambiguously by email.
   let submissionId=d.submission_id||null;
   if(!submissionId){
-   const matches=(await q("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) ORDER BY received_at DESC LIMIT 2",[d.customer.email])).rows;
+   const matches=(await run("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) ORDER BY received_at DESC LIMIT 2",[d.customer.email])).rows;
    if(matches.length===1)submissionId=matches[0].submission_id;
-   else if(matches.length>1)return res.status(409).json({error:'Multiple customer profiles have this email. Open the correct customer profile before executing'});
+   else if(matches.length>1)throw Error('Multiple customer profiles have this email. Open the correct customer profile before executing');
   }
   if(submissionId){
-   const found=(await q('SELECT submission_id FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL',[submissionId])).rows;
-   if(!found.length)return res.status(409).json({error:'Linked customer profile was not found. Reopen the agreement from the customer profile'});
+   const found=(await run('SELECT submission_id FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL',[submissionId])).rows;
+   if(!found.length)throw Error('Linked customer profile was not found. Reopen the agreement from the customer profile');
   }else{
-   await ensure();
    submissionId='signed-'+randomBytes(10).toString('hex');
-   await q(`INSERT INTO crm_website_leads(submission_id,first_name,last_name,email,phone,source,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,lifecycle_stage,pipeline_stage,has_opportunity,received_at,updated_at)
+   await run(`INSERT INTO crm_website_leads(submission_id,first_name,last_name,email,phone,source,note,payload,product_interest,brand_interest,model_interest,assigned_to,showroom,lifecycle_stage,pipeline_stage,has_opportunity,received_at,updated_at)
      VALUES($1,$2,$3,$4,$5,'Walk-In','Sales agreement customer profile',$6::jsonb,$7,$8,$9,$10,$11,'Customer','Won',true,NOW(),NOW())`,
     [submissionId,d.customer.first_name,d.customer.last_name,d.customer.email,d.customer.phone,JSON.stringify({created_by_signed_agreement:draft.id}),'Hot Tub',d.spa.brand,d.spa.model,req.user.name||req.user.username,d.location]);
   }
-  await q(`INSERT INTO crm_sales_executed_contracts
+  await run(`INSERT INTO crm_sales_executed_contracts
    (draft_id,submission_id,customer_email,salesperson_email,executed_document,customer_name,salesperson_name,customer_signature,salesperson_signature,terms_text,terms_version,pdf_data,pdf_sha256)
    VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)`,
    [draft.id,submissionId,d.customer.email,salesEmail,JSON.stringify(d),customerName,salesName,customer_png,salesperson_png,terms,termsVersion,pdf,hash]);
+  });
   res.status(201).json({ok:true,draft_id:draft.id,sha256:hash,stored:true,delivery:'pending'});
  }catch(e){res.status(400).json({error:e.message||'Could not execute contract'})}
 });

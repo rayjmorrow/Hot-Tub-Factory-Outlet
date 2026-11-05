@@ -5,7 +5,7 @@ function option(value,name){const o=document.createElement('option');o.value=val
 function tab(name){for(const p of ['counter','inventory','receiving'])$('#'+p).hidden=p!==name}
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
 $('#logout').onclick=()=>{token='';user=null;cart=[];$('#workspace').hidden=true;$('#login').hidden=false;$('#logout').hidden=true;$('#password').value=''};
-$('#loginForm').onsubmit=async e=>{e.preventDefault();try{const session=await request(API+'/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=session.token;const me=await request(POS+'/me');user=me.user;permissions=me.permissions;$('#openSpaSales').hidden=!permissions.sales;if(!permissions.retail&&!permissions.service)throw Error('No retail or inventory permissions');$('#workspace').hidden=false;$('#login').hidden=true;$('#logout').hidden=false;text($('#welcome'),'Hello, '+(user.name||user.username));text($('#role'),user.role);document.querySelectorAll('.manager').forEach(x=>x.hidden=!permissions.manage);document.querySelectorAll('.sales').forEach(x=>x.hidden=!permissions.sales);await refresh();tab(permissions.retail?'counter':'inventory')}catch(err){text($('#loginStatus'),err.message)}};
+$('#loginForm').onsubmit=async e=>{e.preventDefault();try{const session=await request(API+'/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value,password:$('#password').value})});token=session.token;const me=await request(POS+'/me');user=me.user;permissions=me.permissions;$('#openSpaSales').hidden=!permissions.sales;if(!permissions.retail&&!permissions.service)throw Error('No retail or inventory permissions');$('#workspace').hidden=false;$('#login').hidden=true;$('#logout').hidden=false;text($('#welcome'),'Hello, '+(user.name||user.username));text($('#role'),user.role);$('#departmentReport').hidden=!['owner','admin'].includes(user.role);$('#departmentReportRows').replaceChildren();text($('#departmentReportStatus'),'');document.querySelectorAll('.manager').forEach(x=>x.hidden=!permissions.manage);document.querySelectorAll('.sales').forEach(x=>x.hidden=!permissions.sales);await refresh();tab(permissions.retail?'counter':'inventory')}catch(err){text($('#loginStatus'),err.message)}};
 async function refresh(){skus=await request(POS+'/skus');const selectors=[$('#counterSku'),$('#receiveSku')];for(const select of selectors){select.replaceChildren(option('','Select product'));for(const p of skus)select.append(option(p.id,p.sku+' · '+p.name+' — '+money(p.price_cents)+' ('+p.available+' available)'))}
 $('#skuTable').replaceChildren();for(const s of skus){const row=document.createElement('div');row.className='cardrow';text(row,s.sku+' · '+s.name+' | On hand '+s.on_hand+' | Committed '+s.committed+' | Available '+s.available);$('#skuTable').append(row)}
 if(permissions.sales){spas=await request(POS+'/spas');$('#spaTable').replaceChildren();for(const unit of spas){const row=document.createElement('div');row.className='cardrow';text(row,unit.brand+' '+unit.model+' · '+unit.shell+' / '+unit.cabinet+' · Serial '+unit.serial+' · '+unit.location+' · '+unit.status);
@@ -80,3 +80,25 @@ $('#syncRetailPrices').onclick=async()=>{
 
 $('#skuForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);try{await request(POS+'/skus',{method:'POST',body:JSON.stringify({sku:f.get('sku'),name:f.get('name'),category:f.get('category'),price_cents:Math.round(Number(f.get('price'))*100),cost_cents:Math.round(Number(f.get('cost'))*100),reorder_point:Number(f.get('reorder')),barcode:f.get('barcode')})});text($('#manageStatus'),'SKU saved');await refresh()}catch(e){text($('#manageStatus'),e.message)}};
 $('#receiveForm').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target);try{await request(POS+'/skus/'+f.get('sku_id')+'/receive',{method:'POST',body:JSON.stringify({location:f.get('location'),qty:Number(f.get('qty'))})});text($('#manageStatus'),'Inventory received');await refresh()}catch(e){text($('#manageStatus'),e.message)}};
+
+const departmentLabels={monroeville_sales:'Monroeville Sales',wexford_sales:'Wexford Sales',online_sales:'Online Sales',service:'Service',unassigned:'Unassigned'};
+$('#departmentReportForm').onsubmit=async e=>{
+ e.preventDefault();
+ const dates=new URLSearchParams([...new FormData(e.currentTarget)].filter(([,value])=>value));
+ const target=$('#departmentReportRows'),status=$('#departmentReportStatus');
+ target.replaceChildren();
+ text(status,'Loading department report…');
+ try{
+  const report=await request(API+'/htfo-departments/summary?'+dates);
+  for(const d of [...Object.values(report.departments),...report.unassigned]){
+   const row=document.createElement('tr');
+   const label=Object.hasOwn(departmentLabels,d.department)?departmentLabels[d.department]:d.department;
+   for(const value of [label,money(d.signed_contract_value_cents),money(d.agreement_recorded_paid_cents),
+    money(d.retail_unpaid_draft_cents),money(Number(d.online_order_gross_usd||0)*100),money(Number(d.service_payments_collected_usd||0)*100)]){
+    const cell=document.createElement('td');text(cell,value);row.append(cell);
+   }
+   target.append(row);
+  }
+  text(status,report.from+' through '+report.to+' · '+report.notes.join(' '));
+ }catch(error){text(status,error.message)}
+};

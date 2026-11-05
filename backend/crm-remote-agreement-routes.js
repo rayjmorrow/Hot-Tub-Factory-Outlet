@@ -1,4 +1,5 @@
 import express from 'express';
+import {requireAgreementReservation} from './htfo-agreement-reservation.js';
 import {randomBytes,createHash} from 'node:crypto';
 export function remoteAgreementRouter({q,guard,salesIdentity,ensureSalesDrafts,validateSalesDraft,signatureImage,staffEmail,email,sms,opted,signedPdf,ensureExecutedContracts,sendContractPdf}){
  const router=express.Router(),hash=t=>createHash('sha256').update(t).digest('hex');
@@ -23,6 +24,7 @@ export function remoteAgreementRouter({q,guard,salesIdentity,ensureSalesDrafts,v
    if(!['owner','admin'].includes(req.user.role)&&String(draft.owner_user_id)!==String(req.user.sub))throw Error('Not authorized');
    if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft.id])).rowCount)throw Error('Agreement already signed');
    const doc=validateSalesDraft(draft.document);if(!doc.customer.email||!doc.customer.first_name||!doc.customer.last_name||!doc.spa.model||!doc.msrp)throw Error('Complete customer details and spa pricing');
+   await requireAgreementReservation(q,draft.id,doc.spa);
    const destination=channel==='email'?doc.customer.email:doc.customer.phone;if(!destination)throw Error('Customer contact missing');
    if(channel==='sms'&&await opted(destination))throw Error('Customer has opted out of SMS');
    const name=String(req.body.staff_name||'').trim(),staff=staffEmail(req.user);if(name.length<3||!staff)throw Error('Salesperson details missing');
@@ -48,7 +50,7 @@ export function remoteAgreementRouter({q,guard,salesIdentity,ensureSalesDrafts,v
   res.setHeader('Cache-Control','no-store');
   try{const r=await tokenRecord(req.body.token);if(!r||r.status!=='pending')return res.status(410).json({error:'Link expired'});
    const feedback=String(req.body.feedback||'').trim().slice(0,2000);if(feedback.length<8)throw Error('Describe the correction requested');
-   await q("UPDATE crm_sales_remote_signatures SET status='correction_requested',feedback=$2 WHERE draft_id=$1 AND status='pending'",[r.draft_id,feedback]);
+   await q("UPDATE crm_sales_remote_signatures SET status='correction_requested',feedback=$2 WHERE draft_id=$1 AND token_hash=$3 AND status='pending'",[r.draft_id,feedback,hash(req.body.token)]);
    try{await email(r.staff_email,'Customer requested correction to agreement #'+r.draft_id,feedback,'Sales team',{username:'sales',name:'HTFO Sales'})}catch(_){}
    res.json({status:'correction_requested'});
   }catch(e){res.status(400).json({error:e.message})}

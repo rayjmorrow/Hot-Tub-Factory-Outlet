@@ -1,6 +1,6 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
-import { q } from './service-db.js';
+import { q,transaction } from './service-db.js';
 
 const router=express.Router();
 const clean=v=>v==null?null:String(v).trim();
@@ -135,7 +135,7 @@ export async function runFulfillmentAutomation(){
       await logEvent(null,s.id,'autoship_reminder','AutoShip scheduled for '+cycle+': customer reminder/add-on window opened.');
       await queueEmail(s.customer_id,null,s.email,'Your upcoming Hot Tub Factory Outlet AutoShip','Hi '+(s.first_name||'')+',\\n\\nYour next AutoShip is scheduled for '+cycle+'. If you need to add anything, please contact us before the order is finalized.\\n\\nHot Tub Factory Outlet');
     }
-    if(cycle<=createThrough){
+    if(cycle<=createThrough&&!s.external_subscription_id){
       const exists=(await q('SELECT id FROM service_customer_orders WHERE recurring_order_id=$1 AND scheduled_ship_date=$2::date LIMIT 1',[s.id,cycle])).rows[0];
       if(!exists){
         const orderNo='AUTO-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-7);
@@ -157,6 +157,9 @@ async function queueRows(){
     coalesce((SELECT json_agg(json_build_object('id',i.id,'sku',i.sku,'description',i.description,'quantity',i.quantity,'unit_price',i.unit_price,'line_total',i.line_total,'cover_form_id',i.cover_form_id) ORDER BY i.id) FROM service_customer_order_items i WHERE i.order_id=o.id),'[]'::json) items
     FROM service_customer_orders o JOIN service_customers c ON c.id=o.customer_id
     WHERE o.status <> 'cancelled' AND coalesce(o.fulfillment_status,'waiting') NOT IN ('shipped','delivered')
+      AND (o.recurring_order_id IS NULL OR NOT EXISTS (SELECT 1 FROM service_recurring_orders r
+        WHERE r.id=o.recurring_order_id AND r.external_subscription_id IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM service_order_card_payments p WHERE p.order_id=o.id))
       AND (o.source IN ('online','autoship') OR o.order_type IN ('online','autoship','ship'))
     ORDER BY coalesce(o.scheduled_ship_date,o.created_at::date),o.created_at`)).rows;
 }
@@ -239,62 +242,109 @@ router.post('/fulfillment/store-order',async(req,res)=>{
   if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized fulfillment handoff'});
   const b=req.body||{},cust=b.customer||{},items=Array.isArray(b.items)?b.items:[];
   const email=clean(cust.email)?.toLowerCase()||null,phone=clean(cust.phone);
-  let customer=null;
-  if(email)customer=(await q('SELECT * FROM service_customers WHERE lower(email)=lower($1) ORDER BY id DESC LIMIT 1',[email])).rows[0];
-  if(!customer&&phone)customer=(await q('SELECT * FROM service_customers WHERE phone=$1 ORDER BY id DESC LIMIT 1',[phone])).rows[0];
-  if(!customer){
-    customer=(await q(`INSERT INTO service_customers(first_name,last_name,email,phone,street,street2,city,state,zip,notes)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[clean(cust.first_name),clean(cust.last_name),email,phone,clean(cust.street),clean(cust.street2),clean(cust.city),clean(cust.state),clean(cust.zip),'Created from online store fulfillment handoff'])).rows[0];
-  }else{
-    customer=(await q(`UPDATE service_customers SET first_name=coalesce($2,first_name),last_name=coalesce($3,last_name),email=coalesce($4,email),phone=coalesce($5,phone),street=coalesce($6,street),street2=coalesce($7,street2),city=coalesce($8,city),state=coalesce($9,state),zip=coalesce($10,zip),updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [customer.id,clean(cust.first_name),clean(cust.last_name),email,phone,clean(cust.street),clean(cust.street2),clean(cust.city),clean(cust.state),clean(cust.zip)])).rows[0];
-  }
   const external=clean(b.external_order_id)||clean(b.transaction_id)||clean(b.order_number);
-  if(external){
-    const existing=(await q('SELECT * FROM service_customer_orders WHERE external_order_id=$1 LIMIT 1',[external])).rows[0];
-    if(existing)return res.json({ok:true,duplicate:true,order_id:existing.id});
+  if(!external)return res.status(400).json({error:'External order reference required'});
+  try{
+  const result=await transaction(async run=>{
+  await run('SELECT pg_advisory_xact_lock(hashtext($1), 4121)',[external]);
+  const existing=(await run('SELECT id,customer_id FROM service_customer_orders WHERE external_order_id=$1',[external])).rows[0];
+  if(existing)return {duplicate:true,order_id:existing.id,customer_id:existing.customer_id};
+  let customer=null;
+  if(email)customer=(await run('SELECT * FROM service_customers WHERE lower(email)=lower($1) ORDER BY id DESC LIMIT 1',[email])).rows[0];
+  if(!customer&&phone)customer=(await run('SELECT * FROM service_customers WHERE phone=$1 ORDER BY id DESC LIMIT 1',[phone])).rows[0];
+  if(!customer){
+    customer=(await run(`INSERT INTO service_customers(first_name,last_name,email,phone,street,street2,city,state,zip,notes)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,[clean(cust.first_name),clean(cust.last_name),email,phone,clean(cust.street),clean(cust.street2),clean(cust.city),clean(cust.state),clean(cust.zip),'Created from online store fulfillment handoff'])).rows[0];
   }
   const orderNo=clean(b.order_number)||('WEB-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-7));
-  const order=(await q(`INSERT INTO service_customer_orders(customer_id,external_order_id,order_number,status,order_type,shipping_amount,total_amount,source,fulfillment_status,package_weight_lbs,package_length_in,package_width_in,package_height_in,notes,sales_department)
+  const order=(await run(`INSERT INTO service_customer_orders(customer_id,external_order_id,order_number,status,order_type,shipping_amount,total_amount,source,fulfillment_status,package_weight_lbs,package_length_in,package_width_in,package_height_in,notes,sales_department)
     VALUES($1,$2,$3,'processing','online',$4,$5,'online','waiting',$6,$7,$8,$9,$10,'online_sales') RETURNING *`,
     [customer.id,external,orderNo,num(b.shipping_amount),num(b.total_amount),num(b.package_weight_lbs)||10,num(b.package_length_in)||12,num(b.package_width_in)||12,num(b.package_height_in)||12,clean(b.notes)])).rows[0];
   for(const i of items){
     const qty=Math.max(.01,num(i.quantity)||1),unit=num(i.unit_price);
     const coverFormId=clean(i.cover_form_id);
-    await q(`INSERT INTO service_customer_order_items(order_id,product_id,sku,description,quantity,unit_price,line_total,item_scope,cover_form_id)
+    await run(`INSERT INTO service_customer_order_items(order_id,product_id,sku,description,quantity,unit_price,line_total,item_scope,cover_form_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,'one_time',$8)`,[order.id,clean(i.product_id),clean(i.sku),clean(i.description)||'Online item',qty,unit,qty*unit,coverFormId]);
-    if(coverFormId)await q("UPDATE service_cover_order_forms SET status='paid',external_order_id=$2,paid_at=NOW() WHERE form_id=$1",[coverFormId,external]);
+    if(coverFormId)await run("UPDATE service_cover_order_forms SET status='paid',external_order_id=$2,paid_at=NOW() WHERE form_id=$1",[coverFormId,external]);
   }
-  await q(`UPDATE service_customer_orders SET subtotal=(SELECT coalesce(sum(line_total),0) FROM service_customer_order_items WHERE order_id=$1),updated_at=NOW() WHERE id=$1`,[order.id]);
-  await logEvent(order.id,null,'store_order_received','Online store order '+orderNo+' entered Fulfillment.','online store');
-  res.status(201).json({ok:true,order_id:order.id,customer_id:customer.id});
+  await run(`UPDATE service_customer_orders SET subtotal=(SELECT coalesce(sum(line_total),0) FROM service_customer_order_items WHERE order_id=$1),updated_at=NOW() WHERE id=$1`,[order.id]);
+  await run(`INSERT INTO service_fulfillment_events(order_id,event_type,description,actor) VALUES($1,'store_order_received',$2,'online store')`,
+    [order.id,'Online store order '+orderNo+' entered Fulfillment.']);
+  return {order_id:order.id,customer_id:customer.id};
+  });
+  res.status(result.duplicate?200:201).json({ok:true,...result});
+  }catch(e){res.status(409).json({error:e.message})}
 });
 
 
 router.post('/fulfillment/store-autoship',async(req,res)=>{
   if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized AutoShip handoff'});
-  const b=req.body||{},cust=b.customer||{},email=clean(cust.email)?.toLowerCase()||null,phone=clean(cust.phone);
-  let customer=null;
-  if(email)customer=(await q('SELECT * FROM service_customers WHERE lower(email)=lower($1) ORDER BY id DESC LIMIT 1',[email])).rows[0];
-  if(!customer&&phone)customer=(await q('SELECT * FROM service_customers WHERE phone=$1 ORDER BY id DESC LIMIT 1',[phone])).rows[0];
-  if(!customer)return res.status(404).json({error:'Customer must exist before AutoShip handoff'});
-  const created=[];
-  for(const sub of (Array.isArray(b.subscriptions)?b.subscriptions:[])){
-    const external=clean(sub.subscriptionId);
-    let rec=external?(await q('SELECT * FROM service_recurring_orders WHERE external_subscription_id=$1 LIMIT 1',[external])).rows[0]:null;
-    if(!rec){
-      const months=Math.max(1,Number(sub.frequencyMonths)||1),days=months*30,next=clean(sub.startDate)||addDays(ymd(new Date()),days);
-      rec=(await q(`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes,sales_department)
-        VALUES($1,$2,'active',$3,'days',$4,$5,'ship',$6,'online_sales') RETURNING *`,[customer.id,external,days,next,clean(b.payment_reference),'Online store AutoShip'])).rows[0];
-      const subItems=Array.isArray(sub.items)?sub.items:[];
-      for(const i of subItems)await q(`INSERT INTO service_recurring_order_items(recurring_order_id,product_id,sku,description,quantity,unit_price,active)
-        VALUES($1,$2,$3,$4,$5,$6,true)`,[rec.id,clean(i.id),clean(i.sku),clean(i.name)||clean(i.description)||'AutoShip item',Math.max(.01,num(i.quantity)||1),num(i.unit_price)]);
-      await logEvent(null,rec.id,'autoship_enrolled','AutoShip enrolled from online store. First shipment '+next+'.','online store');
+  try{
+    const b=req.body||{},cust=b.customer||{},email=clean(cust.email)?.toLowerCase()||null,phone=clean(cust.phone);
+    const subs=Array.isArray(b.subscriptions)?b.subscriptions:[];
+    if(!subs.length||subs.some(s=>!/^\d+$/.test(s.subscriptionId)||!Array.isArray(s.items)||!s.items.length)){
+      return res.status(400).json({error:'Verified subscription IDs and items are required'});
     }
-    created.push(rec);
-  }
-  await runFulfillmentAutomation();
-  res.json({ok:true,recurring_orders:created.map(x=>x.id)});
+    const created=await transaction(async run=>{
+      let customer=null;
+      if(email)customer=(await run('SELECT id FROM service_customers WHERE lower(email)=$1 ORDER BY id DESC LIMIT 1',[email])).rows[0];
+      if(!customer&&phone)customer=(await run('SELECT id FROM service_customers WHERE phone=$1 ORDER BY id DESC LIMIT 1',[phone])).rows[0];
+      if(!customer)throw Error('Customer must exist before AutoShip handoff');
+      const ids=[];
+      for(const sub of subs){
+        const external=String(sub.subscriptionId),months=Number(sub.frequencyMonths);
+        if(!Number.isSafeInteger(months)||months<1||months>12)throw Error('Invalid AutoShip interval');
+        const inserted=(await run(`INSERT INTO service_recurring_orders(customer_id,external_subscription_id,status,frequency_value,frequency_unit,next_ship_date,payment_reference,shipping_method,notes,sales_department)
+          VALUES($1,$2,'active',$3,'months',$4,$5,$6,'Online store AutoShip','online_sales')
+          ON CONFLICT(external_subscription_id) WHERE external_subscription_id IS NOT NULL DO NOTHING RETURNING id`,
+          [customer.id,external,months,sub.startDate,clean(b.payment_reference),b.fulfillment==='ship'?'ship':clean(b.fulfillment)||'ship'])).rows[0];
+        if(!inserted){
+          const previous=(await run('SELECT id,customer_id FROM service_recurring_orders WHERE external_subscription_id=$1',[external])).rows[0];
+          if(String(previous.customer_id)!==String(customer.id))throw Error('Subscription is linked to a different customer');
+          ids.push(previous.id);
+          continue;
+        }
+        for(const i of sub.items)await run(`INSERT INTO service_recurring_order_items(recurring_order_id,product_id,sku,description,quantity,unit_price,active)
+          VALUES($1,$2,$3,$4,$5,$6,true)`,[inserted.id,clean(i.id),clean(i.sku),clean(i.name)||'AutoShip item',num(i.quantity),num(i.unit_price)]);
+        await run(`INSERT INTO service_fulfillment_events(recurring_order_id,event_type,description,actor)
+          VALUES($1,'autoship_enrolled',$2,'online store')`,[inserted.id,'AutoShip enrolled. First shipment '+sub.startDate+'.']);
+        ids.push(inserted.id);
+      }
+      return ids;
+    });
+    res.json({ok:true,recurring_orders:created});
+  }catch(e){res.status(409).json({error:e.message})}
+});
+
+router.post('/fulfillment/autoship-payment',async(req,res)=>{
+  if(!storeSecretOk(req))return res.status(401).json({error:'Unauthorized AutoShip payment handoff'});
+  try{
+    const {subscription_id:subscriptionId,transaction_id:transactionId,payment_number:paymentNumber,paid_date:date,amount}=req.body||{};
+    if(!/^\d+$/.test(subscriptionId)||!/^\d+$/.test(transactionId)||!Number.isSafeInteger(paymentNumber)||paymentNumber<1||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(amount)||amount<=0)return res.status(400).json({error:'Invalid AutoShip payment'});
+    const order=await transaction(async run=>{
+      const sub=(await run('SELECT * FROM service_recurring_orders WHERE external_subscription_id=$1 FOR UPDATE',[subscriptionId])).rows[0];
+      if(!sub)throw Error('AutoShip subscription handoff has not arrived');
+      const prior=(await run('SELECT order_id FROM service_order_card_payments WHERE authorize_transaction_id=$1',[transactionId])).rows[0];
+      if(prior)return prior.order_id;
+      const existing=(await run('SELECT id FROM service_customer_orders WHERE recurring_order_id=$1 AND scheduled_ship_date=$2::date LIMIT 1',[sub.id,date])).rows[0];
+      const id=existing?.id||(await run(`INSERT INTO service_customer_orders(customer_id,recurring_order_id,order_number,status,order_type,scheduled_ship_date,source,fulfillment_status,total_amount,sales_department)
+        VALUES($1,$2,$3,'processing','autoship',$4,'autoship','waiting',$5,$6) RETURNING id`,
+        [sub.customer_id,sub.id,'AUTO-'+subscriptionId+'-'+paymentNumber,date,amount,sub.sales_department])).rows[0].id;
+      if(!existing)await run(`INSERT INTO service_customer_order_items(order_id,recurring_order_item_id,product_id,sku,description,quantity,unit_price,line_total,item_scope)
+        SELECT $1,id,product_id,sku,description,quantity,unit_price,quantity*unit_price,'recurring'
+        FROM service_recurring_order_items WHERE recurring_order_id=$2 AND active=true`,[id,sub.id]);
+      await run(`UPDATE service_customer_orders SET subtotal=(SELECT coalesce(sum(line_total),0) FROM service_customer_order_items WHERE order_id=$1),
+        total_amount=$2,updated_at=NOW() WHERE id=$1`,[id,amount]);
+      await run(`INSERT INTO service_order_card_payments(order_id,authorize_transaction_id,amount,raw_event_type)
+        VALUES($1,$2,$3,'autoship_capture')`,[id,transactionId,amount]);
+      await run(`UPDATE service_recurring_orders SET next_ship_date=($2::date+make_interval(months=>CASE
+        WHEN frequency_unit='months' THEN frequency_value ELSE greatest(1,frequency_value/30) END))::date,
+        updated_at=NOW() WHERE id=$1 AND (next_ship_date IS NULL OR next_ship_date<=$2::date)`,[sub.id,date]);
+      return id;
+    });
+    res.json({ok:true,order_id:order});
+  }catch(e){res.status(409).json({error:e.message})}
 });
 
 function reportMonthBounds(month){
