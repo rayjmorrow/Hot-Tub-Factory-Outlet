@@ -33,7 +33,7 @@ function managersOnly(req,res,next){
 router.get('/crm/v1/admin/commission-preview',authorize,managersOnly,async(req,res)=>{
  try{
   const rows=(await q(`SELECT e.draft_id,e.executed_at,e.executed_document
-   FROM crm_sales_executed_contracts e ORDER BY e.executed_at DESC LIMIT 500`)).rows;
+   FROM crm_sales_executed_contracts e JOIN crm_sales_drafts d ON d.id=e.draft_id WHERE d.archived_at IS NULL ORDER BY e.executed_at DESC LIMIT 500`)).rows;
   const pricebook=(await q('SELECT brand,model,wholesale_cents FROM crm_sales_pricebook')).rows;
   const costs=new Map(pricebook.map(x=>[normalize(x.brand)+'|'+normalize(x.model),x.wholesale_cents]));
   const list=rows.map(r=>{
@@ -91,7 +91,7 @@ router.get('/crm/v1/commissions',authorize,async(req,res)=>{
     u.display_name salesperson
     FROM htfo_sales_commissions c JOIN crm_sales_drafts d ON d.id=c.draft_id
     JOIN service_users u ON u.id=c.owner_user_id
-    WHERE c.eligible_on>=$1::date AND c.eligible_on<($1::date+INTERVAL '1 month')
+    WHERE d.archived_at IS NULL AND c.eligible_on>=$1::date AND c.eligible_on<($1::date+INTERVAL '1 month')
     AND ($2::bigint IS NULL OR c.owner_user_id=$2) ORDER BY u.display_name,c.eligible_on,c.draft_id`,[month+'-01',staff]);
   res.set('Cache-Control','no-store').json({month,rows});
  }catch(error){res.status(503).json({error:'Commission ledger unavailable'})}
@@ -104,7 +104,7 @@ router.post('/crm/v1/admin/commissions/:id/review',authorize,managersOnly,async(
   await ensureLedger();
   const approved=await transaction(async run=>{
    const row=(await run(`SELECT d.document,d.version,d.owner_user_id,e.executed_at
-     FROM crm_sales_drafts d JOIN crm_sales_executed_contracts e ON e.draft_id=d.id WHERE d.id=$1 FOR UPDATE OF d`,[id])).rows[0];
+     FROM crm_sales_drafts d JOIN crm_sales_executed_contracts e ON e.draft_id=d.id WHERE d.id=$1 AND d.archived_at IS NULL FOR UPDATE OF d`,[id])).rows[0];
    if(!row?.owner_user_id)throw Error('A signed agreement with an assigned salesperson is required');
    const d=row.document,brand=d.spa?.brand,model=d.spa?.model;
    const existing=(await run('SELECT paid_at FROM htfo_sales_commissions WHERE draft_id=$1 FOR UPDATE',[id])).rows[0];
