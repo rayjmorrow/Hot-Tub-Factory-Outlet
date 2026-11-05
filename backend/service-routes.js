@@ -317,11 +317,9 @@ router.post('/work-orders/:id/invoice',auth,async(req,res)=>{
   const r=await q(`INSERT INTO service_invoices(invoice_number,work_order_id,customer_id,status,subtotal,tax_amount,total_amount) VALUES($1,$2,$3,'open',$4,$5,$6) RETURNING *`,[inv,w.id,w.customer_id,subtotal,tax,total]);
   res.status(201).json(r.rows[0]);
 });
-router.patch('/invoices/:id/payment',auth,async(req,res)=>{
-  const amount=num(req.body?.amount), method=clean(req.body?.payment_method);
-  const r=await q(`UPDATE service_invoices SET amount_paid=least(total_amount,amount_paid+$2),payment_method=coalesce($3,payment_method),status=CASE WHEN amount_paid+$2>=total_amount THEN 'paid' ELSE 'partial' END,paid_at=CASE WHEN amount_paid+$2>=total_amount THEN NOW() ELSE paid_at END,updated_at=NOW() WHERE id=$1 RETURNING *`,[req.params.id,amount,method]);
-  if(!r.rowCount) return res.status(404).json({error:'Invoice not found'});
-  res.json(r.rows[0]);
+// Retired: old balance-only path bypassed the service payment ledger.
+router.patch('/invoices/:id/payment',auth,(req,res)=>{
+ res.status(410).json({error:'This legacy payment action is retired. Use the cash/check payment-record workflow so the invoice and payment ledger are updated together.'});
 });
 
 export default router;
