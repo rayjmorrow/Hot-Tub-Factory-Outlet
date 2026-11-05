@@ -24,6 +24,9 @@ export async function initServiceDb(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE service_customers ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+    ALTER TABLE service_customers ADD COLUMN IF NOT EXISTS archived_by TEXT;
+    ALTER TABLE service_customers ADD COLUMN IF NOT EXISTS archive_reason TEXT;
     CREATE INDEX IF NOT EXISTS idx_service_customers_name ON service_customers (last_name, first_name);
     CREATE INDEX IF NOT EXISTS idx_service_customers_email ON service_customers (email);
     CREATE INDEX IF NOT EXISTS idx_service_customers_phone ON service_customers (phone);
