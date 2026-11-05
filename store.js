@@ -1,11 +1,39 @@
 (()=>{
 const KEY='htfo_cart_v1',ATTR_KEY='htfo_employee_attribution_v1';
 const money=n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
+let sharedCatalog=new Map();
+const catalogPrice=(sku,price)=>{const published=sharedCatalog.get(String(sku||'').split('|')[0].trim().toLowerCase());return published?published.price_cents/100:price};
+async function loadSharedCatalog(){
+ try{
+  const response=await fetch('retail-catalog.json',{cache:'no-cache'});
+  if(!response.ok)throw Error('Catalog unavailable');
+  const data=await response.json();
+  if(!Array.isArray(data.products))throw Error('Invalid catalog');
+  sharedCatalog=new Map(data.products.map(p=>[String(p.sku).toLowerCase(),p]));
+  document.querySelectorAll('.item,.card').forEach(el=>{
+   const sku=el.querySelector('.sku,.item > span')?.textContent?.trim();
+   const p=sharedCatalog.get(String(sku||'').toLowerCase());
+   if(!p)return;
+   const priceNode=el.querySelector('.price,.item > strong');
+   if(priceNode)priceNode.textContent=money(p.price_cents/100);
+  });
+  document.querySelectorAll('.life-card').forEach(el=>{
+   const name=el.querySelector('h3')?.textContent?.trim();
+   const p=data.products.find(x=>x.category==='LIFE Spa Care'&&x.name===name);
+   if(p){const node=el.querySelector('.life-price');if(node)node.textContent=money(p.price_cents/100)}
+  });
+  const current=get();let changed=false;
+  for(const item of current){const price=catalogPrice(item.sku||item.id,item.price);if(price!==item.price){item.price=price;changed=true}}
+  if(changed)save(current);
+  window.dispatchEvent(new CustomEvent('htfo:catalog-ready',{detail:{version:data.version}}));
+ }catch(e){console.warn('Published catalog pricing unavailable; retaining listed prices.',e.message)}
+}
+
 const get=()=>{try{return JSON.parse(localStorage.getItem(KEY)||'[]')}catch{return[]}};
 const getAttribution=()=>{try{const x=JSON.parse(localStorage.getItem(ATTR_KEY)||'null');return x&&x.valid?x:null}catch{return null}};
 const setAttribution=a=>{if(a&&a.valid)localStorage.setItem(ATTR_KEY,JSON.stringify(a));else localStorage.removeItem(ATTR_KEY);window.dispatchEvent(new CustomEvent('htfo:attribution',{detail:getAttribution()}));return getAttribution()};
 const save=c=>{localStorage.setItem(KEY,JSON.stringify(c));renderBadge()};
-const add=p=>{const c=get();const hit=c.find(x=>x.id===p.id);if(hit)hit.qty+=1;else c.push({...p,qty:1,autoship:false,frequencyMonths:defaultFrequency(p)});save(c);toast(`${p.name} added to cart`)};
+const add=p=>{const c=get();const hit=c.find(x=>x.id===p.id);if(hit)hit.qty+=1;else c.push({...p,price:catalogPrice(p.sku||p.id,p.price),qty:1,autoship:false,frequencyMonths:defaultFrequency(p)});save(c);toast(`${p.name} added to cart`)};
 const parsePrice=t=>{const m=(t||'').replace(/,/g,'').match(/\$([0-9]+(?:\.[0-9]{1,2})?)/);return m?Number(m[1]):null};
 const defaultFrequency=p=>/frog/i.test(`${p.name||''} ${p.sku||''}`)?4:/filter/i.test(`${p.name||''} ${p.sku||''}`)?12:3;
 const discountRate=x=>getAttribution()?0.10:(x&&x.autoship?0.05:0);
@@ -21,5 +49,5 @@ function decorate(){document.querySelectorAll('.card,.item').forEach(el=>{const 
 function renderBadge(){const qty=get().reduce((s,x)=>s+x.qty,0);document.querySelectorAll('.cart-count').forEach(x=>x.textContent=qty)}
 function chrome(){const a=document.createElement('a');a.href='cart.html';a.className='cart-fab';a.setAttribute('aria-label','View shopping cart');a.innerHTML='Cart <span class="cart-count">0</span>';document.body.appendChild(a);const s=document.createElement('style');s.textContent=`.add-cart{margin-top:14px;width:100%;border:0;border-radius:10px;background:#0b79b7;color:#fff;font-weight:900;padding:12px 14px;cursor:pointer;font-size:15px}.cart-fab{position:fixed;right:18px;bottom:18px;z-index:9999;background:#082642;color:white;text-decoration:none;border-radius:999px;padding:13px 17px;font-weight:900;box-shadow:0 8px 30px #0004}.cart-count{display:inline-grid;place-items:center;min-width:24px;height:24px;padding:0 6px;margin-left:5px;border-radius:999px;background:#f5b82e;color:#082642}.store-toast{position:fixed;left:50%;bottom:80px;transform:translateX(-50%);z-index:10000;background:#082642;color:#fff;border-radius:10px;padding:10px 15px;font-weight:800}.frog-ease-featured{border-top:4px solid #78b82a}.frog-pic{padding:14px;display:flex;align-items:center;justify-content:center;background:#fff}.frog-product-photo{display:block;width:100%;height:100%;object-fit:contain}`;document.head.appendChild(s)}
 function toast(t){let x=document.querySelector('.store-toast');if(!x){x=document.createElement('div');x.className='store-toast';document.body.appendChild(x)}x.textContent=t;clearTimeout(x._t);x._t=setTimeout(()=>x.remove(),1500)}
-document.addEventListener('DOMContentLoaded',()=>{chrome();frogEaseFeatured();completeCatalog();decorate();renderBadge()});window.HTFOCart={get,save,add,money,discountedPrice,discountRate,defaultFrequency,getAttribution,setAttribution};
+document.addEventListener('DOMContentLoaded',()=>{chrome();frogEaseFeatured();completeCatalog();decorate();renderBadge();loadSharedCatalog()});window.HTFOCart={get,save,add,money,discountedPrice,discountRate,defaultFrequency,getAttribution,setAttribution};
 })();
