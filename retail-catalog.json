@@ -1,0 +1,709 @@
+{
+  "version": "2026-11-05-initial",
+  "currency": "USD",
+  "description": "Published HTFO retail catalog extracted from website product listings. Wholesale costs and stock levels are intentionally absent. Unverified website identifiers cannot be scanned as manufacturer barcodes.",
+  "excluded": [
+    {
+      "sku": "CHSE300",
+      "reason": "Conflicting website labels/prices; manual review required"
+    }
+  ],
+  "products": [
+    {
+      "sku": "CHSE200",
+      "name": "Purifier Mineral Sticks",
+      "price_cents": 3999,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE101",
+      "name": "Chlorinating Granules · 2 lb",
+      "price_cents": 3199,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE201",
+      "name": "Chlorinating Granules · 1 lb",
+      "price_cents": 1849,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE102",
+      "name": "Brom Bank · 32 oz",
+      "price_cents": 2299,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE103",
+      "name": "Brominating Tablets · 1.5 lb",
+      "price_cents": 3299,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE202",
+      "name": "Sodium Bromide Packet · 2 oz",
+      "price_cents": 499,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE104",
+      "name": "Spa Activator · 2 lb",
+      "price_cents": 2199,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE204",
+      "name": "Spa Activator · 1 lb",
+      "price_cents": 1399,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE119",
+      "name": "Oxy Blast · 2 lb",
+      "price_cents": 2299,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE105",
+      "name": "pH / Alkalinity Up · 2 lb",
+      "price_cents": 1099,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE205",
+      "name": "pH / Alkalinity Up · 1 lb",
+      "price_cents": 799,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE106",
+      "name": "pH / Alkalinity Down · 1.5 lb",
+      "price_cents": 899,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE107",
+      "name": "Protection Plus · 1 qt",
+      "price_cents": 1599,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE120",
+      "name": "pH Hold & H2O Softener",
+      "price_cents": 1499,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE108",
+      "name": "Stain & Scale · 1 pt",
+      "price_cents": 1099,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE109",
+      "name": "Natural & Clear · 1 qt",
+      "price_cents": 1599,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE110",
+      "name": "Spa Foam Away · 1 qt",
+      "price_cents": 1799,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE111",
+      "name": "Liquid Calcium · 1 qt",
+      "price_cents": 1299,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE112",
+      "name": "All Purpose Cleaner · 1 qt",
+      "price_cents": 1699,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE114",
+      "name": "Filter Cleaner · 1 qt",
+      "price_cents": 1699,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE115",
+      "name": "Instant Cartridge Cleaner · 1 qt",
+      "price_cents": 1799,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE116",
+      "name": "Jet Line Cleaner · 1 pt",
+      "price_cents": 1499,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CHSE117",
+      "name": "Cover Conditioner · 1 pt",
+      "price_cents": 1599,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "TSLM109",
+      "name": "Insta-TEST 4 Plus · 50",
+      "price_cents": 999,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "TSLM111",
+      "name": "Salt Test Strips · 12",
+      "price_cents": 1099,
+      "category": "Spa Care",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP101",
+      "name": "Floating Bromine Dispenser",
+      "price_cents": 999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP102",
+      "name": "Ultra Mitt",
+      "price_cents": 1799,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP104",
+      "name": "Cover Wipes",
+      "price_cents": 1999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACFL105",
+      "name": "NucLear Cartridge Cleaner",
+      "price_cents": 3499,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACFL106",
+      "name": "Filter Flosser",
+      "price_cents": 4999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP108",
+      "name": "Paradise Spa Vac",
+      "price_cents": 10999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP113",
+      "name": "Waterproof Playing Cards",
+      "price_cents": 1699,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP114",
+      "name": "Cool Duck",
+      "price_cents": 1199,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP115",
+      "name": "LED Light Up Pals",
+      "price_cents": 1499,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP116",
+      "name": "Duck Thermometer",
+      "price_cents": 1999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP117",
+      "name": "Shark Thermometer",
+      "price_cents": 1999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP123",
+      "name": "Floating Wireless Speaker & Light Show",
+      "price_cents": 15999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP124",
+      "name": "Life Spa Booster Seat",
+      "price_cents": 2999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACSP125",
+      "name": "Sun Sorb",
+      "price_cents": 1699,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "ACFL126",
+      "name": "Filter Saver Basket Liner",
+      "price_cents": 999,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "LFSE050",
+      "name": "Cover Roller",
+      "price_cents": 6900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "LFSE100",
+      "name": "SpaEase 100",
+      "price_cents": 15900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "LFSE150",
+      "name": "SpaEase 150",
+      "price_cents": 19900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "LFSE175",
+      "name": "SpaEase 175",
+      "price_cents": 22900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "LFSE200",
+      "name": "SpaEase 200",
+      "price_cents": 34900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CLP100HT",
+      "name": "ConvertALift",
+      "price_cents": 179500,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "STCS101",
+      "name": "Classic 2-Tier Step",
+      "price_cents": 9900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "STDS201G",
+      "name": "Designer Step",
+      "price_cents": 16900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "RASM102",
+      "name": "Side-Mount Rail",
+      "price_cents": 19900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "RADM054",
+      "name": "Deck-Mount Rail",
+      "price_cents": 25900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "RAUM054",
+      "name": "Under-Mount Rail",
+      "price_cents": 29900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "STDSDRW",
+      "name": "Designer Step Drawers",
+      "price_cents": 5900,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "FRSZ101-6",
+      "name": "SpaZazz Original Elizer · 9 oz",
+      "price_cents": 1399,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "FRSZ107-10",
+      "name": "SpaZazz Escape Crystals · 22 oz",
+      "price_cents": 1899,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "FRSZ111-12",
+      "name": "SpaZazz Set The Mood · 22 oz",
+      "price_cents": 1799,
+      "category": "Accessories",
+      "source": "accessories.html",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "01-14-3256",
+      "name": "FROG @ease Floating System · Hot Tubs",
+      "price_cents": 5799,
+      "category": "FROG @ease",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "01-14-3258",
+      "name": "FROG @ease SmartChlor Refills · 3 Pack",
+      "price_cents": 5799,
+      "category": "FROG @ease",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "FROG-SS-SYSTEM",
+      "name": "FROG @ease Floating System · Swim Spas",
+      "price_cents": 13499,
+      "category": "FROG @ease",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "01-14-3284",
+      "name": "FROG @ease SmartChlor Refill · Swim Spa",
+      "price_cents": 4699,
+      "category": "FROG @ease",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "TSAC103",
+      "name": "Total Hardness Test Strips",
+      "price_cents": 1799,
+      "category": "Accessories",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "TSAC104",
+      "name": "TDS Test Strips",
+      "price_cents": 1799,
+      "category": "Accessories",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "VSL400",
+      "name": "VacuSeal 400 Cover Lifter",
+      "price_cents": 59900,
+      "category": "Accessories",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "VSLA201",
+      "name": "VacuSeal 200 → 400 Conversion Kit",
+      "price_cents": 24900,
+      "category": "Accessories",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CLP100SS",
+      "name": "Swim Spa ConvertALift",
+      "price_cents": 279500,
+      "category": "Accessories",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "CLP100SS-UG",
+      "name": "Hot Tub → Swim Spa ConvertALift Upgrade",
+      "price_cents": 129900,
+      "category": "Accessories",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "RADM036",
+      "name": "Deck-Mount Rail · up to 22 in",
+      "price_cents": 18900,
+      "category": "Accessories",
+      "source": "store.js",
+      "sku_status": "published_sku"
+    },
+    {
+      "sku": "life-ph-up-liquid",
+      "name": "1 pt pH Up Liquid",
+      "price_cents": 982,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-brom-tabs-5",
+      "name": "5 lb Brominating Tabs",
+      "price_cents": 12992,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-waterline-cleaner",
+      "name": "1 pt Waterline & Surface Cleaner",
+      "price_cents": 1062,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-scale-defense",
+      "name": "1 pt Scale Defense",
+      "price_cents": 1058,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-cover-cleaner",
+      "name": "1 pt Cover Cleaner & Conditioner",
+      "price_cents": 2818,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-scum-free",
+      "name": "1 pt Scum Free",
+      "price_cents": 1084,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-fresh-start",
+      "name": "Fresh Start Spa Maintenance Kit",
+      "price_cents": 6564,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-spasoft",
+      "name": "2 lbs SpaSoft",
+      "price_cents": 2076,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-chlor-5",
+      "name": "5 lb Chlorinating Granules",
+      "price_cents": 8390,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-foam-free",
+      "name": "1 pt Foam Free",
+      "price_cents": 1084,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-metal-out",
+      "name": "1 pt Metal Out",
+      "price_cents": 980,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-filter-cleaner",
+      "name": "1 pt Filter Cleaner with Sprayer",
+      "price_cents": 1446,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-oxidizer-5",
+      "name": "5 lb Oxidizing Shock",
+      "price_cents": 6094,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-alk-up",
+      "name": "1 lb Alkalinity & pH Up",
+      "price_cents": 854,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-calcium",
+      "name": "14 oz Calcium Booster",
+      "price_cents": 740,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-brom-tabs-15",
+      "name": "1.5 lb Brominating Tabs",
+      "price_cents": 4228,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-clarifier",
+      "name": "1 pt Natural Clarifier",
+      "price_cents": 858,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-oxidizer-15",
+      "name": "1.5 lb Oxidizing Shock",
+      "price_cents": 1838,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-chlor-2",
+      "name": "2 lb Chlorinating Granules",
+      "price_cents": 3292,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-alk-down",
+      "name": "1.5 lb Alkalinity & pH Down",
+      "price_cents": 1040,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    },
+    {
+      "sku": "life-jet-cleaner",
+      "name": "1 pt Purge & Jet Line Cleaner",
+      "price_cents": 1266,
+      "category": "LIFE Spa Care",
+      "source": "life-products.js",
+      "sku_status": "website_identifier"
+    }
+  ]
+}
