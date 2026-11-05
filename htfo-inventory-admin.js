@@ -97,7 +97,7 @@
    field.value='';
  }
  function spaColors(){
-   const brand=spaBrand.value,model=spaModel.value,base=spaCatalog.configuration[brand]||{shell:[],cabinet:[]};
+   const brand=spaBrand.value,model=actualSpaModel(),base=spaCatalog.configuration[brand]||{shell:[],cabinet:[]};
    let shell=base.shell,cabinet=base.cabinet;
    if(brand==='Cal Spas'){
      shell=/^(PZ-|PPZ-)/i.test(model)?['High Gloss White']:/^EC-/i.test(model)?['Sterling Silver','Glacier Mountain','Storm Clouds','Smoky Mountain','Tuscan Sun','Midnight Canyon']:base.shell;
@@ -154,9 +154,7 @@
        const label=String(option[0]).replaceAll(',',';');
        const row=document.createElement('label'),checkbox=document.createElement('input');
        checkbox.type='checkbox';checkbox.value=label;checkbox.name='factory_option';
-       row.append(checkbox,document.createTextNode(' '+label+' — 
-})();
-+Number(option[1]).toLocaleString()));
+       row.append(checkbox,document.createTextNode(' '+label+' — $'+Number(option[1]).toLocaleString()));
        target.append(row);
      }
      message.textContent=options.length||ecoExtras.length?'Choose any installed factory add-ons.':'No verified factory add-ons for this model. Specify an actual option below if needed.';
