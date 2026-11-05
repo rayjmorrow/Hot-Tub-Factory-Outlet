@@ -82,6 +82,10 @@ export async function initServiceFinancials(){
     CREATE INDEX IF NOT EXISTS idx_service_payments_work_order ON service_payments(work_order_id);
     CREATE INDEX IF NOT EXISTS idx_service_payments_method ON service_payments(payment_method);
     CREATE INDEX IF NOT EXISTS idx_service_payments_received ON service_payments(received_at);
+    ALTER TABLE service_payments ADD COLUMN IF NOT EXISTS bank_reconciled_at TIMESTAMPTZ;
+    ALTER TABLE service_payments ADD COLUMN IF NOT EXISTS bank_reconciled_by TEXT;
+    ALTER TABLE service_payments ADD COLUMN IF NOT EXISTS bank_deposit_reference TEXT;
+
 
     CREATE OR REPLACE FUNCTION htfo_set_trip_charge() RETURNS trigger AS $$
     DECLARE m NUMERIC;
