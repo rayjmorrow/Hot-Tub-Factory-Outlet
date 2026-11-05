@@ -109,7 +109,7 @@ router.get('/dashboard/receivables',auth,async(req,res)=>{
         COALESCE((d.document->'totals'->>'balance')::bigint,0) balance_cents
       FROM crm_sales_drafts d
       JOIN crm_sales_executed_contracts e ON e.draft_id=d.id
-      WHERE COALESCE((d.document->'totals'->>'balance')::bigint,0)>0
+      WHERE d.archived_at IS NULL AND COALESCE((d.document->'totals'->>'balance')::bigint,0)>0
       ORDER BY d.updated_at DESC
       LIMIT 250
     `)).rows;
