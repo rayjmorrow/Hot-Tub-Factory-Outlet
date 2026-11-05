@@ -71,8 +71,8 @@ export async function ensureInventory(){
  VALUES('htfo','Hot Tub Factory Outlet',700) ON CONFLICT(dealer_key) DO NOTHING;
  ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS tax_rate_bps INTEGER NOT NULL DEFAULT 700;
  ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS reference_key TEXT;
- ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT 'monroeville_sales';
- ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS merchant_route TEXT NOT NULL DEFAULT 'sales';
+ ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT 'unassigned';
+ ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS merchant_route TEXT NOT NULL DEFAULT 'unassigned';
  CREATE UNIQUE INDEX IF NOT EXISTS htfo_pos_receipt_ref ON htfo_pos_receipts(reference_key);
  ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS sku_at_sale TEXT;
  ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS description_at_sale TEXT;
