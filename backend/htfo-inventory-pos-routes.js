@@ -71,6 +71,8 @@ export async function ensureInventory(){
  VALUES('htfo','Hot Tub Factory Outlet',700) ON CONFLICT(dealer_key) DO NOTHING;
  ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS tax_rate_bps INTEGER NOT NULL DEFAULT 700;
  ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS reference_key TEXT;
+ ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT 'monroeville_sales';
+ ALTER TABLE htfo_pos_receipts ADD COLUMN IF NOT EXISTS merchant_route TEXT NOT NULL DEFAULT 'sales';
  CREATE UNIQUE INDEX IF NOT EXISTS htfo_pos_receipt_ref ON htfo_pos_receipts(reference_key);
  ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS sku_at_sale TEXT;
  ALTER TABLE htfo_pos_part_lines ADD COLUMN IF NOT EXISTS description_at_sale TEXT;
@@ -236,7 +238,7 @@ const result=await q(`WITH changed AS (UPDATE htfo_inventory_spa SET status='ava
  if(!result.rowCount)return res.status(409).json({error:'Only reserved spas can be released'});res.json(result.rows[0]);
 }));
 router.get('/receipts',permit(RETAIL),handle(async(req,res)=>{
- await ensureInventory();const rows=await q('SELECT id,customer_id,total_cents,payment_status,created_at FROM htfo_pos_receipts ORDER BY id DESC LIMIT 50');res.json(rows.rows);
+ await ensureInventory();const rows=await q('SELECT id,customer_id,total_cents,payment_status,department,merchant_route,created_at FROM htfo_pos_receipts ORDER BY id DESC LIMIT 50');res.json(rows.rows);
 }));
 router.post('/receipts',permit(RETAIL),handle(async(req,res)=>{
  await ensureInventory();
