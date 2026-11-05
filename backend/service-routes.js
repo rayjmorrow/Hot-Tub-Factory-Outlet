@@ -313,7 +313,10 @@ router.post('/work-orders/:id/invoice',auth,async(req,res)=>{
   if(!w) return res.status(404).json({error:'Work order not found'});
   const existing=await q('SELECT * FROM service_invoices WHERE work_order_id=$1',[w.id]);
   if(existing.rowCount) return res.json(existing.rows[0]);
-  const diagnostic=num(w.diagnostic_amount), subtotal=diagnostic+num(w.labor_amount)+num(w.parts_amount)+num(w.trip_amount), tax=calculatePartsTax(w.parts_amount), total=subtotal+tax, inv=`SVC-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
+  const equipment=w.equipment_id?(await q('SELECT brand,serial_number FROM service_equipment WHERE id=$1',[w.equipment_id])).rows[0]:null;
+  const aquaPartsOnly=Boolean(w.warranty)&&/^aquasolus(?:spas)?$/i.test(String(equipment?.brand||'').replace(/[^a-z0-9]/gi,''));
+  const customerParts=aquaPartsOnly?0:num(w.parts_amount);
+  const diagnostic=num(w.diagnostic_amount), subtotal=diagnostic+num(w.labor_amount)+customerParts+num(w.trip_amount), tax=calculatePartsTax(customerParts), total=subtotal+tax, inv=`SVC-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
   const r=await q(`INSERT INTO service_invoices(invoice_number,work_order_id,customer_id,status,subtotal,tax_amount,total_amount) VALUES($1,$2,$3,'open',$4,$5,$6) RETURNING *`,[inv,w.id,w.customer_id,subtotal,tax,total]);
   res.status(201).json(r.rows[0]);
 });
