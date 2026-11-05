@@ -33,8 +33,8 @@ router.get('/htfo-departments/summary',ownerOnly,async(req,res)=>{
     count(*)::int count,
     coalesce(sum((executed_document->'totals'->>'total')::numeric),0)::numeric total_cents,
     coalesce(sum((executed_document->'totals'->>'paid')::numeric),0)::numeric recorded_paid_cents
-    FROM crm_sales_executed_contracts
-    WHERE (executed_at AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date GROUP BY 1`,[from,to]),
+    FROM crm_sales_executed_contracts e JOIN crm_sales_drafts d ON d.id=e.draft_id
+    WHERE d.archived_at IS NULL AND (executed_at AT TIME ZONE 'America/New_York')::date BETWEEN $1::date AND $2::date GROUP BY 1`,[from,to]),
    q(`SELECT department,payment_status,count(*)::int count,
     coalesce(sum(total_cents),0)::numeric total_cents
     FROM htfo_pos_receipts r LEFT JOIN htfo_pos_external_tenders t ON t.receipt_id=r.id
