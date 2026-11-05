@@ -139,10 +139,10 @@
    $('#calWarrantyUnclaimed').querySelectorAll('[data-claim-work]').forEach(b=>b.onclick=async()=>{
     const w=unclaimed.find(x=>String(x.work_order_id)===String(b.dataset.claimWork));if(!w)return;
     const claim_number=prompt('manufacturer claim number (leave empty if not assigned):','');if(claim_number===null)return;
-    const labor=prompt('Labor reimbursement claimed ($):',String(w.labor_amount||0));if(labor===null)return;
+    const labor=selectedManufacturer()==='aquasolus'?'0':prompt('Labor reimbursement claimed ($):',String(w.labor_amount||0));if(labor===null)return;
     const parts=prompt('Parts reimbursement claimed ($):',String(w.parts_amount||0));if(parts===null)return;
-    const trip=prompt('Trip reimbursement claimed ($):',String(w.trip_amount||0));if(trip===null)return;
-    if(!confirm('Record this HTFO warranty claim for '+w.work_order_number+' / '+w.serial_number+'? This does not mark it approved or paid.'))return;
+    const trip=selectedManufacturer()==='aquasolus'?'0':prompt('Trip reimbursement claimed ($):',String(w.trip_amount||0));if(trip===null)return;
+    if(!confirm('Record '+(selectedManufacturer()==='aquasolus'?'PARTS-ONLY AquaSolus factory claim. Customer pays ALL labor and service charges.':'manufacturer warranty claim.')+' Work order '+w.work_order_number+' / '+w.serial_number+'? No payment will be recorded.'))return;
     try{
      b.disabled=true;
      await api('/work-orders/'+w.work_order_id+'/warranty-claim',{method:'POST',body:JSON.stringify({supplier:selectedManufacturerName().replace(' (legacy)',''),claim_number,status:'draft',labor_claimed:Number(labor),parts_claimed:Number(parts),trip_claimed:Number(trip),notes:'Created from serialized warranty work order'})});
@@ -152,7 +152,7 @@
    const st=data.settlements||[];
    $('#calWarrantySettlements').innerHTML=st.length?st.map(v=>'<div class="item"><b>Claim #'+html(v.claim_id)+' — '+fmt(v.amount)+'</b><span>'+html(v.kind==='bank_deposit'?'Bank deposit':'Vendor credit applied')+' · '+html(v.reference)+' · '+html(String(v.settled_on).slice(0,10))+'</span></div>').join(''):'<p>No verified credit applications or deposits recorded yet.</p>';
    const lines=data.imports||[];
-   $('#calWarrantyImports').innerHTML=lines.length?'<table><thead><tr><th>Import</th><th>Serial</th><th>Claim</th><th>Work order</th><th>Match</th><th>Cal claimed</th><th>Cal approved</th><th>Cal reported paid</th><th>HTFO claimed</th><th>HTFO recorded paid</th></tr></thead><tbody>'+
+   $('#calWarrantyImports').innerHTML=lines.length?'<table><thead><tr><th>Import</th><th>Serial</th><th>Claim</th><th>Work order</th><th>Match</th><th>Manufacturer claimed</th><th>Manufacturer approved</th><th>Manufacturer reported paid</th><th>HTFO claimed</th><th>HTFO recorded paid</th></tr></thead><tbody>'+
     lines.map(x=>'<tr><td>'+html(x.file_name)+' · '+html(x.imported_at?.slice(0,10))+'</td><td>'+html(x.serial_number)+'</td><td>'+html(x.claim_number)+'</td><td>'+html(x.work_order_number)+'</td><td>'+html(x.match_status)+'</td><td>'+fmt(x.reported_claimed)+'</td><td>'+fmt(x.reported_approved)+'</td><td>'+fmt(x.reported_paid)+'</td><td>'+fmt(x.internal_claimed)+'</td><td>'+fmt(x.internal_paid)+'</td></tr>').join('')+'</tbody></table>':'<p>No manufacturer CSV reports imported yet.</p>';
   }catch(e){status.textContent='Warranty report unavailable: '+e.message}
  }
