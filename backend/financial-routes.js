@@ -111,14 +111,15 @@ router.get('/warranty-claims',auth,async(req,res)=>{
 
 router.post('/work-orders/:id/warranty-claim',auth,manager,async(req,res)=>{
   const b=req.body||{};
-  const equipment=(await q(`SELECT e.brand,e.serial_number FROM service_work_orders w LEFT JOIN service_equipment e ON e.id=w.equipment_id WHERE w.id=$1`,[req.params.id])).rows[0];
+  const equipment=(await q(`SELECT e.brand,e.serial_number,w.warranty FROM service_work_orders w LEFT JOIN service_equipment e ON e.id=w.equipment_id WHERE w.id=$1`,[req.params.id])).rows[0];
   if(!equipment)return res.status(404).json({error:'Work order not found'});
   const labor=num(b.labor_claimed),parts=num(b.parts_claimed),trip=num(b.trip_claimed),other=num(b.other_claimed),total=labor+parts+trip+other;
   const aqua=String(b.supplier||'').replace(/[^a-z0-9]/gi,'').toLowerCase().startsWith('aquasolus');
   if(aqua){
-   if(!/^aquasolus(?:spas)?$/i.test(String(equipment.brand||'').replace(/[^a-z0-9]/gi,'')))
+   if(!/^aquasolus/i.test(String(equipment.brand||'').replace(/[^a-z0-9]/gi,'')))
     return res.status(400).json({error:'The work order must identify an AquaSolus spa and serial number before claiming AquaSolus parts.'});
    if(!equipment.serial_number)return res.status(400).json({error:'AquaSolus parts claims require the spa serial number.'});
+   if(!equipment.warranty)return res.status(400).json({error:'Mark the AquaSolus work order as warranty service before submitting factory parts claims, so customer parts are not also billed.'});
    if(labor>0||trip>0||other>0||parts<=0)return res.status(400).json({error:'AquaSolus manufacturer claims are parts-only. Bill all labor and applicable service charges to the customer.'});
   }
   const r=await q(`INSERT INTO service_warranty_claims(work_order_id,supplier,claim_number,status,labor_claimed,parts_claimed,trip_claimed,other_claimed,total_claimed,total_approved,total_paid,submitted_at,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,[req.params.id,clean(b.supplier),clean(b.claim_number),clean(b.status)||'draft',labor,parts,trip,other,total,0,0,b.submitted_at||null,clean(b.notes)]);
