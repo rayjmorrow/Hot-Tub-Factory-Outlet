@@ -46,6 +46,8 @@ router.get('/financials/summary',auth,financeOwner,async(req,res)=>{try{
       coalesce(sum(greatest(total_amount-amount_paid,0)) FILTER(WHERE created_at<CURRENT_DATE-INTERVAL '30 days'),0)::numeric over_30
       FROM service_invoices`),
     q(`SELECT coalesce(sum(greatest(total_claimed-total_paid,0)),0)::numeric outstanding,
+      coalesce(sum(greatest(total_claimed-total_approved,0)),0)::numeric uncredited,
+      coalesce(sum(greatest(total_approved-total_paid,0)),0)::numeric approved_unsettled,
       coalesce(sum(total_paid) FILTER(WHERE paid_at::date BETWEEN $1::date AND $2::date),0)::numeric paid_period,
       count(*) FILTER(WHERE greatest(total_claimed-total_paid,0)>0.009)::int open_claims
       FROM service_warranty_claims`,[from,to]),
@@ -69,7 +71,7 @@ router.get('/financials/summary',auth,financeOwner,async(req,res)=>{try{
   ]);
   const customerCollected=num(collections.rows[0].collected),warrantyPaid=num(warranty.rows[0].paid_period),deliveryRevenue=num(delivery.rows[0].internal_revenue),payroll=num(expenses.rows[0].payroll),other=num(expenses.rows[0].other),partsCost=num(parts.rows[0].cost);
   const revenue=num(customerCollected+warrantyPaid+deliveryRevenue),costs=num(payroll+other+partsCost),profit=num(revenue-costs);
-  res.json({period:{from,to},collections:{customer_collected:customerCollected,warranty_credits_received:warrantyPaid,delivery_internal_revenue:deliveryRevenue,delivery_rate:400,total_revenue:revenue},receivables:{customer_ar:num(ar.rows[0].outstanding),customer_open_invoices:ar.rows[0].open_invoices,customer_over_30:num(ar.rows[0].over_30),warranty_receivable:num(warranty.rows[0].outstanding),warranty_open_claims:warranty.rows[0].open_claims,total_open:num(num(ar.rows[0].outstanding)+num(warranty.rows[0].outstanding))},costs:{payroll,parts_cost:partsCost,other,total:costs},profit_loss:{net:profit,self_sustaining:profit>=0},activity:{completed_service:wo.rows[0].completed_service,completed_deliveries:wo.rows[0].completed_delivery}});
+  res.json({period:{from,to},collections:{customer_collected:customerCollected,warranty_credits_received:warrantyPaid,delivery_internal_revenue:deliveryRevenue,delivery_rate:400,total_revenue:revenue},receivables:{customer_ar:num(ar.rows[0].outstanding),customer_open_invoices:ar.rows[0].open_invoices,customer_over_30:num(ar.rows[0].over_30),warranty_receivable:num(warranty.rows[0].outstanding),warranty_uncredited:num(warranty.rows[0].uncredited),warranty_approved_unsettled:num(warranty.rows[0].approved_unsettled),warranty_open_claims:warranty.rows[0].open_claims,total_open:num(num(ar.rows[0].outstanding)+num(warranty.rows[0].outstanding))},costs:{payroll,parts_cost:partsCost,other,total:costs},profit_loss:{net:profit,self_sustaining:profit>=0},activity:{completed_service:wo.rows[0].completed_service,completed_deliveries:wo.rows[0].completed_delivery}});
 }catch(e){res.status(500).json({error:e.message})}});
 
 router.get('/financials/open-balances',auth,financeOwner,async(req,res)=>{try{
