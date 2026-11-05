@@ -735,7 +735,10 @@ router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,asyn
     const paidCommission=(await run('SELECT 1 FROM htfo_sales_commissions WHERE draft_id=$1 AND paid_at IS NOT NULL LIMIT 1',[id])).rowCount;
     if(paidCommission)return {status:409,error:'A paid commission is associated with this agreement. Payroll reconciliation is required.'};
    }
-   const units=(await run('SELECT id,status FROM htfo_inventory_spa WHERE reserved_draft_id=$1 OR sold_draft_id=$1',[id])).rows;
+   const hasSoldColumn=(await run("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='htfo_inventory_spa' AND column_name='sold_draft_id') AS present")).rows[0]?.present;
+   const units=(await run(hasSoldColumn
+    ?'SELECT id,status FROM htfo_inventory_spa WHERE reserved_draft_id=$1 OR sold_draft_id=$1'
+    :'SELECT id,status FROM htfo_inventory_spa WHERE reserved_draft_id=$1',[id])).rows;
    if(units.some(unit=>['sold','delivered'].includes(unit.status)))
     return {status:409,error:'This agreement has a sold or delivered serialized spa. Reconcile the physical return before archiving.'};
    // Unsigned test agreements must not leave a spa reserved indefinitely.
