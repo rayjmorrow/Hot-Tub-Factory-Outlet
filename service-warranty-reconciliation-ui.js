@@ -19,6 +19,7 @@
  <button type="button" id="calWarrantyCommit" disabled>Save reviewed report as evidence</button>
  <p id="calWarrantyImportStatus" role="status"></p>
  <div id="calWarrantyImportPreview" style="max-height:310px;overflow:auto"></div></div>
+ <div class="card"><h3>Monthly reports — Apply approved credits</h3><p class="muted">After uploading and checking the report, use Apply Approved Credits. Only uniquely matched claim amounts will be updated. Provider-reported payments remain unverified until reconciled to bank deposits.</p><div id="calWarrantyBatches"></div><p id="calWarrantyCreditStatus" role="status"></p></div>
  <div class="card"><h3>Cal Spas outstanding claims</h3><div id="calWarrantyClaims" style="overflow:auto"></div></div>
  <div class="card"><h3>Warranty jobs without a manufacturer claim</h3><p class="muted">Create an HTFO claim from an existing completed warranty service work order. A technician's work record is evidence; a supplier acknowledgement is separate.</p><div id="calWarrantyUnclaimed"></div></div>
  <div class="card"><h3>Manufacturer report lines and exceptions</h3><div id="calWarrantyImports" style="overflow:auto"></div></div>`;
@@ -67,10 +68,23 @@
   const status=$('#calWarrantySummary');status.textContent='Loading service warranty claims…';
   try{
    const data=await api('/warranty/cal-spas/reconciliation'),s=data.summary;
-   status.textContent='HTFO claims '+s.claims+' | Claimed '+fmt(s.claimed)+' | Recorded paid '+fmt(s.recorded_paid)+' | Unreconciled balance '+fmt(s.unreconciled_claim_balance)+' | Warranty jobs without claim '+s.warranty_jobs_without_claim;
+   status.textContent='Claims '+s.claims+' | HTFO claimed '+fmt(s.claimed)+' | Still awaiting Cal Spas credit '+fmt(s.uncredited_balance)+' | Approved but not received '+fmt(s.approved_not_received)+' | Total unresolved '+fmt(s.unreconciled_claim_balance)+' | Warranty jobs without claim '+s.warranty_jobs_without_claim;
    const claimed=data.claims||[];
-   $('#calWarrantyClaims').innerHTML=claimed.length?'<table><thead><tr><th>Claim</th><th>Work order</th><th>Serial</th><th>Claimed</th><th>Approved</th><th>Recorded paid</th><th>Remaining</th><th>Status</th></tr></thead><tbody>'+
-    claimed.map(x=>'<tr><td>'+html(x.claim_number||('#'+x.id))+'</td><td>'+html(x.work_order_number)+'</td><td>'+html(x.serial_number)+'</td><td>'+fmt(x.total_claimed)+'</td><td>'+fmt(x.total_approved)+'</td><td>'+fmt(x.total_paid)+'</td><td>'+fmt(Math.max(0,Number(x.total_claimed)-Number(x.total_paid)))+'</td><td>'+html(x.status)+'</td></tr>').join('')+'</tbody></table>':'<p>No Cal Spas claims recorded yet.</p>';
+   $('#calWarrantyClaims').innerHTML=claimed.length?'<table><thead><tr><th>Claim</th><th>Work order</th><th>Serial</th><th>Claimed</th><th>Credit approved</th><th>Actual receipts recorded</th><th>Awaiting credit</th><th>Approved not received</th><th>Status</th></tr></thead><tbody>'+
+    claimed.map(x=>'<tr><td>'+html(x.claim_number||('#'+x.id))+'</td><td>'+html(x.work_order_number)+'</td><td>'+html(x.serial_number)+'</td><td>'+fmt(x.total_claimed)+'</td><td>'+fmt(x.total_approved)+'</td><td>'+fmt(x.total_paid)+'</td><td>'+fmt(Math.max(0,Number(x.total_claimed)-Number(x.total_approved)))+'</td><td>'+fmt(Math.max(0,Number(x.total_approved)-Number(x.total_paid)))+'</td><td>'+html(x.status)+'</td></tr>').join('')+'</tbody></table>':'<p>No Cal Spas claims recorded yet.</p>';
+   const batches=data.batches||[];
+   $('#calWarrantyBatches').innerHTML=batches.length?batches.map(b=>'<div class="item"><b>'+html(b.file_name||'Cal Spas report')+' · '+html(String(b.created_at||'').slice(0,10))+'</b><span>'+Number(b.row_count||0)+' rows</span><button type="button" data-apply-credits="'+b.id+'">Apply approved credits</button></div>').join(''):'<p>No monthly manufacturer reports uploaded yet.</p>';
+   $('#calWarrantyBatches').querySelectorAll('[data-apply-credits]').forEach(b=>b.onclick=async()=>{
+    const batchId=b.dataset.applyCredits;if(!confirm('Apply only the approved amounts for uniquely matched claims in report #'+batchId+'? This does NOT record a bank payment, reduce a customer balance, or charge a card.'))return;
+    b.disabled=true;const note=$('#calWarrantyCreditStatus');note.textContent='Reviewing the report and applying verifiable credits…';
+    try{
+     const result=await api('/warranty/cal-spas/import-batches/'+batchId+'/apply-credits',{method:'POST',body:JSON.stringify({confirm:'APPLY_VERIFIED_CAL_SPAS_CREDITS'})});
+     note.textContent=result.applied+' matched credits applied. Additional approved credit '+fmt(result.new_approved_credit)+'. '+result.already_applied+' previously applied; '+result.requires_review.length+' need manual review. Bank payments were NOT recorded.';
+     if(result.requires_review.length)note.textContent+=' Exceptions: '+result.requires_review.slice(0,8).map(x=>'line '+x.line_id+': '+x.reason).join('; ');
+     await reload();
+    }catch(e){note.textContent='Credits NOT applied: '+e.message}
+    finally{b.disabled=false}
+   });
    const unclaimed=data.unclaimed_work_orders||[];
    $('#calWarrantyUnclaimed').innerHTML=unclaimed.length?unclaimed.map(w=>'<div class="item"><b>'+html(w.work_order_number)+' · '+html(w.serial_number)+'</b><span>'+html(w.customer_name)+' · Completed '+html(w.completed_at||'not yet')+'</span><span>Recorded labor '+fmt(w.labor_amount)+' · Parts '+fmt(w.parts_amount)+' · Trip '+fmt(w.trip_amount)+'</span><button type="button" class="secondary" data-claim-work="'+w.work_order_id+'">Create warranty claim</button></div>').join(''):'<p>Every matching warranty work order has a claim, or no warranty jobs are recorded.</p>';
    $('#calWarrantyUnclaimed').querySelectorAll('[data-claim-work]').forEach(b=>b.onclick=async()=>{
