@@ -106,6 +106,46 @@ router.post('/warranty/cal-spas/import',owner,async(req,res)=>{
    {...result,note:'Staged as manufacturer evidence. Internal claimed/paid figures have not been overwritten.'});
  }catch(e){res.status(400).json({error:e.message})}
 });
+
+router.post('/warranty/cal-spas/import-batches/:id/apply-credits',owner,async(req,res)=>{
+ try{
+  await ensure();
+  const batchId=Number(req.params.id);
+  if(!Number.isSafeInteger(batchId)||batchId<1||req.body?.confirm!=='APPLY_VERIFIED_CAL_SPAS_CREDITS')
+   return res.status(400).json({error:'Review the monthly report before applying approved credits'});
+  const result=await transaction(async run=>{
+   const batch=(await run("SELECT id FROM htfo_warranty_import_batches WHERE id=$1 AND supplier='Cal Spas' FOR UPDATE",[batchId])).rows[0];
+   if(!batch)return {status:404,error:'Batch not found'};
+   const lines=(await run('SELECT * FROM htfo_warranty_import_lines WHERE batch_id=$1 ORDER BY id FOR UPDATE',[batchId])).rows;
+   const outcome={batch_id:batchId,applied:0,already_applied:0,requires_review:[],new_approved_credit:0};
+   const seen=new Set();
+   for(const line of lines){
+    if(line.applied_at){outcome.already_applied++;continue}
+    if(!line.claim_id||!['matched_claim','manually_verified'].includes(line.match_status)||line.reported_approved===null){
+     outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Unmatched, ambiguous, or missing approved amount'});continue;
+    }
+    const id=String(line.claim_id);
+    if(seen.has(id)){outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Multiple report rows for one claim'});continue}
+    seen.add(id);
+    const claim=(await run("SELECT wc.*,e.serial_number FROM service_warranty_claims wc JOIN service_work_orders w ON w.id=wc.work_order_id JOIN service_equipment e ON e.id=w.equipment_id WHERE wc.id=$1 FOR UPDATE OF wc",[line.claim_id])).rows[0];
+    if(!claim||serial(claim.serial_number)!==serial(line.serial_number)||!text(claim.supplier).toLowerCase().includes('cal')){
+     outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Claim and serial could not be verified'});continue;
+    }
+    const approved=Number(line.reported_approved),previous=Number(claim.total_approved||0);
+    if(!Number.isFinite(approved)||approved<previous-0.001||approved>Number(claim.total_claimed)+0.001){
+     outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Credit decreases previous approval or exceeds claimed amount'});continue;
+    }
+    await run('UPDATE service_warranty_claims SET total_approved=$2,approved_at=COALESCE(approved_at,NOW()),updated_at=NOW() WHERE id=$1',[claim.id,approved]);
+    await run('UPDATE htfo_warranty_import_lines SET applied_credit=$2,applied_at=NOW(),applied_by=$3 WHERE id=$1',[line.id,approved,text(req.operator.name||req.operator.username)]);
+    await run('INSERT INTO htfo_warranty_credit_events(import_line_id,claim_id,approved_before,approved_after,credited_by) VALUES($1,$2,$3,$4,$5)',[line.id,claim.id,previous,approved,text(req.operator.name||req.operator.username)]);
+    outcome.applied++;outcome.new_approved_credit=Math.round((outcome.new_approved_credit+approved-previous)*100)/100;
+   }
+   return outcome;
+  });
+  res.status(result.status||200).json(result.error?{error:result.error}:{...result,note:'Approved manufacturer credits updated. No cash, customer charge or invoice payment was recorded.'});
+ }catch(e){res.status(503).json({error:'Credit application unavailable: '+e.message})}
+});
+
 router.get('/warranty/cal-spas/reconciliation',owner,async(req,res)=>{
  try{
   await ensure();
