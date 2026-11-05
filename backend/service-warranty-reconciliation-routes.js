@@ -34,6 +34,12 @@ async function ensure(){
  ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_credit NUMERIC(12,2);
  ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_at TIMESTAMPTZ;
  ALTER TABLE htfo_warranty_import_lines ADD COLUMN IF NOT EXISTS applied_by TEXT;
+ CREATE TABLE IF NOT EXISTS htfo_warranty_settlements(
+ id BIGSERIAL PRIMARY KEY,claim_id BIGINT NOT NULL REFERENCES service_warranty_claims(id),
+ kind TEXT NOT NULL CHECK(kind IN ('bank_deposit','vendor_credit_applied')),
+ amount NUMERIC(12,2) NOT NULL CHECK(amount>0),
+ reference TEXT NOT NULL,settled_on DATE NOT NULL,recorded_by TEXT NOT NULL,
+ recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(claim_id,kind,reference));
  CREATE TABLE IF NOT EXISTS htfo_warranty_credit_events(
  id BIGSERIAL PRIMARY KEY,
  import_line_id BIGINT NOT NULL UNIQUE REFERENCES htfo_warranty_import_lines(id),
@@ -148,6 +154,33 @@ router.post('/warranty/cal-spas/import-batches/:id/apply-credits',owner,async(re
  }catch(e){res.status(503).json({error:'Credit application unavailable: '+e.message})}
 });
 
+
+router.post('/warranty/cal-spas/claims/:id/settlements',owner,async(req,res)=>{
+ try{
+  await ensure();
+  const id=Number(req.params.id),amount=cash(req.body?.amount),kind=text(req.body?.kind);
+  const reference=text(req.body?.reference).slice(0,140),settled_on=text(req.body?.settled_on);
+  if(!Number.isSafeInteger(id)||id<1||amount===null||amount<=0||!['bank_deposit','vendor_credit_applied'].includes(kind)||
+    reference.length<3||!/^\d{4}-\d{2}-\d{2}$/.test(settled_on)||req.body?.confirmed!==true)
+   return res.status(400).json({error:'Amount, settlement kind, date, bank or supplier invoice reference, and owner confirmation required'});
+  const result=await transaction(async run=>{
+   const claim=(await run('SELECT * FROM service_warranty_claims WHERE id=$1 FOR UPDATE',[id])).rows[0];
+   if(!claim||!text(claim.supplier).toLowerCase().includes('cal'))return {status:404,error:'Cal Spas claim not found'};
+   const approved=Number(claim.total_approved||0),paid=Number(claim.total_paid||0);
+   if(amount>approved-paid+0.001)return {status:409,error:'Settlement exceeds the manufacturer credit approved but not yet settled'};
+   const dupe=(await run('SELECT id FROM htfo_warranty_settlements WHERE claim_id=$1 AND kind=$2 AND reference=$3',[id,kind,reference])).rowCount;
+   if(dupe)return {status:409,error:'That deposit or vendor invoice reference has already been reconciled to this claim'};
+   const event=(await run('INSERT INTO htfo_warranty_settlements(claim_id,kind,amount,reference,settled_on,recorded_by) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',
+      [id,kind,amount,reference,settled_on,text(req.operator.name||req.operator.username)])).rows[0];
+   const next=Math.round((paid+amount)*100)/100;
+   await run("UPDATE service_warranty_claims SET total_paid=$2,payment_reference=$3,paid_at=$4::date,status=CASE WHEN $2>=total_claimed THEN 'paid' ELSE 'partial' END,updated_at=NOW() WHERE id=$1",
+     [id,next,reference,settled_on]);
+   return {status:201,event,total_settled:next,approved_unsettled:Math.max(0,approved-next)};
+  });
+  res.status(result.status).json(result.error?{error:result.error}:{ok:true,...result});
+ }catch(e){res.status(503).json({error:'Settlement not recorded: '+e.message})}
+});
+
 router.get('/warranty/cal-spas/reconciliation',owner,async(req,res)=>{
  try{
   await ensure();
@@ -165,6 +198,7 @@ router.get('/warranty/cal-spas/reconciliation',owner,async(req,res)=>{
    WHERE w.warranty=true AND lower(coalesce(e.brand,'')) LIKE '%cal%'
    AND NOT EXISTS(SELECT 1 FROM service_warranty_claims wc WHERE wc.work_order_id=w.id AND lower(wc.supplier) LIKE '%cal%')
    ORDER BY w.created_at DESC LIMIT 500`)).rows;
+  const settlements=(await q("SELECT s.id,s.claim_id,s.kind,s.amount,s.reference,s.settled_on,s.recorded_at FROM htfo_warranty_settlements s JOIN service_warranty_claims wc ON wc.id=s.claim_id WHERE lower(wc.supplier) LIKE '%cal%' ORDER BY s.recorded_at DESC LIMIT 1000")).rows;
   const batches=(await q("SELECT id,file_name,created_at,row_count,credit_mode FROM htfo_warranty_import_batches WHERE supplier='Cal Spas' ORDER BY created_at DESC LIMIT 100")).rows;
   const imports=(await q(`SELECT li.*,b.created_at imported_at,b.file_name,w.work_order_number,wc.total_claimed internal_claimed,
    wc.total_paid internal_paid FROM htfo_warranty_import_lines li
@@ -176,7 +210,7 @@ router.get('/warranty/cal-spas/reconciliation',owner,async(req,res)=>{
   const approvedUnpaid=claims.reduce((n,r)=>n+Math.max(0,Number(r.total_approved||0)-Number(r.total_paid||0)),0);
   res.set('Cache-Control','no-store').json({summary:{claims:claims.length,claimed:claims.reduce((s,r)=>s+Number(r.total_claimed||0),0),
    recorded_paid:claims.reduce((s,r)=>s+Number(r.total_paid||0),0),unreconciled_claim_balance:Math.round(total*100)/100,uncredited_balance:Math.round(uncredited*100)/100,approved_not_received:Math.round(approvedUnpaid*100)/100,
-   warranty_jobs_without_claim:missing.length,imported_lines:imports.length},claims,unclaimed_work_orders:missing,imports,batches,
+   warranty_jobs_without_claim:missing.length,imported_lines:imports.length},claims,unclaimed_work_orders:missing,imports,batches,settlements,
    notice:'Internal paid amounts are staff-entered and require verification against bank deposits; manufacturer CSV paid amounts are kept separate.'});
  }catch(e){res.status(503).json({error:'Warranty reconciliation unavailable: '+e.message})}
 });
