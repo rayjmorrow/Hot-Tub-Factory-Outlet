@@ -715,9 +715,29 @@ router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,asyn
    const signed=(await run('SELECT id FROM crm_sales_executed_contracts WHERE draft_id=$1',[id])).rowCount>0;
    const recorded=Array.isArray(doc.payments)&&doc.payments.some(p=>Number(p.amount)>0);
    const financed=Number(doc.finance?.amount||0)>0;
-   if(recorded||financed)return {status:409,error:'Agreement contains payments or financing. Reconcile or reverse the actual transaction before archiving.'};
-   if(signed&&kind==='test')return {status:409,error:'A signed agreement must be handled as a documented cancellation, not a test deletion.'};
-   if(signed&&req.body?.customer_cancelled!==true)return {status:409,error:'Confirm that the customer cancellation is documented before removing a signed agreement from active reports.'};
+   // A genuine cancellation with payments must be refunded/reconciled before removing its receivable.
+   if(financed)return {status:409,error:'This agreement has financing. Reconcile or cancel financing before archiving.'};
+   if(kind==='cancelled'&&recorded)return {status:409,error:'A payment is recorded. Reconcile any real charge, cash or check before removing a cancelled agreement.'};
+   // Test documents may contain simulated payment lines. Only the owner may attest no real funds.
+   const testAttested=kind==='test'&&req.body?.test_data_confirmed===true;
+   if((recorded||signed)&&kind==='test'&&!testAttested)
+    return {status:409,error:'Signed or payment-recorded test agreement: owner must explicitly attest that no real payment or legal sale occurred.'};
+   if(signed&&kind==='cancelled'&&req.body?.customer_cancelled!==true)
+    return {status:409,error:'Confirm that the customer cancellation is documented before removing a signed agreement.'};
+   // Never allow test removal to conceal an actual confirmed online transaction or paid commission.
+   const gatewayTable=(await run("SELECT to_regclass('crm_authorize_payment_requests') AS name")).rows[0]?.name;
+   if(gatewayTable){
+    const confirmed=(await run("SELECT 1 FROM crm_authorize_payment_requests WHERE draft_id=$1 AND (status='confirmed' OR processor_transaction_id IS NOT NULL) LIMIT 1",[id])).rowCount;
+    if(confirmed)return {status:409,error:'A processor-confirmed payment exists. Refund/reconcile it first; test deletion is unavailable.'};
+   }
+   const commissionTable=(await run("SELECT to_regclass('htfo_sales_commissions') AS name")).rows[0]?.name;
+   if(commissionTable){
+    const paidCommission=(await run('SELECT 1 FROM htfo_sales_commissions WHERE draft_id=$1 AND paid_at IS NOT NULL LIMIT 1',[id])).rowCount;
+    if(paidCommission)return {status:409,error:'A paid commission is associated with this agreement. Payroll reconciliation is required.'};
+   }
+   const units=(await run('SELECT id,status FROM htfo_inventory_spa WHERE reserved_draft_id=$1 OR sold_draft_id=$1',[id])).rows;
+   if(units.some(unit=>['sold','delivered'].includes(unit.status)))
+    return {status:409,error:'This agreement has a sold or delivered serialized spa. Reconcile the physical return before archiving.'};
    // Unsigned test agreements must not leave a spa reserved indefinitely.
    // Signed cancellations require separate inventory review and customer confirmation.
    if(!signed){
@@ -728,8 +748,8 @@ router.post('/crm/v1/admin/sales-drafts/:id/archive',...guard,salesIdentity,asyn
     }
    }
    // Signed agreements are retained permanently; archival does not cancel legal obligations.
-   const updated=(await run('UPDATE crm_sales_drafts SET archived_at=NOW(),archived_by=$2,archive_reason=$3,archive_kind=$4,updated_at=NOW() WHERE id=$1 RETURNING id,archived_at,archived_by,archive_reason,archive_kind',[id,String(req.user.name||req.user.username||req.user.sub),reason,kind])).rows[0];
-   return {status:200,agreement:updated,was_signed:signed,warning:signed?'Signed contract retained. Archiving does not void a legally executed agreement or release any serialized inventory reservation.':''};
+   const updated=(await run('UPDATE crm_sales_drafts SET archived_at=NOW(),archived_by=$2,archive_reason=$3,archive_kind=$4,updated_at=NOW() WHERE id=$1 RETURNING id,archived_at,archived_by,archive_reason,archive_kind',[id,String(req.user.name||req.user.username||req.user.sub),reason+(testAttested?' | OWNER ATTESTATION: No real funds received and no genuine sale.':''),kind])).rows[0];
+   return {status:200,agreement:updated,was_signed:signed,warning:signed?'Original signed record retained in audit history. Inventory reservations require separate review.':''};
   });
   res.status(result.status).json(result.error?{error:result.error}:{ok:true,...result});
  }catch(e){res.status(500).json({error:'Unable to archive agreement safely'})}
