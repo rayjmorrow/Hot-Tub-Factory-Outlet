@@ -16,8 +16,14 @@ function owner(req,res,next){
   req.operator=me;next();
  }catch{return res.status(401).json({error:'Sign in again'})}
 }
-const MANUFACTURERS={"cal-spas":"Cal Spas","vita-spas":"Vita Spas","american-whirlpool":"American Whirlpool","aquasolus":"AquaSolus","eco-spas":"Eco Spas","innova-spas":"Innova Spas","wellis":"Wellis"};
-const canonicalSupplier=req=>MANUFACTURERS[text(req.params.manufacturer).toLowerCase()]||null;
+const MANUFACTURERS={"cal-spas":"Cal Spas","vita-spas":"Vita Spas","american-whirlpool":"American Whirlpool","aquasolus":"AquaSolus","eco-spas":"Eco Spas","innova-spas":"Innova Spas","wellis":"Wellis","bull-bbq":"Bull BBQ","cal-flame":"Cal Flame","primo-grills":"Primo Grills","latham-pools":"Latham Pools"};
+const canonicalSupplier=req=>{
+ const slug=text(req.params.manufacturer).toLowerCase();
+ if(MANUFACTURERS[slug])return MANUFACTURERS[slug];
+ if(/^custom-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)&&slug.length<=80)
+   return slug.slice(7).split('-').map(v=>v[0].toUpperCase()+v.slice(1)).join(' ');
+ return null;
+};
 const supplierKey=v=>text(v).toLowerCase().replace(/[^a-z0-9]/g,'');
 const supplierAliases=supplier=>{
  const key=supplierKey(supplier);
@@ -113,7 +119,10 @@ router.get('/warranty/manufacturers/summary',owner,async(req,res)=>{
    WHERE greatest(i.total_amount-i.amount_paid,0)>0.009
    AND lower(coalesce(i.status,'')) NOT IN ('void','voided','cancelled','canceled')
    ORDER BY i.created_at DESC LIMIT 2000`)).rows;
-  const manufacturers=Object.values(MANUFACTURERS).map(name=>{
+  const known=Object.values(MANUFACTURERS);
+  const legacy=claims.map(x=>x.supplier).filter(Boolean).filter(v=>!known.some(k=>supplierAliases(k).includes(supplierKey(v))));
+  const allNames=[...known,...new Map(legacy.map(v=>[supplierKey(v),v])).values()];
+  const manufacturers=allNames.map(name=>{
    const own=claims.filter(x=>supplierAliases(name).includes(supplierKey(x.supplier)));
    const sum=k=>Math.round(own.reduce((n,x)=>n+Number(x[k]||0),0)*100)/100;
    const claimed=sum('total_claimed'),approved=sum('total_approved'),settled=sum('total_paid');
@@ -188,7 +197,7 @@ router.post('/warranty/manufacturers/:manufacturer/import-batches/:id/apply-cred
   if(!Number.isSafeInteger(batchId)||batchId<1||req.body?.confirm!=='APPLY_VERIFIED_MANUFACTURER_CREDITS')
    return res.status(400).json({error:'Review the monthly report before applying approved credits'});
   const result=await transaction(async run=>{
-   const batch=(await run("SELECT id,credit_mode FROM htfo_warranty_import_batches WHERE id=$1 AND supplier=$2 FOR UPDATE",[batchId,supplier])).rows[0];
+   const batch=(await run("SELECT id,credit_mode,report_month FROM htfo_warranty_import_batches WHERE id=$1 AND supplier=$2 FOR UPDATE",[batchId,supplier])).rows[0];
    if(!batch)return {status:404,error:'Batch not found'};
    const lines=(await run('SELECT * FROM htfo_warranty_import_lines WHERE batch_id=$1 ORDER BY id FOR UPDATE',[batchId])).rows;
    const outcome={batch_id:batchId,applied:0,already_applied:0,requires_review:[],new_approved_credit:0};
@@ -201,6 +210,17 @@ router.post('/warranty/manufacturers/:manufacturer/import-batches/:id/apply-cred
     const id=String(line.claim_id);
     if(seen.has(id)){outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Multiple report rows for one claim'});continue}
     seen.add(id);
+    // A claim may appear in multiple vendor extracts for the same statement month.
+    // Never apply the same month's credit twice without manual reconciliation.
+    const priorMonth=(await run(`SELECT 1 FROM htfo_warranty_credit_events event
+      JOIN htfo_warranty_import_lines li ON li.id=event.import_line_id
+      JOIN htfo_warranty_import_batches b ON b.id=li.batch_id
+      WHERE event.claim_id=$1 AND b.supplier=$2 AND b.report_month=$3::date LIMIT 1`,
+      [line.claim_id,supplier,batch.report_month])).rowCount;
+    if(priorMonth){
+      outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Already applied a credit for this claim and statement month; verify supplementary credit manually'});
+      continue;
+    }
     const claim=(await run("SELECT wc.*,e.serial_number FROM service_warranty_claims wc JOIN service_work_orders w ON w.id=wc.work_order_id JOIN service_equipment e ON e.id=w.equipment_id WHERE wc.id=$1 FOR UPDATE OF wc",[line.claim_id])).rows[0];
     if(!claim||serial(claim.serial_number)!==serial(line.serial_number)||!supplierAliases(supplier).includes(supplierKey(claim.supplier))){
      outcome.requires_review.push({line_id:line.id,serial:line.serial_number,reason:'Claim and serial could not be verified'});continue;
