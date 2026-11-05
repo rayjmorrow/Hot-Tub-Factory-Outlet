@@ -170,6 +170,48 @@ router.post('/skus',permit(MANAGEMENT),handle(async(req,res)=>{
  }
  res.json(r.rows[0]);
 }));
+
+const CATALOG_URL='https://raw.githubusercontent.com/rayjmorrow/Hot-Tub-Factory-Outlet/main/retail-catalog.json';
+async function publishedRetailCatalog(){
+ const response=await fetch(CATALOG_URL,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(8000)});
+ if(!response.ok)throw Error('Published retail catalog unavailable ('+response.status+')');
+ const data=await response.json();
+ if(!Array.isArray(data.products)||data.products.length>1000||!data.version)throw Error('Invalid published retail catalog');
+ const seen=new Set();
+ const products=data.products.map(p=>{
+  const sku=code(p.sku),name=code(p.name),category=code(p.category);
+  const price=Number(p.price_cents);
+  if(!sku||!name||!Number.isSafeInteger(price)||price<1||seen.has(sku.toLowerCase()))throw Error('Invalid or duplicated published SKU');
+  seen.add(sku.toLowerCase());
+  return {sku,name,category,price_cents:price,sku_status:p.sku_status};
+ });
+ return {version:String(data.version),products,excluded:data.excluded||[]};
+}
+async function retailCatalogComparison(){
+ const catalog=await publishedRetailCatalog();
+ const existing=(await q("SELECT id,supplier_part_number,description,ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int AS price_cents FROM service_parts WHERE active=true AND supplier_part_number IS NOT NULL")).rows;
+ const bySku=new Map();
+ for(const p of existing){const key=String(p.supplier_part_number).trim().toLowerCase();if(!bySku.has(key))bySku.set(key,[]);bySku.get(key).push(p)}
+ const entries=catalog.products.map(p=>{
+  const matches=bySku.get(p.sku.toLowerCase())||[];
+  const state=p.sku_status!=='published_sku'?'verify_sku':matches.length>1?'duplicate_existing':matches.length===0?'not_in_pos':Number(matches[0].price_cents)===p.price_cents?'matches':'price_differs';
+  return {...p,state,part_id:matches.length===1?matches[0].id:null,current_price_cents:matches.length===1?Number(matches[0].price_cents):null};
+ });
+ return {version:catalog.version,entries,excluded:catalog.excluded,counts:entries.reduce((counts,e)=>(counts[e.state]=(counts[e.state]||0)+1,counts),{})};
+}
+router.get('/catalog/preview',permit(MANAGEMENT),handle(async(req,res)=>res.json(await retailCatalogComparison())));
+router.post('/catalog/sync-existing-prices',permit(MANAGEMENT),handle(async(req,res)=>{
+ if(req.body?.confirm!=='SYNC_MATCHED_RETAIL_PRICES')throw Error('Manager confirmation required');
+ const report=await retailCatalogComparison();
+ if(req.body?.version!==report.version)throw Error('Catalog changed; preview again before applying prices');
+ let updated=0;
+ for(const p of report.entries.filter(x=>x.state==='price_differs')){
+  const result=await q("UPDATE service_parts SET sell_price=$1,updated_at=NOW() WHERE id=$2 AND active=true AND ROUND(COALESCE(NULLIF(sell_price,0),list_price,0)*100)::int=$3 RETURNING id",[p.price_cents/100,p.part_id,p.current_price_cents]);
+  if(result.rowCount===1)updated++;
+ }
+ res.json({ok:true,version:report.version,updated,notes:'Matched existing SKUs only. Missing SKUs, wholesale costs, quantities, and barcodes were not changed.'});
+}));
+
 router.post('/skus/:id/receive',permit(MANAGEMENT),handle(async(req,res)=>{
  await ensureInventory();
  const id=integer(Number(req.params.id),'part ID',1),qty=integer(req.body.qty,'quantity',1,100000),location=code(req.body.location);
