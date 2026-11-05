@@ -253,8 +253,8 @@ async function handoffPaidTransaction(transId){
     }
   }
   const fulfillment=transactionUserField(tx,'Fulfillment');
-  if(/^pickup-/i.test(fulfillment))return {skipped:'store pickup'};
-  const ship=tx.shipTo||{},bill=tx.billTo||{},customer=tx.customer||{};
+  const pickup=['pickup-monroeville','pickup-wexford'].includes(fulfillment);
+  const bill=tx.billTo||{},ship=pickup?bill:tx.shipTo||{},customer=tx.customer||{};
   return fulfillmentPost('/fulfillment/store-order',{
     transaction_id:String(transId),
     external_order_id:String(transId),
@@ -264,9 +264,10 @@ async function handoffPaidTransaction(transId){
     package_weight_lbs:10,package_length_in:12,package_width_in:12,package_height_in:12,
     customer:{first_name:ship.firstName||bill.firstName||'',last_name:ship.lastName||bill.lastName||'',email:customer.email||bill.email||'',phone:customer.phoneNumber||bill.phoneNumber||'',street:ship.address||bill.address||'',street2:'',city:ship.city||bill.city||'',state:ship.state||bill.state||'',zip:ship.zip||bill.zip||''},
     items,
+    fulfillment,
     pos_customer_id:transactionUserField(tx,'POS Customer'),
     department:transactionUserField(tx,'POS Department'),
-    notes:'Paid online store order'
+    notes:pickup?'Paid online store pickup · '+(fulfillment==='pickup-wexford'?'Wexford':'Monroeville'):'Paid online store order'
   });
 }
 
