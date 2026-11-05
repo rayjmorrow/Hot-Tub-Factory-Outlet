@@ -23,6 +23,7 @@
  <div class="card"><h3>Monthly reports — Apply approved credits</h3><p class="muted">After uploading and checking the report, use Apply Approved Credits. Only uniquely matched claim amounts will be updated. Provider-reported payments remain unverified until reconciled to bank deposits.</p><div id="calWarrantyBatches"></div><p id="calWarrantyCreditStatus" role="status"></p></div>
  <div class="card"><h3>Cal Spas outstanding claims</h3><div id="calWarrantyClaims" style="overflow:auto"></div></div>
  <div class="card"><h3>Warranty jobs without a manufacturer claim</h3><p class="muted">Create an HTFO claim from an existing completed warranty service work order. A technician's work record is evidence; a supplier acknowledgement is separate.</p><div id="calWarrantyUnclaimed"></div></div>
+ <div class="card"><h3>Verified settlements — bank deposit or vendor credit used</h3><div id="calWarrantySettlements"></div></div>
  <div class="card"><h3>Manufacturer report lines and exceptions</h3><div id="calWarrantyImports" style="overflow:auto"></div></div>`;
  main.append(section);
  let staged=null;
@@ -71,8 +72,32 @@
    const data=await api('/warranty/cal-spas/reconciliation'),s=data.summary;
    status.textContent='Claims '+s.claims+' | HTFO claimed '+fmt(s.claimed)+' | Still awaiting Cal Spas credit '+fmt(s.uncredited_balance)+' | Approved but not received '+fmt(s.approved_not_received)+' | Total unresolved '+fmt(s.unreconciled_claim_balance)+' | Warranty jobs without claim '+s.warranty_jobs_without_claim;
    const claimed=data.claims||[];
-   $('#calWarrantyClaims').innerHTML=claimed.length?'<table><thead><tr><th>Claim</th><th>Work order</th><th>Serial</th><th>Claimed</th><th>Credit approved</th><th>Actual receipts recorded</th><th>Awaiting credit</th><th>Approved not received</th><th>Status</th></tr></thead><tbody>'+
-    claimed.map(x=>'<tr><td>'+html(x.claim_number||('#'+x.id))+'</td><td>'+html(x.work_order_number)+'</td><td>'+html(x.serial_number)+'</td><td>'+fmt(x.total_claimed)+'</td><td>'+fmt(x.total_approved)+'</td><td>'+fmt(x.total_paid)+'</td><td>'+fmt(Math.max(0,Number(x.total_claimed)-Number(x.total_approved)))+'</td><td>'+fmt(Math.max(0,Number(x.total_approved)-Number(x.total_paid)))+'</td><td>'+html(x.status)+'</td></tr>').join('')+'</tbody></table>':'<p>No Cal Spas claims recorded yet.</p>';
+   $('#calWarrantyClaims').innerHTML=claimed.length?'<table><thead><tr><th>Claim</th><th>Work order</th><th>Serial</th><th>Claimed</th><th>Credit approved</th><th>Actual receipts recorded</th><th>Awaiting credit</th><th>Approved not received</th><th>Status</th><th>Settlement</th></tr></thead><tbody>'+
+    claimed.map(x=>'<tr><td>'+html(x.claim_number||('#'+x.id))+'</td><td>'+html(x.work_order_number)+'</td><td>'+html(x.serial_number)+'</td><td>'+fmt(x.total_claimed)+'</td><td>'+fmt(x.total_approved)+'</td><td>'+fmt(x.total_paid)+'</td><td>'+fmt(Math.max(0,Number(x.total_claimed)-Number(x.total_approved)))+'</td><td>'+fmt(Math.max(0,Number(x.total_approved)-Number(x.total_paid)))+'</td><td>'+html(x.status)+'</td><td><button type="button" data-record-cal-settlement="'+x.id+'">Record actual settlement</button></td></tr>').join('')+'</tbody></table>':'<p>No Cal Spas claims recorded yet.</p>';
+
+   $('#calWarrantyClaims').querySelectorAll('[data-record-cal-settlement]').forEach(b=>b.onclick=async()=>{
+    const claim=claimed.find(x=>String(x.id)===String(b.dataset.recordCalSettlement));if(!claim)return;
+    const kindChoice=prompt('Settlement type: enter BANK for actual bank deposit or VENDOR for an approved Cal Spas credit that was actually applied against a vendor invoice.','VENDOR');
+    if(kindChoice===null)return;
+    const kind=kindChoice.trim().toUpperCase()==='BANK'?'bank_deposit':kindChoice.trim().toUpperCase()==='VENDOR'?'vendor_credit_applied':null;
+    if(!kind)return alert('Enter BANK or VENDOR');
+    const available=Math.max(0,Number(claim.total_approved)-Number(claim.total_paid));
+    if(available<=0)return alert('No approved, unsettled credit is available on this claim.');
+    const amt=prompt('Settlement amount ($), maximum '+fmt(available),String(available));
+    if(amt===null)return;
+    const amount=Number(amt);if(!Number.isFinite(amount)||amount<=0||amount>available)return alert('Amount must be positive and no more than the approved unsettled balance.');
+    const ref=prompt(kind==='bank_deposit'?'Bank deposit/check reference:':'Cal Spas vendor invoice/credit application reference:','');
+    if(ref===null)return;
+    const settled_on=prompt('Date the deposit or vendor credit application ACTUALLY occurred (YYYY-MM-DD):',new Date().toISOString().slice(0,10));
+    if(settled_on===null)return;
+    if(!confirm('Confirm '+fmt(amount)+' was '+(kind==='bank_deposit'?'actually deposited to our bank':'actually applied against a Cal Spas invoice')+'? This does not charge the customer.'))return;
+    b.disabled=true;
+    try{
+     await api('/warranty/cal-spas/claims/'+claim.id+'/settlements',{method:'POST',body:JSON.stringify({amount,kind,reference:ref,settled_on,confirmed:true})});
+     $('#calWarrantyCreditStatus').textContent='Settlement recorded with reference '+ref+'.';await reload();
+    }catch(e){$('#calWarrantyCreditStatus').textContent='Not recorded: '+e.message}
+    finally{b.disabled=false}
+   });
    const batches=data.batches||[];
    $('#calWarrantyBatches').innerHTML=batches.length?batches.map(b=>'<div class="item"><b>'+html(b.file_name||'Cal Spas report')+' · '+html(String(b.created_at||'').slice(0,10))+'</b><span>'+Number(b.row_count||0)+' rows · '+html(b.credit_mode==='cumulative_approved'?'Cumulative credit':'This month’s credit')+'</span><button type="button" data-apply-credits="'+b.id+'">Apply approved credits</button></div>').join(''):'<p>No monthly manufacturer reports uploaded yet.</p>';
    $('#calWarrantyBatches').querySelectorAll('[data-apply-credits]').forEach(b=>b.onclick=async()=>{
@@ -101,6 +126,8 @@
      await reload();
     }catch(e){alert('Claim was not created: '+e.message);b.disabled=false}
    });
+   const st=data.settlements||[];
+   $('#calWarrantySettlements').innerHTML=st.length?st.map(v=>'<div class="item"><b>Claim #'+html(v.claim_id)+' — '+fmt(v.amount)+'</b><span>'+html(v.kind==='bank_deposit'?'Bank deposit':'Vendor credit applied')+' · '+html(v.reference)+' · '+html(String(v.settled_on).slice(0,10))+'</span></div>').join(''):'<p>No verified credit applications or deposits recorded yet.</p>';
    const lines=data.imports||[];
    $('#calWarrantyImports').innerHTML=lines.length?'<table><thead><tr><th>Import</th><th>Serial</th><th>Claim</th><th>Work order</th><th>Match</th><th>Cal claimed</th><th>Cal approved</th><th>Cal reported paid</th><th>HTFO claimed</th><th>HTFO recorded paid</th></tr></thead><tbody>'+
     lines.map(x=>'<tr><td>'+html(x.file_name)+' · '+html(x.imported_at?.slice(0,10))+'</td><td>'+html(x.serial_number)+'</td><td>'+html(x.claim_number)+'</td><td>'+html(x.work_order_number)+'</td><td>'+html(x.match_status)+'</td><td>'+fmt(x.reported_claimed)+'</td><td>'+fmt(x.reported_approved)+'</td><td>'+fmt(x.reported_paid)+'</td><td>'+fmt(x.internal_claimed)+'</td><td>'+fmt(x.internal_paid)+'</td></tr>').join('')+'</tbody></table>':'<p>No manufacturer CSV reports imported yet.</p>';
