@@ -46,9 +46,10 @@
         :'<div class="payment-ready" style="margin:12px 0"><b>✓ Collections clear:</b> no open customer or manufacturer balances.</div>';
       $('#finStats').innerHTML=
         `<div class="stat"><b>${money(r.customer_ar)}</b><span>Customer A/R</span></div>`+
-        `<div class="stat"><b>${money(r.warranty_receivable)}</b><span>Warranty Credits Due</span></div>`+
+        `<div class="stat"><b>${money(r.warranty_uncredited)}</b><span>Cal Spas / Manufacturer Credits Not Yet Granted</span></div>`+
+        `<div class="stat"><b>${money(r.warranty_approved_unsettled)}</b><span>Approved Vendor Credits Awaiting Settlement</span></div>`+
         `<div class="stat"><b>${money(col.customer_collected)}</b><span>Customer Cash Collected</span></div>`+
-        `<div class="stat"><b>${money(col.warranty_credits_received)}</b><span>Warranty Credits Received</span></div>`+
+        `<div class="stat"><b>${money(col.warranty_credits_received)}</b><span>Warranty Reimbursements Recorded as Received</span></div>`+
         `<div class="stat"><b>${money(col.delivery_internal_revenue)}</b><span>Sales Dept Delivery Revenue</span></div>`+
         `<div class="stat"><b>${money(cost.payroll)}</b><span>Payroll</span></div>`+
         `<div class="stat"><b>${money(cost.parts_cost)}</b><span>Parts Cost</span></div>`+
