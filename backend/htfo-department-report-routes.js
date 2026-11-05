@@ -4,10 +4,10 @@ import {q} from './service-db.js';
 
 const router=express.Router();
 const DEPARTMENTS=['monroeville_sales','wexford_sales','online_sales','service'];
-const validDate=value=>/^\\d{4}-\\d{2}-\\d{2}$/.test(String(value||''))?String(value):null;
+const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(String(value||''))?String(value):null;
 function ownerOnly(req,res,next){
  try{
-  const bearer=String(req.get('authorization')||'').replace(/^Bearer\\s+/i,'');
+  const bearer=String(req.get('authorization')||'').replace(/^Bearer\s+/i,'');
   const user=jwt.verify(bearer,process.env.SERVICE_JWT_SECRET);
   if(String(user.role||'').toLowerCase()!=='owner'&&String(user.role||'').toLowerCase()!=='admin')
    return res.status(403).json({error:'Owner-only departmental reporting'});
