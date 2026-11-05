@@ -138,9 +138,39 @@ router.get('/dashboard/receivables',auth,async(req,res)=>{
   });
 });
 
+// Owner-only archival for unused customer profiles. Financial/service history is preserved.
+router.post('/customers/:id/archive',auth,async(req,res)=>{
+ try{
+  if(!['owner','admin'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Owner-only customer archive'});
+  const id=Number(req.params.id),reason=String(req.body?.reason||'').trim();
+  if(!Number.isSafeInteger(id)||id<1||reason.length<10||reason.length>500)return res.status(400).json({error:'Customer ID and a reason of 10–500 characters are required'});
+  const customer=(await q('SELECT id,email,archived_at FROM service_customers WHERE id=$1',[id])).rows[0];
+  if(!customer)return res.status(404).json({error:'Customer not found'});
+  if(customer.archived_at)return res.status(409).json({error:'Customer is already archived'});
+  const related=await Promise.all([
+   q('SELECT 1 FROM service_work_orders WHERE customer_id=$1 LIMIT 1',[id]),
+   q('SELECT 1 FROM service_invoices WHERE customer_id=$1 LIMIT 1',[id]),
+   q('SELECT 1 FROM service_customer_orders WHERE customer_id=$1 LIMIT 1',[id]),
+   q('SELECT 1 FROM service_recurring_orders WHERE customer_id=$1 LIMIT 1',[id]),
+   q('SELECT 1 FROM service_equipment WHERE customer_id=$1 LIMIT 1',[id]),
+   q('SELECT 1 FROM htfo_pos_receipts WHERE customer_id=$1 LIMIT 1',[id]),
+   q(`SELECT 1 FROM crm_sales_executed_contracts e JOIN crm_sales_drafts d ON d.id=e.draft_id
+      WHERE d.archived_at IS NULL AND lower(e.customer_email)=lower($1) LIMIT 1`,[customer.email||''])
+  ]);
+  if(related.some(x=>x.rowCount))return res.status(409).json({error:'Customer has linked purchases, equipment, service or signed agreements. Archive those test records first, or preserve the customer history.'});
+  const updated=(await q('UPDATE service_customers SET archived_at=NOW(),archived_by=$2,archive_reason=$3,updated_at=NOW() WHERE id=$1 AND archived_at IS NULL RETURNING id,archived_at,archived_by,archive_reason',[id,String(req.user?.name||req.user?.username||req.user?.sub),reason])).rows[0];
+  if(!updated)return res.status(409).json({error:'Customer already archived'});
+  res.json({ok:true,customer:updated});
+ }catch(e){res.status(503).json({error:'Customer archive unavailable; profile was not changed'})}
+});
+router.get('/customers/archived/list',auth,async(req,res)=>{
+ if(!['owner','admin'].includes(String(req.user?.role||'').toLowerCase()))return res.status(403).json({error:'Owner-only archive list'});
+ try{const rows=(await q('SELECT id,first_name,last_name,email,archived_at,archived_by,archive_reason FROM service_customers WHERE archived_at IS NOT NULL ORDER BY archived_at DESC LIMIT 100')).rows;res.set('Cache-Control','no-store').json(rows)}
+ catch{res.status(503).json({error:'Archive list unavailable'})}
+});
 router.get('/customers',auth,async(req,res)=>{
   const term=`%${clean(req.query.q)||''}%`;
-  const r=await q(`SELECT * FROM service_customers WHERE concat_ws(' ',first_name,last_name,company,email,phone,street,city,zip) ILIKE $1 ORDER BY last_name NULLS LAST, first_name NULLS LAST LIMIT 250`,[term]);
+  const r=await q(`SELECT * FROM service_customers WHERE archived_at IS NULL AND concat_ws(' ',first_name,last_name,company,email,phone,street,city,zip) ILIKE $1 ORDER BY last_name NULLS LAST, first_name NULLS LAST LIMIT 250`,[term]);
   res.json(r.rows);
 });
 router.post('/customers',auth,async(req,res)=>{
