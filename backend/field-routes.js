@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import { q } from './service-db.js';
+import { mountServiceEvidence } from './service-evidence.js';
 
 const router=express.Router();
 
@@ -31,6 +32,8 @@ function canAccessWorkOrder(req,w){
 }
 function clean(v){return v==null?null:String(v).trim()}
 function bool(v){return v===true||v===1||v==='1'||String(v).toLowerCase()==='true'}
+
+mountServiceEvidence(router,{auth,canManage,canAccessWorkOrder});
 
 router.get('/field/work-orders/:id',auth,async(req,res)=>{
   const w=await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.email,c.street,c.street2,c.city,c.state,c.zip,e.equipment_type,e.brand,e.model,e.serial_number

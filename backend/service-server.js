@@ -8,6 +8,7 @@ import serviceRoutes,{ensureBootstrapAdmin} from './service-routes.js';
 import partsRoutes from './parts-routes.js';
 import financialRoutes from './financial-routes.js';
 import fieldRoutes from './field-routes.js';
+import {initServiceEvidence} from './service-evidence.js';
 import paymentMethodRoutes,{initServicePaymentMethods} from './service-payment-methods.js';
 import operationsRoutes from './service-operations-routes.js';
 import publicServiceRoutes from './public-service-routes.js';
@@ -148,7 +149,7 @@ app.use('/api/service',serviceWarrantyReconciliation);
 const portalAssets=new Set([
   'service-warranty-reconciliation-ui.js','service-portal.css','service-portal.js','htfo-retail-pos.js','htfo-retail-pos.css','htfo-inventory-admin.js','service-customer-click-fix.js','service-customer-profile-view.js','service-payment-ui.js','service-customer-value-ui.js','service-quickspa-ui.js',
   'service-operations-ui.js','service-invoice-items-ui.js','customer-orders-ui.js','service-admin-ui.js','service-customer-import-ui.js','service-customer-edit-ui.js','service-workorder-detail-ui.js',
-  'service-field.css','service-field.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js','fulfillment-ui.js','service-calendar-hotfix.js'
+  'service-field.css','service-field.js','service-evidence-ui.js','service-field-manifest.webmanifest','order-payment.html','order-payment.js','fulfillment-ui.js','service-calendar-hotfix.js'
 ]);
 app.get('/retail-pos',(req,res)=>res.sendFile(path.join(portalRoot,'htfo-retail-pos.html')));
 app.get(['/', '/service-portal.html'],(req,res)=>res.sendFile(path.join(portalRoot,'service-portal.html')));
@@ -161,6 +162,7 @@ app.use((req,res)=>res.status(404).send('Not found'));
 
 try{
   await initServiceDb();
+  await initServiceEvidence();
   await initServiceFinancials();
   await initCustomerOrders();
   await initFulfillment();
