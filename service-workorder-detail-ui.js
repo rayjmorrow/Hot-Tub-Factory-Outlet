@@ -152,7 +152,7 @@
         </div>
       </div>
       ${renderDeliveryOrder(x,w)}
-      ${String(w.job_type||'').toLowerCase()==='delivery'?`<div class="card"><h3>Delivery Completion</h3><p class="muted">Open this delivery's verification checklist using your current Operations login. No separate delivery account is needed.</p><button type="button" id="woOpenDeliveryChecklist">Open Delivery Checklist</button></div>`:renderServiceEditor(w)}
+      ${String(w.job_type||'').toLowerCase()==='delivery'?`<div class="card"><h3>Delivery Completion</h3><p class="muted">For a new delivery, use the full customer acceptance checklist. For deliveries performed before the digital process, owners can record historical completion without inventing missing signatures or photos.</p><button type="button" id="woOpenDeliveryChecklist" class="secondary">Open Full Delivery Checklist</button>${x.canCompleteHistoricalDelivery&&String(w.status||'').toLowerCase()!=='completed'?`<div style="margin-top:1rem"><h4>Already Delivered? (Historical Jobs Only)</h4><label>Actual delivery date<input id="woHistoricalDate" type="date" max="${new Date().toISOString().slice(0,10)}"></label><label>How was this delivery confirmed?<textarea id="woHistoricalReason" rows="3" placeholder="Example: Verified against the signed paper delivery receipt and office records."></textarea></label><button type="button" id="woCompleteHistorical">Record Historical Delivery Completion</button><p class="muted">Records your name, date, and explanation. Does not create a customer signature or delivery photos.</p></div>`:''}</div>`:renderServiceEditor(w)}
       <div class="card" id="woPartsBox"><p class="muted">Loading parts…</p></div>
       <div class="card"><div class="row between wrap"><div><h3 style="margin:.2rem 0">${String(w.job_type||'').toLowerCase()==='delivery'?'Delivery Charges':'Charges / Customer Receipt'}</h3><div class="muted">This work order is the detailed customer bill and receipt.</div></div><div class="row wrap"><button type="button" class="secondary" id="woPrintBill">Print</button><button type="button" class="secondary" id="woTextBill" ${w.phone?'':'disabled'}>Text Copy</button><button type="button" class="secondary" id="woEmailBill" ${w.email?'':'disabled'}>Email Copy</button></div></div>
         <div class="row wrap"><span>Diagnostic: <b>${money(w.diagnostic_amount)}</b></span><span>Labor: <b>${money(w.labor_amount)}</b></span><span>Parts: <b>${money(w.parts_amount)}</b></span><span>Trip: <b>${money(w.trip_amount)}</b></span><span>Tax: <b>${money(w.tax_amount)}</b></span><span>Total: <b>${money(w.total_amount)}</b></span></div>
@@ -172,6 +172,18 @@
     };
     $('#woDetailActions').innerHTML=x.canDelete?`<button type="button" class="secondary" id="woDeleteBtn">Delete Work Order</button>`:'';
     if($('#woOpenDeliveryChecklist'))$('#woOpenDeliveryChecklist').onclick=()=>{window.location.assign('/field?workOrder='+encodeURIComponent(id)+'&return=operations')};
+    if($('#woCompleteHistorical'))$('#woCompleteHistorical').onclick=async()=>{
+      const actual_delivery_date=$('#woHistoricalDate')?.value||'',reason=$('#woHistoricalReason')?.value?.trim()||'';
+      if(!actual_delivery_date)return alert('Enter the actual delivery date.');
+      if(reason.length<12)return alert('Explain how you verified this older delivery (at least 12 characters).');
+      if(!confirm('Mark this historical delivery completed based on the date and explanation entered? No missing customer proof will be fabricated.'))return;
+      const btn=$('#woCompleteHistorical');btn.disabled=true;
+      try{
+        await api('/work-orders/'+id+'/complete-historical-delivery',{method:'POST',body:JSON.stringify({actual_delivery_date,reason})});
+        await refreshWorkOrder(id);await loadWorkOrders();if(typeof loadDashboard==='function')await loadDashboard();
+        alert('Historical delivery completed and recorded in the work order audit notes.');
+      }catch(e){alert(e.message)}finally{if(btn?.isConnected)btn.disabled=false}
+    };
     if($('#woChargeCard'))$('#woChargeCard').onclick=()=>finalizeBillAndCharge(id,w);
     if($('#woPrepareCashBill'))$('#woPrepareCashBill').onclick=()=>finalizeCashCheckBill(id);
     if($('#woPrintBill'))$('#woPrintBill').onclick=()=>printBill(id);
