@@ -26,3 +26,37 @@
 .service-email-compose input,.service-email-compose textarea{width:100%}
 .service-email-compose textarea{min-height:90px;resize:vertical}
 @media(max-width:760px){.service-email-compose{grid-template-columns:1fr}.service-email-compose button{width:100%}}
+
+
+/* Work order modal: vertical scrolling only; prevent contents from forcing horizontal overflow. */
+#workOrderDetailDialog{
+  width:min(960px,calc(100vw - 32px));
+  max-width:calc(100vw - 32px);
+  max-height:calc(100dvh - 32px);
+  overflow-x:hidden;
+  overflow-y:auto;
+}
+#workOrderDetailDialog .dialog-form{
+  width:100%;
+  min-width:0 !important;
+  max-width:100%;
+  padding:clamp(12px,2vw,20px);
+}
+#workOrderDetailDialog *,
+#workOrderDetailDialog *::before,
+#workOrderDetailDialog *::after{max-width:100%;min-width:0;overflow-wrap:anywhere}
+#workOrderDetailDialog .detail-grid,
+#workOrderDetailDialog .grid2{grid-template-columns:repeat(2,minmax(0,1fr))}
+#workOrderDetailDialog .row{flex-wrap:wrap}
+#workOrderDetailDialog input,
+#workOrderDetailDialog textarea,
+#workOrderDetailDialog select{width:100%;max-width:100%}
+#workOrderDetailDialog .card,
+#workOrderDetailDialog .item,
+#workOrderDetailDialog #woPartPicker{min-width:0;max-width:100%}
+#workOrderDetailDialog .dialog-form > .row,
+#workOrderDetailDialog .card > .row{gap:10px}
+@media(max-width:760px){
+  #workOrderDetailDialog .detail-grid,
+  #workOrderDetailDialog .grid2{grid-template-columns:minmax(0,1fr)}
+}
