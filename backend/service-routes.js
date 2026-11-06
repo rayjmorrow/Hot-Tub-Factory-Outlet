@@ -71,7 +71,7 @@ router.get('/business-rules',auth,(req,res)=>res.json({
 router.get('/dashboard',auth,async(req,res)=>{
   const [today,open,customers]=await Promise.all([
     q("SELECT count(*)::int n FROM service_work_orders WHERE scheduled_start::date=CURRENT_DATE"),
-    q("SELECT count(*)::int n FROM service_work_orders WHERE status NOT IN ('completed','cancelled')"),
+    q("SELECT count(*)::int n FROM service_work_orders WHERE lower(coalesce(status,'')) NOT IN ('completed','cancelled','canceled','closed')"),
     q('SELECT count(*)::int n FROM service_customers')
   ]);
   let unpaid=null;
@@ -219,14 +219,14 @@ router.get('/work-orders',auth,async(req,res)=>{
   const r=manager
     ? await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.city,c.state,e.brand,e.model,e.equipment_type,e.serial_number
       FROM service_work_orders w JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
-      WHERE (w.scheduled_start BETWEEN $1 AND $2) OR (w.scheduled_start IS NULL AND w.status NOT IN ('completed','cancelled')) ORDER BY w.scheduled_start NULLS LAST`,[from,to])
+      WHERE (w.scheduled_start BETWEEN $1 AND $2) OR lower(coalesce(w.status,'')) NOT IN ('completed','cancelled','canceled','closed') ORDER BY w.scheduled_start NULLS LAST`,[from,to])
     : role==='delivery'
       ? await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.city,c.state,e.brand,e.model,e.equipment_type,e.serial_number
         FROM service_work_orders w JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
-        WHERE (((w.scheduled_start BETWEEN $1 AND $2) OR (w.scheduled_start IS NULL AND w.status NOT IN ('completed','cancelled'))) AND lower(coalesce(w.job_type,''))='delivery') ORDER BY w.scheduled_start NULLS LAST`,[from,to])
+        WHERE (((w.scheduled_start BETWEEN $1 AND $2) OR lower(coalesce(w.status,'')) NOT IN ('completed','cancelled','canceled','closed')) AND lower(coalesce(w.job_type,''))='delivery') ORDER BY w.scheduled_start NULLS LAST`,[from,to])
       : await q(`SELECT w.*,concat_ws(' ',c.first_name,c.last_name) customer_name,c.phone,c.city,c.state,e.brand,e.model,e.equipment_type,e.serial_number
         FROM service_work_orders w JOIN service_customers c ON c.id=w.customer_id LEFT JOIN service_equipment e ON e.id=w.equipment_id
-        WHERE (((w.scheduled_start BETWEEN $1 AND $2) OR (w.scheduled_start IS NULL AND w.status NOT IN ('completed','cancelled'))) AND (lower(coalesce(w.assigned_to,''))=lower($3) OR lower(coalesce(w.assigned_team,''))=lower($3))) ORDER BY w.scheduled_start NULLS LAST`,[from,to,who]);
+        WHERE (((w.scheduled_start BETWEEN $1 AND $2) OR lower(coalesce(w.status,'')) NOT IN ('completed','cancelled','canceled','closed')) AND (lower(coalesce(w.assigned_to,''))=lower($3) OR lower(coalesce(w.assigned_team,''))=lower($3))) ORDER BY w.scheduled_start NULLS LAST`,[from,to,who]);
   res.json(r.rows);
 });
 router.post('/work-orders',auth,async(req,res)=>{
