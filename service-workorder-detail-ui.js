@@ -152,7 +152,7 @@
         </div>
       </div>
       ${renderDeliveryOrder(x,w)}
-      ${String(w.job_type||'').toLowerCase()==='delivery'?'':renderServiceEditor(w)}
+      ${String(w.job_type||'').toLowerCase()==='delivery'?`<div class="card"><h3>Delivery Completion</h3><p class="muted">Open this delivery's verification checklist using your current Operations login. No separate delivery account is needed.</p><button type="button" id="woOpenDeliveryChecklist">Open Delivery Checklist</button></div>`:renderServiceEditor(w)}
       <div class="card" id="woPartsBox"><p class="muted">Loading parts…</p></div>
       <div class="card"><div class="row between wrap"><div><h3 style="margin:.2rem 0">${String(w.job_type||'').toLowerCase()==='delivery'?'Delivery Charges':'Charges / Customer Receipt'}</h3><div class="muted">This work order is the detailed customer bill and receipt.</div></div><div class="row wrap"><button type="button" class="secondary" id="woPrintBill">Print</button><button type="button" class="secondary" id="woTextBill" ${w.phone?'':'disabled'}>Text Copy</button><button type="button" class="secondary" id="woEmailBill" ${w.email?'':'disabled'}>Email Copy</button></div></div>
         <div class="row wrap"><span>Diagnostic: <b>${money(w.diagnostic_amount)}</b></span><span>Labor: <b>${money(w.labor_amount)}</b></span><span>Parts: <b>${money(w.parts_amount)}</b></span><span>Trip: <b>${money(w.trip_amount)}</b></span><span>Tax: <b>${money(w.tax_amount)}</b></span><span>Total: <b>${money(w.total_amount)}</b></span></div>
@@ -171,6 +171,7 @@
       try{await api(`/work-orders/${id}`,{method:'PATCH',body:JSON.stringify(b)});await refreshWorkOrder(id);await loadWorkOrders();if(activeCustomerId)try{await loadCustomer(activeCustomerId)}catch{}}catch(err){alert(err.message)}
     };
     $('#woDetailActions').innerHTML=x.canDelete?`<button type="button" class="secondary" id="woDeleteBtn">Delete Work Order</button>`:'';
+    if($('#woOpenDeliveryChecklist'))$('#woOpenDeliveryChecklist').onclick=()=>{window.location.assign('/field?workOrder='+encodeURIComponent(id)+'&return=operations')};
     if($('#woChargeCard'))$('#woChargeCard').onclick=()=>finalizeBillAndCharge(id,w);
     if($('#woPrepareCashBill'))$('#woPrepareCashBill').onclick=()=>finalizeCashCheckBill(id);
     if($('#woPrintBill'))$('#woPrintBill').onclick=()=>printBill(id);
