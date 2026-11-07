@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: furbaby-vip-signup
+    runtime: python
+    plan: free
+    region: ohio
+    branch: furbaby-vip-emergency
+    buildCommand: pip install -r furbaby-vip/requirements.txt
+    startCommand: gunicorn --chdir furbaby-vip app:app --bind 0.0.0.0:$PORT
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: furbaby-vip-signups
+          property: connectionString
+      - key: ADMIN_USER
+        value: furbaby-admin
+      - key: ADMIN_PASSWORD
+        generateValue: true
+
+databases:
+  - name: furbaby-vip-signups
+    plan: free
+    region: ohio
