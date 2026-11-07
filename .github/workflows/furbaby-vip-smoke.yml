@@ -1,0 +1,35 @@
+name: Furbaby VIP signup smoke test
+on:
+  push:
+    branches: [furbaby-vip-emergency]
+    paths:
+      - ".github/workflows/furbaby-vip-smoke.yml"
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check homepage and database
+        run: |
+          python3 - <<'PY'
+          import urllib.request,json,time,urllib.parse,uuid
+          base="https://furbaby-vip-signup.onrender.com"
+          for attempt in range(15):
+              try:
+                  with urllib.request.urlopen(base+"/health",timeout=15) as r:
+                      data=json.load(r)
+                      assert r.status==200 and data.get("status")=="ok",data
+                  break
+              except Exception as e:
+                  if attempt==14: raise
+                  time.sleep(10)
+          with urllib.request.urlopen(base+"/",timeout=15) as r:
+              page=r.read().decode()
+              assert r.status==200 and "Furbaby VIP" in page and 'name="phone"' in page
+          data=urllib.parse.urlencode({"name":"VIP System Test","email":"vip-smoke-"+uuid.uuid4().hex[:16]+"@example.invalid","phone":"7245550100"}).encode()
+          opener=urllib.request.build_opener(urllib.request.HTTPHandler())
+          with opener.open(urllib.request.Request(base+"/signup",data=data,method="POST"),timeout=20) as r:
+              result=r.read().decode()
+              assert r.status==200 and "Thank you for registering for discounts" in result
+          print("PASS: homepage, database health and signup/thank you flow")
+          PY
