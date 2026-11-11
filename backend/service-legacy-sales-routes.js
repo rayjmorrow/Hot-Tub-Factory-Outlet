@@ -46,8 +46,25 @@ router.post('/customers/:id/import-existing-sale',auth,async(req,res)=>{
       if(!cust.rowCount)throw new Error('Customer not found');
       const old=await exec('SELECT id FROM service_legacy_sale_imports WHERE original_agreement_ref=$1',[agreementRef]);
       if(old.rowCount)throw new Error('This original agreement reference has already been imported');
-      const equipment=(await exec(`INSERT INTO service_equipment(customer_id,equipment_type,brand,model,serial_number,notes)
-        VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,[customerId,clean(b.equipment_type)||'Hot Tub',brand,model,clean(b.serial_number)||null,'Imported existing signed sale '+agreementRef])).rows[0];
+      // Reuse a customer's existing matching spa instead of duplicating equipment
+      // that was manually entered before the historical contract was imported.
+      const existingEquipment=await exec(`SELECT id,serial_number FROM service_equipment
+        WHERE customer_id=$1 AND lower(trim(coalesce(brand,'')))=lower($2)
+          AND lower(trim(coalesce(model,'')))=lower($3)
+          AND (nullif(trim(coalesce(serial_number,'')),'') IS NULL OR lower(trim(serial_number))=lower($4))
+        ORDER BY created_at DESC LIMIT 2`,[customerId,brand,model,clean(b.serial_number)]);
+      let equipment;
+      if(existingEquipment.rowCount===1){
+        equipment=existingEquipment.rows[0];
+        if(!clean(equipment.serial_number)&&clean(b.serial_number)){
+          await exec('UPDATE service_equipment SET serial_number=$2,updated_at=NOW() WHERE id=$1',[equipment.id,clean(b.serial_number)]);
+        }
+      }else if(existingEquipment.rowCount>1){
+        throw new Error('Multiple matching spas found. Resolve duplicate equipment before importing.');
+      }else{
+        equipment=(await exec(`INSERT INTO service_equipment(customer_id,equipment_type,brand,model,serial_number,notes)
+          VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,[customerId,clean(b.equipment_type)||'Hot Tub',brand,model,clean(b.serial_number)||null,'Imported existing signed sale '+agreementRef])).rows[0];
+      }
       const number='LEGACY-'+agreementRef;
       const order=(await exec(`INSERT INTO service_customer_orders(customer_id,external_order_id,order_number,status,order_type,source,subtotal,tax_amount,total_amount,notes)
         VALUES($1,$2,$3,'scheduled','delivery','legacy_signed_sale',$4,$5,$6,$7) RETURNING id,order_number`,
