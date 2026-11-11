@@ -433,7 +433,7 @@ router.post('/fulfillment/orders/:id/ship',auth,async(req,res)=>{
     [o.id,carrier,service,tracking,req.user?.name||req.user?.username||null,local])).rows[0];
   const desc=local?'Order '+(o.order_number||o.id)+' handled as HTFO local delivery.':'Order '+(o.order_number||o.id)+' shipped via '+carrier+(service?' '+service:'')+'. Tracking '+tracking+'.';
   await logEvent(o.id,o.recurring_order_id,local?'local_delivery':'shipped',desc,req.user?.name||req.user?.username);
-  if(o.email){const info=local?'Our HTFO team is handling your local delivery.':'Carrier: '+carrier+(service?' '+service:'')+'\\nTracking: '+tracking;await queueEmail(o.customer_id,o.id,o.email,'Your Hot Tub Factory Outlet order has shipped','Hi '+(o.first_name||'')+',\\n\\nYour order '+(o.order_number||o.id)+' has shipped.\\n\\n'+info+'\\n\\nThank you,\\nHot Tub Factory Outlet')}
+  if(o.email && o.source!=='legacy_signed_sale'){const info=local?'Our HTFO team is handling your local delivery.':'Carrier: '+carrier+(service?' '+service:'')+'\\nTracking: '+tracking;await queueEmail(o.customer_id,o.id,o.email,'Your Hot Tub Factory Outlet order has shipped','Hi '+(o.first_name||'')+',\\n\\nYour order '+(o.order_number||o.id)+' has shipped.\\n\\n'+info+'\\n\\nThank you,\\nHot Tub Factory Outlet')}
   res.json(row);
 });
 router.get('/fulfillment/pirate-ship.csv',auth,async(req,res)=>{
