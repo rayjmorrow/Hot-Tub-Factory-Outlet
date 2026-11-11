@@ -232,7 +232,7 @@ async function loadCustomer(id){
       await loadCustomers();
     }catch(error){alert(error.message)}
   };
-  $('[data-service-payment-history]').forEach(b=>b.onclick=async()=>{
+  $$('[data-service-payment-history]').forEach(b=>b.onclick=async()=>{
     const id=b.dataset.servicePaymentHistory,box=$('[data-service-payment-entries="'+id+'"]');
     b.disabled=true;box.textContent='Loading payment ledger…';
     try{
