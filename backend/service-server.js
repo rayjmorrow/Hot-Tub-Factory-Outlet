@@ -47,6 +47,7 @@ import serviceEmailRoutes,{ensureServiceCustomerEmails} from './service-email-ro
 import serviceBillingRoutes from './service-billing-routes.js';
 import serviceDepartmentFinancials from './service-department-financials.js';
 import serviceWarrantyReconciliation from './service-warranty-reconciliation-routes.js';
+import legacySalesRoutes,{initLegacySales} from './service-legacy-sales-routes.js';
 
 const app=express();
 const port=Number(process.env.PORT||process.env.SERVICE_PORT||8790);
@@ -128,6 +129,7 @@ app.use('/api/service',customerValueRoutes);
 app.use('/api/service',invoiceItemRoutes);
 app.use('/api/service',customerOrderControls);
 app.use('/api/service',customerOrderRoutes);
+app.use('/api/service',legacySalesRoutes);
 app.use('/api/service',fulfillmentRoutes);
 app.use('/api/service',customerImportRoutes);
 app.use('/api/service',crmRoutes);
@@ -165,6 +167,7 @@ try{
   await initServiceEvidence();
   await initServiceFinancials();
   await initCustomerOrders();
+  await initLegacySales();
   await initFulfillment();
   await initServiceScheduling();
   await initServiceTenancy();
