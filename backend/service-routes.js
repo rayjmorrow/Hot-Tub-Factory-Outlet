@@ -240,7 +240,16 @@ router.post('/work-orders',auth,async(req,res)=>{
     const equipmentId=clean(b.equipment_id);
     let customerOrderId=clean(b.customer_order_id);
     if(equipmentId){const n=Number(equipmentId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid equipment selection.'});}
-    if(customerOrderId){const n=Number(customerOrderId);if(!Number.isInteger(n)||n<=0)return res.status(400).json({error:'Invalid customer order selection.'});}
+    if(customerOrderId){
+      const n=Number(customerOrderId);
+      if(!Number.isSafeInteger(n)||n<=0)return res.status(400).json({error:'Invalid customer order selection.'});
+      const link=await q('SELECT id FROM service_customer_orders WHERE id=$1 AND customer_id=$2 AND status NOT IN (\'cancelled\',\'shipped\')',[n,customerId]);
+      if(!link.rowCount)return res.status(400).json({error:'The selected sale does not belong to this customer or is already closed.'});
+    }
+    if(equipmentId){
+      const linked=await q('SELECT id FROM service_equipment WHERE id=$1 AND customer_id=$2',[equipmentId,customerId]);
+      if(!linked.rowCount)return res.status(400).json({error:'The selected spa does not belong to this customer.'});
+    }
     const jobType=clean(b.job_type)||'service';
     const assignedTo=await canonicalDispatchName(jobType==='delivery'?(clean(b.assigned_to)||'Delivery'):b.assigned_to);
     if(!assignedTo)return res.status(400).json({error:'Choose an assigned tech / team before scheduling.'});
@@ -249,7 +258,7 @@ router.post('/work-orders',auth,async(req,res)=>{
         WHERE customer_id=$1 AND status NOT IN ('shipped','cancelled')
         ORDER BY created_at DESC LIMIT 1`,[customerId])).rows[0];
       if(existing){
-        customerOrderId=String(existing.id);
+        return res.status(400).json({error:'Select the correct existing sales order before scheduling this delivery.'});
       }else{
         const orderNo=`ORD-${new Date().getFullYear()}-${Date.now().toString().slice(-7)}`;
         const order=(await q(`INSERT INTO service_customer_orders
