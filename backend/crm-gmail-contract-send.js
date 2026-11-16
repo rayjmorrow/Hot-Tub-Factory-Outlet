@@ -47,3 +47,22 @@ export async function sendSignedPdfWithGmail({from,to,recipient,subject,message,
  if(!response.ok||!result.id)throw Error('Gmail PDF delivery failed: '+String(result.error?.message||response.status));
  return {id:result.id};
 }
+
+export async function sendCrmEmailWithGmail({from,to,recipient,subject,message,replyTo}){
+  const sender=cleanHeader(from),destination=cleanHeader(to),reply=cleanHeader(replyTo||from);
+  const valid=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  if(!valid(sender)||!valid(destination)||!valid(reply))throw Error('CRM sender, recipient, or reply-to email is invalid');
+  const accessToken=await gmailSendToken(sender);
+  const recipientHeader=recipient?'"'+cleanHeader(recipient).replace(/"/g,'')+'" <'+destination+'>':destination;
+  const subjectHeader=/[^\x20-\x7e]/.test(String(subject))?'=?UTF-8?B?'+Buffer.from(String(subject)).toString('base64')+'?=':cleanHeader(subject);
+  const mime=['From: '+sender,'To: '+recipientHeader,'Reply-To: '+reply,'Subject: '+subjectHeader,
+    'MIME-Version: 1.0','Content-Type: text/plain; charset=UTF-8','Content-Transfer-Encoding: base64','',
+    Buffer.from(String(message||'')).toString('base64'),''].join('\r\n');
+  const response=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
+    method:'POST',headers:{Authorization:'Bearer '+accessToken,'Content-Type':'application/json'},
+    body:JSON.stringify({raw:Buffer.from(mime).toString('base64url')}),signal:AbortSignal.timeout(20000)
+  });
+  const result=await response.json().catch(()=>({}));
+  if(!response.ok||!result.id)throw Error('Gmail CRM delivery failed: '+String(result.error?.message||response.status));
+  return {messageId:result.id,from:sender};
+}
