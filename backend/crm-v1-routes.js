@@ -78,8 +78,10 @@ function staffEmail(u){
 async function email(to,subject,body,name,user,submissionId,extraTags=[]){
   const from=staffEmail(user);
   if(!from)throw new Error('Salesperson sender address is not configured');
-  const trackedSubject=submissionId?(String(subject||'Hot Tub Factory Outlet').replace(/\s*\[HTFO-CRM:[^\]]+\]\s*$/i,'').trim()+` [HTFO-CRM:${submissionId}]`):subject;
-  return sendCrmEmailWithGmail({from,to,recipient:name,subject:trackedSubject,message:body,replyTo:from});
+  // Match inbound replies using the sender/recipient addresses and Gmail message history.
+  // CRM tracking IDs must never appear in a customer-visible email subject.
+  const cleanSubject=String(subject||'Hot Tub Factory Outlet').replace(/\s*\[HTFO-CRM:[^\]]+\]/gi,'').trim();
+  return sendCrmEmailWithGmail({from,to,recipient:name,subject:cleanSubject,message:body,replyTo:from});
 }
 
 function normalizePipelineStage(name,status){
