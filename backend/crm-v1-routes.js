@@ -245,6 +245,7 @@ router.post('/crm/v1/campaigns/email/preview',...guard,async(req,res)=>{try{
 }catch(e){res.status(500).json({error:e.message})}});
 
 router.post('/crm/v1/campaigns/email/send',...guard,async(req,res)=>{try{
+   if(process.env.CRM_BULK_EMAIL_ENABLED!=='true')return res.status(503).json({error:'Bulk email is temporarily paused while delivery failures are investigated. Individual CRM emails and agreements are unaffected.'});
   await ensure();await ensureEmailTrackingSchema();
   const ids=Array.isArray(req.body?.submission_ids)?req.body.submission_ids.map(clean).filter(Boolean).slice(0,250):[];
   const subjectTpl=String(req.body?.subject||'').trim(),bodyTpl=String(req.body?.template||'').trim();
