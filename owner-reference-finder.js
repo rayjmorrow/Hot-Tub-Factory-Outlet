@@ -8,7 +8,7 @@ const years=roots.map((e,i)=>({label:label(e),value:String(i)}));setOptions(year
 const brandsFor=y=>{if(!y)return[];const idx=Number(y);const root=roots[idx];let children=direct(root,'details');if(children.length===0)return[{label:label(root).replace(/^\\d{4} model year · /,''),value:'self'}];return children.map((e,i)=>({label:label(e).replace(/ · 2026 catalog models$/,''),value:String(i)}))};
 function yearRoot(){return roots[Number(year.value)]}
 function brandNode(){if(!year.value||!brand.value)return null;const root=yearRoot();return brand.value==='self'?root:direct(root,'details')[Number(brand.value)]}
-function seriesNode(){const b=brandNode();if(!b)return null;if(series.value==='self')return b;return direct(b,'details')[Number(series.value)]}
+function seriesNode(){const b=brandNode();if(!b)return null;if(!series.value||series.value==='self')return b;return direct(b,'details')[Number(series.value)]}
 const clean=(s)=>s.replace(/ · .*$/,'').trim();
 const selectedModel=()=>{const target=seriesNode();return target? [...target.querySelectorAll('.model')].find(x=>x.querySelector('h4')?.textContent.trim()===model.value):null};
 function updateResult(){
