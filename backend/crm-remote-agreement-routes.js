@@ -23,7 +23,7 @@ export function remoteAgreementRouter({q,guard,salesIdentity,ensureSalesDrafts,v
    const draft=(await q('SELECT * FROM crm_sales_drafts WHERE id=$1',[req.params.id])).rows[0];if(!draft)throw Error('Agreement not found');
    if(!['owner','admin'].includes(req.user.role)&&String(draft.owner_user_id)!==String(req.user.sub))throw Error('Not authorized');
    if((await q('SELECT 1 FROM crm_sales_executed_contracts WHERE draft_id=$1',[draft.id])).rowCount)throw Error('Agreement already signed');
-   const doc=validateSalesDraft(draft.document);if(!doc.customer.email||!doc.customer.first_name||!doc.customer.last_name||!doc.spa.model||!doc.msrp)throw Error('Complete customer details and spa pricing');
+   const doc=validateSalesDraft(draft.document);if(!doc.customer.first_name||!doc.customer.last_name||!doc.spa.model||!doc.msrp)throw Error('Complete customer details and spa pricing');
    await requireAgreementReservation(q,draft.id,doc.spa);
    const destination=channel==='email'?doc.customer.email:doc.customer.phone;if(!destination)throw Error('Customer contact missing');
    if(channel==='sms'&&await opted(destination))throw Error('Customer has opted out of SMS');
