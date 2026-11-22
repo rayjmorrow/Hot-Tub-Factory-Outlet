@@ -39,7 +39,9 @@ export function remoteSigningCompletion({q,ensureExecutedContracts,validateSales
     if(id){
      if(!(await run('SELECT 1 FROM crm_website_leads WHERE submission_id=$1 AND deleted_at IS NULL',[id])).rowCount)throw Error('Linked customer profile not found');
     }else{
-     const matches=(await run("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) LIMIT 2",[d.customer.email])).rows;
+     const matches=d.customer.email
+      ?(await run("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND lower(email)=lower($1) LIMIT 2",[d.customer.email])).rows
+      :d.customer.phone?(await run("SELECT submission_id FROM crm_website_leads WHERE deleted_at IS NULL AND regexp_replace(coalesce(phone,''),'[^0-9]','','g')=regexp_replace($1,'[^0-9]','','g') LIMIT 2",[d.customer.phone])).rows:[];
      if(matches.length>1)throw Error('Please contact HTFO to verify your customer profile before signing');
      id=matches[0]?.submission_id;
      if(!id){
@@ -53,6 +55,7 @@ export function remoteSigningCompletion({q,ensureExecutedContracts,validateSales
      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)`,[rec.draft_id,id,d.customer.email,rec.staff_email,JSON.stringify(d),name,rec.staff_name,png,rec.staff_signature,t,v,pdf,sha(pdf)]);
    });
    for(const [column,to,recipient] of [['sent_customer_at',d.customer.email,name],['sent_salesperson_at',rec.staff_email,rec.staff_name],['sent_owner_at','ray@hottubfactoryoutlet.com','HTFO Owner']]){
+    if(!to)continue;
     try{await sendContractPdf(to,recipient,'Signed HTFO Agreement #'+rec.draft_id,'Signed sales agreement attached','HTFO-Signed-'+rec.draft_id+'.pdf',pdf,{username:'sales',name:'Hot Tub Factory Outlet'});await q('UPDATE crm_sales_executed_contracts SET '+column+'=NOW() WHERE draft_id=$1',[rec.draft_id])}
     catch(e){await q('UPDATE crm_sales_executed_contracts SET last_error=$2 WHERE draft_id=$1',[rec.draft_id,String(e.message).slice(0,300)])}
    }
