@@ -9,7 +9,7 @@ const digest=token=>createHash('sha256').update(token).digest('hex');
 const generic='If this account has a verified recovery email, a reset link will be sent shortly.';
 const LOGIN_URL='https://htfo-sales-crm-preview.onrender.com/';
 const RESET_URL=LOGIN_URL+'?password-reset=';
-const validEmail=value=>/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(value);
+const validEmail=value=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 let readyPromise;
 function ensureSchema(){
  if(!readyPromise)readyPromise=q(`CREATE TABLE IF NOT EXISTS service_password_resets (
@@ -58,7 +58,7 @@ router.post('/auth/forgot-password',async(req,res)=>{
   const inserted=await q("INSERT INTO service_password_resets(user_id,token_hash,expires_at,request_ip_hash) VALUES($1,$2,NOW()+INTERVAL '30 minutes',$3) RETURNING id",[user.id,digest(token),ipHash]);
   const url=RESET_URL+token;
   try{
-   await sendCrmEmailWithGmail({from:sender,to,recipient:user.display_name,subject:'HTFO Sales CRM password reset',message:'A password reset was requested for your HTFO Sales CRM account.\\n\\nOpen this link to choose a new password (expires in 30 minutes):\\n'+url+'\\n\\nIf you did not request this, ignore this email. Your existing password remains valid.',replyTo:sender});
+   await sendCrmEmailWithGmail({from:sender,to,recipient:user.display_name,subject:'HTFO Sales CRM password reset',message:'A password reset was requested for your HTFO Sales CRM account.\n\nOpen this link to choose a new password (expires in 30 minutes):\n'+url+'\n\nIf you did not request this, ignore this email. Your existing password remains valid.',replyTo:sender});
   }catch(error){
    await q('UPDATE service_password_resets SET used_at=NOW(),token_hash=NULL WHERE id=$1',[inserted.rows[0].id]);
    console.error('HTFO password recovery delivery failed:',error.message);
