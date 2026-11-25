@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {readStorePaymentSettings as read,merchantAuthentication,storeGatewayRequest} from './store-payment-config.js';
+const base={AUTHORIZE_API_LOGIN_ID:' store-id ',AUTHORIZE_TRANSACTION_KEY:' store-key\n'};
+const settings=read(base);
+assert.equal(settings.ready,true);
+assert.deepEqual(merchantAuthentication(settings),{name:'store-id',transactionKey:'store-key'});
+assert.match(settings.apiUrl,/^https:\/\/api\.authorize\.net\//);
+assert.equal(read({...base,AUTHORIZE_SANDBOX:' TRUE '}).sandbox,true);
+assert.equal(read({...base,AUTHORIZE_SANDBOX:'false'}).sandbox,false);
+assert.throws(()=>merchantAuthentication(read({...base,AUTHORIZE_SANDBOX:'test'})),/must be true or false/);
+assert.throws(()=>merchantAuthentication(read({...base,AUTHORIZENET_API_LOGIN_ID:'other-merchant'})),/Conflicting API Login ID/);
+assert.throws(()=>merchantAuthentication(read({...base,AUTHORIZENET_TRANSACTION_KEY:'old-key'})),/Conflicting Transaction Key/);
+assert.equal(read({AUTHORIZE_API_LOGIN_ID:'  ',AUTHORIZENET_API_LOGIN_ID:'legacy-id',AUTHORIZENET_TRANSACTION_KEY:'legacy-key'}).ready,true);
+assert.throws(()=>merchantAuthentication(read({})),/not configured/);
+let calls=0;
+const authBody={authenticateTestRequest:{merchantAuthentication:merchantAuthentication(settings)}};
+await storeGatewayRequest(authBody,{settings,fetchImpl:async(url,options)=>{
+ calls++;assert.equal(url,settings.apiUrl);const payload=JSON.parse(options.body);
+ assert.deepEqual(Object.keys(payload),['authenticateTestRequest']);
+ assert.equal('createTransactionRequest' in payload,false);
+ return {ok:true,text:async()=> '\uFEFF'+JSON.stringify({messages:{resultCode:'Ok'}})};
+}});
+assert.equal(calls,1);
+await assert.rejects(()=>storeGatewayRequest(authBody,{settings,fetchImpl:async()=>({ok:true,text:async()=>JSON.stringify({messages:{resultCode:'Error',message:[{code:'E00007',text:'provider text containing secret-value'}]}})})}),error=>error.code==='E00007'&&!error.message.includes('secret-value'));
+await assert.rejects(()=>storeGatewayRequest(authBody,{settings,fetchImpl:async()=>{throw Error('private transport detail')}}),/could not be reached/);
+await assert.rejects(()=>storeGatewayRequest(authBody,{settings,fetchImpl:async()=>({ok:true,text:async()=>'<html>error</html>'})}),/unreadable response/);
+console.log('Store payment settings passed: whitespace, aliases, conflicting values, live/test routing, safe errors and charge-free authentication.');

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import {readStorePaymentSettings,merchantAuthentication,storeGatewayRequest} from './store-payment-config.js';
 import cors from 'cors';
 import { createHmac,randomBytes,randomUUID,timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -38,15 +39,13 @@ const coverCatalog={
   Gold:{sku:'CVTH400',price:765},
   Platinum:{sku:'CVTH500',price:899}
 };
-const authApi=process.env.AUTHORIZE_SANDBOX==='true'?'https://apitest.authorize.net/xml/v1/request.api':'https://api.authorize.net/xml/v1/request.api';
-const authForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/payment/payment':'https://accept.authorize.net/payment/payment';
-const customerForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/customer/manage':'https://accept.authorize.net/customer/manage';
-const authLoginId=process.env.AUTHORIZE_API_LOGIN_ID||process.env.AUTHORIZENET_API_LOGIN_ID;
-const authTransactionKey=process.env.AUTHORIZE_TRANSACTION_KEY||process.env.AUTHORIZENET_TRANSACTION_KEY;
+const storePaymentSettings=readStorePaymentSettings();
+const authForm=storePaymentSettings.paymentUrl;
+const customerForm=storePaymentSettings.customerUrl;
 const ghlBase='https://services.leadconnectorhq.com';
 
 function requireEnv(names){const missing=names.filter(x=>!process.env[x]||process.env[x]==='replace_me');if(missing.length)throw new Error(`Missing server configuration: ${missing.join(', ')}`)}
-function auth(){if(!authLoginId||!authTransactionKey)throw new Error('Authorize.Net is not configured');return{name:authLoginId,transactionKey:authTransactionKey}}
+function auth(){return merchantAuthentication(storePaymentSettings)}
 function cleanText(v,max=500){return String(v??'').trim().slice(0,max)}
 function validEmail(v){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)}
 function ghlHeaders(){return{Authorization:`Bearer ${process.env.GHL_API_TOKEN}`,Version:'v3','Content-Type':'application/json',Accept:'application/json'}}
@@ -109,16 +108,7 @@ function wexford(){return{street:process.env.WEXFORD_STORE_STREET||'10269 Perry 
 function destinationFor(body,c){if(body.fulfillment==='pickup-monroeville')return monroeville();if(body.fulfillment==='pickup-wexford')return wexford();return c}
 function shippingFor(body,items){if(String(body.fulfillment||'').startsWith('pickup'))return 0;const merchandise=money(items.reduce((s,x)=>s+x.quantity*x.unit_price,0));return merchandise>=100?0:14.95}
 
-async function anet(body){
-  const r=await fetch(authApi,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const j=await r.json().catch(()=>({}));
-  if(!r.ok||j?.messages?.resultCode!=='Ok'){
-    const code=j?.messages?.message?.[0]?.code||'';
-    const text=j?.messages?.message?.[0]?.text||`Authorize.Net returned ${r.status}`;
-    const e=new Error(`${code?code+': ':''}${text}`);e.code=code;throw e;
-  }
-  return j;
-}
+async function anet(body){return storeGatewayRequest(body,{settings:storePaymentSettings})}
 
 async function verifiedStoreItems(rawItems){
   const items=cleanItems(rawItems);
@@ -297,7 +287,7 @@ async function createRecurringGroup({profileId,paymentProfileId,frequencyMonths,
   }
 }
 
-app.get('/health',(q,s)=>s.json({ok:true,taxProvider:'built-in Pennsylvania',taxNexusStates:['PA'],authorize:process.env.AUTHORIZE_SANDBOX==='true'?'sandbox':'production',authorizeConfigured:Boolean(authLoginId&&authTransactionKey),customerProfiles:true,accountTokens:Boolean(process.env.ACCOUNT_TOKEN_SECRET),webhookEndpoint:true,employeeCodes:Object.keys(employeeDirectory()).length,shippingPolicy:'$14.95 under $100; free at $100+'}));
+app.get('/health',(q,s)=>s.json({ok:true,taxProvider:'built-in Pennsylvania',taxNexusStates:['PA'],authorize:storePaymentSettings.sandbox?'sandbox':'production',authorizeConfigured:storePaymentSettings.ready,customerProfiles:true,accountTokens:Boolean(process.env.ACCOUNT_TOKEN_SECRET),webhookEndpoint:true,employeeCodes:Object.keys(employeeDirectory()).length,shippingPolicy:'$14.95 under $100; free at $100+'}));
 
 app.post('/employee-code/validate',(req,res)=>{try{const hit=employeeForCode(req.body?.code);if(!hit)return res.json({valid:false});res.json({valid:true,...hit,discountPercent:10,autoshipDiscountPercent:10,autoshipDiscountPersistsUntilCancel:true})}catch(e){res.status(400).json({valid:false,error:e.message})}});
 
