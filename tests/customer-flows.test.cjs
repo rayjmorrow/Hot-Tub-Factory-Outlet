@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
  const source=fs.readFileSync(path.join(__dirname,'../service-request.js'),'utf8');
  async function service(result,ok=true){
   let handler,requests=0,resolve;
-  const button={},grid={},status={style:{},setAttribute(){},focus(){this.focused=true},scrollIntoView(){}};
+  const button={},grid={style:{}},status={style:{},setAttribute(){},focus(){this.focused=true},scrollIntoView(){}};
   const form={action:'https://formsubmit.co/ray@hottubfactoryoutlet.com',reportValidity:()=>true,querySelector:s=>s.includes('submit')?button:grid,addEventListener:(e,h)=>handler=h};
   const gate=new Promise(r=>resolve=r);
   const ctx={AbortSignal,document:{getElementById:id=>id==='serviceRequestForm'?form:status},FormData:class{*[Symbol.iterator](){yield ['First Name','Test']}},fetch:async(url,options)=>{requests++;assert.match(url,/formsubmit.co\/ajax\//);await gate;return {ok,json:async()=>result}}};

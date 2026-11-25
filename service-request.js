@@ -24,7 +24,7 @@
    const result=await response.json();
    if(!response.ok||!(result.success===true||result.success==='true'))throw Error('The service request was not confirmed.');
    completed=true;button.textContent='Service request sent';
-   form.querySelector('.service-grid').hidden=true;
+   form.querySelector('.service-grid').hidden=true;form.querySelector('.service-grid').style.display='none';
    notice('✓ Your service request was sent successfully. Our service team will contact you to discuss the problem and arrange an appointment. Your appointment is not yet scheduled.');
   }catch(error){
    button.disabled=false;button.textContent='Request Service';
