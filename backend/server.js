@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { createHmac,randomBytes,randomUUID,timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import {calculateStoreSalesTax} from './store-sales-tax.js';
 import {posAutoShipPage,posAutoShipScript} from './pos-autoship-page.js';
 import {installVoucherRoutes} from './vouchers.js';
 import {ensureCustomerProfile,profileSummary,signToken,verifyToken,addMonthsISO,occurrencesFor} from './autoship-account.js';
@@ -37,7 +38,6 @@ const coverCatalog={
   Gold:{sku:'CVTH400',price:765},
   Platinum:{sku:'CVTH500',price:899}
 };
-const taxjarBase=process.env.TAXJAR_SANDBOX==='true'?'https://api.sandbox.taxjar.com/v2':'https://api.taxjar.com/v2';
 const authApi=process.env.AUTHORIZE_SANDBOX==='true'?'https://apitest.authorize.net/xml/v1/request.api':'https://api.authorize.net/xml/v1/request.api';
 const authForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/payment/payment':'https://accept.authorize.net/payment/payment';
 const customerForm=process.env.AUTHORIZE_SANDBOX==='true'?'https://test.authorize.net/customer/manage':'https://accept.authorize.net/customer/manage';
@@ -102,7 +102,7 @@ function priceItems(items,attribution){
     return {...x,discountRate,autoshipLockedDiscount:x.autoship?discountRate:0,unit_price:money(x.original_price*(1-discountRate))};
   });
 }
-function customer(b){const a=b.shippingAddress||{};return{first:String(b.first||'').trim(),last:String(b.last||'').trim(),email:String(b.email||'').trim(),phone:String(b.phone||'').trim(),street:String(a.street||'').trim(),street2:String(a.street2||'').trim(),city:String(a.city||'').trim(),state:String(a.state||'').trim().toUpperCase(),zip:String(a.zip||'').trim(),country:'US'}}
+function customer(b){const a=b.shippingAddress||{};return{first:String(b.first||'').trim(),last:String(b.last||'').trim(),email:String(b.email||'').trim(),phone:String(b.phone||'').trim(),street:String(a.street||'').trim(),street2:String(a.street2||'').trim(),city:String(a.city||'').trim(),state:String(a.state||'').trim().toUpperCase(),zip:String(a.zip||'').trim(),county:String(a.county||'').trim(),country:'US'}}
 function validateShip(c){for(const k of ['first','last','email','street','city','state','zip'])if(!c[k])throw new Error(`Missing ${k}`)}
 function monroeville(){return{street:process.env.SHIP_FROM_STREET||'4680 Old William Penn Hwy',street2:'',city:process.env.SHIP_FROM_CITY||'Monroeville',state:process.env.SHIP_FROM_STATE||'PA',zip:process.env.SHIP_FROM_ZIP||'15146',country:'US'}}
 function wexford(){return{street:process.env.WEXFORD_STORE_STREET||'10269 Perry Hwy',street2:'',city:process.env.WEXFORD_STORE_CITY||'Wexford',state:process.env.WEXFORD_STORE_STATE||'PA',zip:process.env.WEXFORD_STORE_ZIP||'15090',country:'US'}}
@@ -143,13 +143,12 @@ async function verifiedStoreItems(rawItems){
   }));
 }
 async function taxForOrder(body){
-  requireEnv(['TAXJAR_API_KEY','SHIP_FROM_STATE','SHIP_FROM_ZIP','SHIP_FROM_CITY','SHIP_FROM_STREET']);
+  if(!['ship','pickup-monroeville','pickup-wexford'].includes(body.fulfillment))throw new Error('Choose shipping or a showroom pickup location.');
   const attribution=orderAttribution(body),items=priceItems(await verifiedStoreItems(body.items),attribution),c=customer(body);validateShip(c);
   const dest=destinationFor(body,c),shipping=shippingFor(body,items);
-  const payload={from_country:'US',from_zip:process.env.SHIP_FROM_ZIP,from_state:process.env.SHIP_FROM_STATE,from_city:process.env.SHIP_FROM_CITY,from_street:process.env.SHIP_FROM_STREET,to_country:'US',to_zip:dest.zip,to_state:dest.state,to_city:dest.city,to_street:[dest.street,dest.street2].filter(Boolean).join(' '),shipping,line_items:items.map(x=>({id:x.id,name:x.name,quantity:x.quantity,unit_price:x.unit_price}))};
-  const r=await fetch(`${taxjarBase}/taxes`,{method:'POST',headers:{Authorization:`Bearer ${process.env.TAXJAR_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify(payload)}),j=await r.json().catch(()=>({}));
-  if(!r.ok){console.error('Store tax calculation failed',JSON.stringify({provider:'TaxJar',status:r.status}));throw new Error('Sales tax could not be calculated. '+([401,403].includes(r.status)?'Our tax service needs attention. Please call 412-326-0361 to complete your order.':'Please try again shortly or call 412-326-0361.'))}
-  return{items,customer:c,destination:dest,shipping,tax:money(j.tax?.amount_to_collect||0),rate:Number(j.tax?.rate||0),hasNexus:j.tax?.has_nexus!==false,taxableAmount:money(j.tax?.taxable_amount||0),attribution};
+  const merchandiseCents=items.reduce((sum,item)=>sum+Math.round(item.unit_price*100)*item.quantity,0);
+  const tax=calculateStoreSalesTax({fulfillment:body.fulfillment,destination:dest,taxableCents:merchandiseCents+Math.round(shipping*100)});
+  return{items,customer:c,destination:dest,shipping,tax:tax.taxCents/100,rate:tax.rate,hasNexus:tax.collecting,taxableAmount:tax.collecting?(merchandiseCents+Math.round(shipping*100))/100:0,attribution,taxJurisdiction:tax.jurisdiction};
 }
 
 async function findUnsettledByInvoice(invoice){
@@ -298,7 +297,7 @@ async function createRecurringGroup({profileId,paymentProfileId,frequencyMonths,
   }
 }
 
-app.get('/health',(q,s)=>s.json({ok:true,taxjar:process.env.TAXJAR_SANDBOX==='true'?'sandbox':'production',authorize:process.env.AUTHORIZE_SANDBOX==='true'?'sandbox':'production',authorizeConfigured:Boolean(authLoginId&&authTransactionKey),customerProfiles:true,accountTokens:Boolean(process.env.ACCOUNT_TOKEN_SECRET),webhookEndpoint:true,employeeCodes:Object.keys(employeeDirectory()).length,shippingPolicy:'$14.95 under $100; free at $100+'}));
+app.get('/health',(q,s)=>s.json({ok:true,taxProvider:'built-in Pennsylvania',taxNexusStates:['PA'],authorize:process.env.AUTHORIZE_SANDBOX==='true'?'sandbox':'production',authorizeConfigured:Boolean(authLoginId&&authTransactionKey),customerProfiles:true,accountTokens:Boolean(process.env.ACCOUNT_TOKEN_SECRET),webhookEndpoint:true,employeeCodes:Object.keys(employeeDirectory()).length,shippingPolicy:'$14.95 under $100; free at $100+'}));
 
 app.post('/employee-code/validate',(req,res)=>{try{const hit=employeeForCode(req.body?.code);if(!hit)return res.json({valid:false});res.json({valid:true,...hit,discountPercent:10,autoshipDiscountPercent:10,autoshipDiscountPersistsUntilCancel:true})}catch(e){res.status(400).json({valid:false,error:e.message})}});
 

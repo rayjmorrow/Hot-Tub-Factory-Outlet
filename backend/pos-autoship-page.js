@@ -9,7 +9,7 @@ body{font:16px system-ui;margin:2rem auto;max-width:34rem;padding:0 1rem;color:#
 <label>Apartment or suite<input name="street2" autocomplete="address-line2"></label>
 <label>City<input name="city" autocomplete="address-level2" required></label>
 <label>State<input name="state" autocomplete="address-level1" pattern="[A-Za-z]{2}" maxlength="2" required></label>
-<label>ZIP code<input name="zip" autocomplete="postal-code" required></label>
+<label>ZIP code<input name="zip" autocomplete="postal-code" required></label><label id="countyField" hidden>Delivery county (Pennsylvania)<select name="county"><option value="">Choose delivery county</option><option value="allegheny">Allegheny County — 7%</option><option value="philadelphia">Philadelphia County — 8%</option><option value="other_pa">Other Pennsylvania county — 6%</option></select></label>
 <button>Review charges</button></form>
 <form id="consent" hidden><h2>Review and authorize AutoShip</h2><ul id="items"></ul><p id="schedule"></p>
 <label>Type your full name<input name="name" autocomplete="name" required minlength="3"></label>
@@ -20,6 +20,7 @@ export const posAutoShipScript=`const token=location.hash.slice(1);
 history.replaceState(null,'',location.pathname);
 const status=document.getElementById('status'),address=document.getElementById('address'),consent=document.getElementById('consent');
 let quote='';
+address.elements.state.addEventListener('input',()=>{const required=address.elements.state.value.trim().toUpperCase()==='PA';document.getElementById('countyField').hidden=!required;address.elements.county.required=required;});
 const money=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(value);
 async function request(action,data={}){
  const response=await fetch('/pos-autoship/'+action,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,...data})});
