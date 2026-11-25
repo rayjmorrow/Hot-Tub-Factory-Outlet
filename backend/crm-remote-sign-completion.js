@@ -2,9 +2,10 @@ import express from 'express';
 import {transaction} from './service-db.js';
 import {requireAgreementReservation} from './htfo-agreement-reservation.js';
 import {createHash,randomBytes} from 'node:crypto';
-import {remoteSignaturePage} from './remote-sign-page.js';
+import {remoteSignaturePage,remoteSignatureScript} from './remote-sign-page.js';
 export function remoteSigningCompletion({q,ensureExecutedContracts,validateSalesDraft,signatureImage,signedPdf,sendContractPdf,ensure}){
  const router=express.Router(),sha=s=>createHash('sha256').update(s).digest('hex');
+ router.get('/remote-customer.js',(_req,res)=>res.set('Cache-Control','no-store').type('application/javascript').send(remoteSignatureScript));
  router.get('/remote-customer',(_req,res)=>res.set('Cache-Control','no-store').set('Referrer-Policy','no-referrer').type('html').send(remoteSignaturePage));
  router.post('/remote-customer/decline',async(req,res)=>{
  res.set('Cache-Control','no-store');
@@ -54,12 +55,13 @@ export function remoteSigningCompletion({q,ensureExecutedContracts,validateSales
     await run(`INSERT INTO crm_sales_executed_contracts(draft_id,submission_id,customer_email,salesperson_email,executed_document,customer_name,salesperson_name,customer_signature,salesperson_signature,terms_text,terms_version,pdf_data,pdf_sha256)
      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11,$12,$13)`,[rec.draft_id,id,d.customer.email,rec.staff_email,JSON.stringify(d),name,rec.staff_name,png,rec.staff_signature,t,v,pdf,sha(pdf)]);
    });
+   let emailCopiesPending=false;
    for(const [column,to,recipient] of [['sent_customer_at',d.customer.email,name],['sent_salesperson_at',rec.staff_email,rec.staff_name],['sent_owner_at','ray@hottubfactoryoutlet.com','HTFO Owner']]){
     if(!to)continue;
     try{await sendContractPdf(to,recipient,'Signed HTFO Agreement #'+rec.draft_id,'Signed sales agreement attached','HTFO-Signed-'+rec.draft_id+'.pdf',pdf,{username:'sales',name:'Hot Tub Factory Outlet'});await q('UPDATE crm_sales_executed_contracts SET '+column+'=NOW() WHERE draft_id=$1',[rec.draft_id])}
-    catch(e){await q('UPDATE crm_sales_executed_contracts SET last_error=$2 WHERE draft_id=$1',[rec.draft_id,String(e.message).slice(0,300)])}
+    catch(e){emailCopiesPending=true;await q('UPDATE crm_sales_executed_contracts SET last_error=$2 WHERE draft_id=$1',[rec.draft_id,String(e.message).slice(0,300)])}
    }
-   res.json({signed:true,id:rec.draft_id});
+   res.json({signed:true,id:rec.draft_id,email_copies_pending:emailCopiesPending});
   }catch(e){res.status(400).json({error:e.message})}
  });
  return router;

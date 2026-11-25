@@ -19,6 +19,7 @@ export async function anetApi(merchant,body){
 }
 export function authorizePaymentLinks({q,guard,salesIdentity,ensureSalesDrafts,validateSalesDraft,email,sms,opted}){
  const router=express.Router(),hash=x=>createHash('sha256').update(String(x)).digest('hex');
+ router.get('/pay/redirect.js',(_req,res)=>res.set('Cache-Control','no-store').type('application/javascript').send('document.getElementById("pay").submit();')); 
  router.post('/sales-drafts/:id/payment-link',...guard,salesIdentity,async(req,res)=>{
   try{
    anetCredentials();await ensureSalesDrafts();await paymentSchema(q);
@@ -51,7 +52,7 @@ export function authorizePaymentLinks({q,guard,salesIdentity,ensureSalesDrafts,v
    const result=await anetApi(m,{getHostedPaymentPageRequest:{merchantAuthentication:{name:m.login,transactionKey:m.key},transactionRequest:{transactionType:'authCaptureTransaction',amount:(payment.amount_cents/100).toFixed(2),order:{invoiceNumber:payment.invoice,description:'HTFO Agreement #'+payment.draft_id},customer:{email:d.customer.email}},hostedPaymentSettings:{setting:settings}}});
    if(result.messages?.resultCode!=='Ok'||!result.token)throw Error('Payment checkout unavailable');
    const action=m.test?'https://test.authorize.net/payment/payment':'https://accept.authorize.net/payment/payment';
-   res.type('html').send('<!doctype html><html><head><meta name="referrer" content="no-referrer"></head><body><p>Redirecting to secure Authorize.net checkout…</p><form id="pay" method="post" action="'+action+'"><input type="hidden" name="token" value="'+String(result.token).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'"></form><script>document.getElementById("pay").submit()</script></body></html>');
+   res.type('html').send('<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"></head><body><p>Redirecting to secure Authorize.net checkout…</p><form id="pay" method="post" action="'+action+'"><input type="hidden" name="token" value="'+String(result.token).replace(/&/g,'&amp;').replace(/"/g,'&quot;')+'"><button type="submit">Continue to secure card payment</button></form><script src="/api/service/crm/v1/pay/redirect.js" defer></script></body></html>');
   }catch(e){res.status(503).send('Secure checkout is temporarily unavailable. Please contact HTFO.')}
  });
  return router;
